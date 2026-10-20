@@ -244,9 +244,12 @@ async function main() {
   environment.CSC_IDENTITY_AUTO_DISCOVERY = "false";
   environment.GIT_CONFIG_GLOBAL = "/dev/null";
   environment.GIT_CONFIG_NOSYSTEM = "1";
-  environment.GIT_CONFIG_COUNT = "1";
+  environment.GIT_CONFIG_COUNT = "2";
   environment.GIT_CONFIG_KEY_0 = "core.hooksPath";
   environment.GIT_CONFIG_VALUE_0 = "/dev/null";
+  environment.GIT_CONFIG_KEY_1 = "credential.helper";
+  environment.GIT_CONFIG_VALUE_1 = "!gh auth git-credential";
+  environment.GIT_TERMINAL_PROMPT = "0";
   environment.GIT_AUTHOR_NAME = identity.productName;
   environment.GIT_COMMITTER_NAME = identity.productName;
   environment.GIT_AUTHOR_EMAIL = "alfredomtx@users.noreply.github.com";
