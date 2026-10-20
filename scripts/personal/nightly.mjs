@@ -486,7 +486,9 @@ async function main() {
     run("vp", ["install", "--frozen-lockfile"]);
     run(config.node, ["--test", "scripts/personal/core.test.mjs"]);
     run("vp", ["test", "run", ...tests]);
-    run("vp", ["exec", "playwright", "install", "chromium"]);
+    run("vp", ["exec", "playwright", "install", "chromium"], {
+      cwd: NodePath.join(builder, "apps/web"),
+    });
     run(
       "vp",
       [
