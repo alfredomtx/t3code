@@ -12,6 +12,8 @@ export const browserApiCorsAllowedHeaders = [
 ] as const;
 
 export const DESKTOP_RENDERER_ORIGINS = [
+  "t3code://app",
+  "t3code-dev://app",
   `${PERSONAL_DESKTOP.scheme}://app`,
   `${PERSONAL_DESKTOP.developmentScheme}://app`,
 ] as const;

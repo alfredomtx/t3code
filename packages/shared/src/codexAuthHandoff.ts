@@ -96,8 +96,9 @@ export function readCodexAuthHandoff(value: string, development: boolean) {
     const url = new URL(value);
     if (
       value.length > 32_768 ||
-      url.protocol !==
-        `${development ? PERSONAL_DESKTOP.developmentScheme : PERSONAL_DESKTOP.scheme}:` ||
+      (url.protocol !==
+        `${development ? PERSONAL_DESKTOP.developmentScheme : PERSONAL_DESKTOP.scheme}:` &&
+        url.protocol !== (development ? "t3code-dev:" : "t3code:")) ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||

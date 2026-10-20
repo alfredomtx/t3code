@@ -186,6 +186,8 @@ export function buildNewThreadLink(input: {
 }
 
 const APP_SCHEMES = new Set([
+  "t3code:",
+  "t3code-dev:",
   `${PERSONAL_DESKTOP.scheme}:`,
   `${PERSONAL_DESKTOP.developmentScheme}:`,
 ]);

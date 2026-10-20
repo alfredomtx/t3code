@@ -77,3 +77,18 @@ describe("Codex desktop handoff", () => {
     expect(() => codexAuthDeliveryUrl(input, callbackUrl + "&state=another")).toThrow();
   });
 });
+
+it("preserves official handoffs for remote clients and generates personal handoffs", () => {
+  for (const development of [false, true]) {
+    const personal = codexAuthHandoffUrl(input, development);
+    const personalScheme = development ? "t3code-personal-dev:" : "t3code-personal:";
+    const officialScheme = development ? "t3code-dev:" : "t3code:";
+    expect(new URL(personal).protocol).toBe(personalScheme);
+    expect(
+      readCodexAuthHandoff(personal.replace(personalScheme, officialScheme), development),
+    ).toEqual(input);
+    expect(
+      readCodexAuthHandoff(personal.replace(personalScheme, "t3code-arbitrary:"), development),
+    ).toBeUndefined();
+  }
+});

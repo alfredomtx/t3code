@@ -126,3 +126,10 @@ describe("link round trips", () => {
     );
   });
 });
+
+it("accepts exact official and personal deep links for remote clients", () => {
+  for (const scheme of ["t3code", "t3code-dev", "t3code-personal", "t3code-personal-dev"]) {
+    expect(promptLinkAppPath(`${scheme}://new?prompt=hi`)).toBe("/new?prompt=hi");
+  }
+  expect(promptLinkAppPath("t3code-arbitrary://new?prompt=hi")).toBeNull();
+});
