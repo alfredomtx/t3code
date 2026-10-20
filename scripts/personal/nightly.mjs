@@ -425,15 +425,18 @@ async function main() {
         "Increment --revision for another source revision of this nightly.",
       );
     }
-    const verifiedCandidate = await readJson(
-      NodePath.join(root, "artifacts", version, "verified.json"),
-    );
-    let pending =
-      previousPending ??
-      (verifiedCandidate?.upstreamCommit === upstreamCommit &&
-      verifiedCandidate.baseSourceCommit === originCommit
-        ? verifiedCandidate
-        : null);
+    const artifactDirectory = NodePath.join(root, "artifacts", version);
+    const verifiedCandidate = await readJson(NodePath.join(artifactDirectory, "verified.json"));
+    const reusableCandidate =
+      verifiedCandidate &&
+      verifiedCandidate.upstreamCommit === upstreamCommit &&
+      verifiedCandidate.baseSourceCommit === originCommit &&
+      run("git", ["cat-file", "-e", `${fullSha(verifiedCandidate.sourceCommit)}^{commit}`], {
+        acceptFailure: true,
+      }).status === 0;
+    if (verifiedCandidate && !previousPending && !reusableCandidate)
+      await NodeFSP.rename(artifactDirectory, NodePath.join(runDirectory, "superseded-artifacts"));
+    let pending = previousPending ?? (reusableCandidate ? verifiedCandidate : null);
     const resume = pending?.version === version && pending.upstreamCommit === upstreamCommit;
     if (resume) {
       fullSha(pending.sourceCommit);

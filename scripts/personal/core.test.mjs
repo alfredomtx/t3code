@@ -353,6 +353,69 @@ NodeTest.test(
     }),
 );
 
+NodeTest.test(
+  "a recloned builder preserves an unavailable cached merge and starts a fresh candidate",
+  () =>
+    temporary(async (root) => {
+      const source = NodePath.resolve(import.meta.dirname, "../..");
+      const bin = NodePath.join(root, "bin");
+      const stateRoot = NodePath.join(root, ".local/share/t3-personal");
+      const builder = NodePath.join(stateRoot, "builder");
+      await NodeFSP.mkdir(bin);
+      await NodeFSP.mkdir(NodePath.join(builder, ".git"), { recursive: true });
+      await NodeFSP.copyFile(
+        NodePath.join(source, ".env.example"),
+        NodePath.join(builder, ".env.example"),
+      );
+      const sha = "d36b7da2485bc889b320a285deea181f637d760a";
+      const missing = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+      const tag = "v0.1.1-nightly.20261020.3411";
+      const version = personalVersion(tag);
+      const cached = NodePath.join(stateRoot, "artifacts", version);
+      await writeJson(NodePath.join(cached, "verified.json"), {
+        version,
+        upstreamCommit: sha,
+        baseSourceCommit: sha,
+        sourceCommit: missing,
+      });
+      await NodeFSP.writeFile(NodePath.join(cached, "app.zip"), "retained evidence");
+      const calls = NodePath.join(root, "calls.txt");
+      const script = `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$*" in\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'api repos/pingdotgg/t3code/releases?per_page=100'*) echo '${tag}';;\n  'api repos/alfredomtx/t3code-personal-releases/releases?per_page=100'*) exit 0;;\n  'remote get-url origin') echo https://github.com/alfredomtx/t3code.git;;\n  'remote get-url upstream') echo https://github.com/pingdotgg/t3code.git;;\n  'status --porcelain'|'fetch '*|'checkout --detach '*|'merge --no-ff --no-commit '*) exit 0;;\n  'rev-parse origin/personal'|'rev-parse ${tag}^{commit}'|'rev-parse HEAD') echo '${sha}';;\n  'rev-parse --is-shallow-repository') echo false;;\n  'remote') printf 'origin\\nupstream\\n';;\n  'cat-file -e ${missing}^{commit}') exit 128;;\n  *) echo "Unexpected command: $*" >&2; exit 9;;\nesac\n`;
+      for (const command of ["gh", "git", "codex", "vp"])
+        await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
+      await writeJson(NodePath.join(stateRoot, "config.json"), {
+        sourceCheckout: source,
+        sourceRepository: "alfredomtx/t3code",
+        updateRepository: "alfredomtx/t3code-personal-releases",
+        signingIdentity: "5982A03C0452FB344BC92765B84FF62391712882",
+        node: process.execPath,
+        vpHome: root,
+        vpBin: bin,
+        codex: NodePath.join(bin, "codex"),
+      });
+      const result = NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(source, "scripts/personal/nightly.mjs"), "--build-only"],
+        { env: { ...process.env, HOME: root }, encoding: "utf8" },
+      );
+      NodeAssert.equal(result.status, 1);
+      NodeAssert.match(result.stderr, /build-desktop-artifact\.test\.ts/u);
+      const commands = await NodeFSP.readFile(calls, "utf8");
+      NodeAssert.ok(commands.includes(`checkout --detach ${sha}`));
+      NodeAssert.ok(!commands.includes(`checkout --detach ${missing}`));
+      await NodeAssert.rejects(NodeFSP.access(cached));
+      const [run] = await NodeFSP.readdir(NodePath.join(stateRoot, "runs"));
+      NodeAssert.equal(
+        await NodeFSP.readFile(
+          NodePath.join(stateRoot, "runs", run, "superseded-artifacts/app.zip"),
+          "utf8",
+        ),
+        "retained evidence",
+      );
+      await NodeAssert.rejects(NodeFSP.access(NodePath.join(stateRoot, "pending.json")));
+    }),
+);
+
 NodeTest.test("smoke spawn errors reject without an unhandled event or leaked log descriptor", () =>
   temporary(async (root) => {
     const logFile = NodePath.join(root, "smoke.log");
