@@ -25,6 +25,9 @@ export default async function signPersonalMac(context: {
       "Set T3CODE_PERSONAL_SIGN_IDENTITY to the local certificate SHA-1 fingerprint.",
     );
   }
+  if (context.packager.appInfo.productFilename !== PERSONAL_DESKTOP.productName) {
+    throw new Error("The signed product name does not match the personal identity.");
+  }
   const app = NodePath.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   await signApplication({
     app,
@@ -41,7 +44,4 @@ export default async function signPersonalMac(context: {
     }),
   });
   NodeChildProcess.execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", app]);
-  if (context.packager.appInfo.productFilename !== PERSONAL_DESKTOP.productName) {
-    throw new Error("The signed product name does not match the personal identity.");
-  }
 }

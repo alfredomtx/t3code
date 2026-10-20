@@ -9,6 +9,6 @@ The Mac must remain awake and logged in. The sidebar controls update installatio
 
 The runner uses a dedicated builder clone under `~/.local/share/t3-personal`. It uses the public cloud identifiers from `.env.example`. Local signing does not provide Apple notarization or Apple passkey entitlements. Verify cloud login on the personal protocol before daily use.
 
-Logs, pending work, artifacts, and accepted release status remain under `~/.local/share/t3-personal`. A failed merge stays in the builder for inspection. Resolve protected conflicts manually. After repair, verify the result and publish it to the source fork personal branch before retrying. Never discard a failed builder until its diagnostics are saved.
+Logs, pending work, artifacts, and accepted release status remain under `~/.local/share/t3-personal`. A failed run retains its failure record and package output. The next run archives a dirty failed builder before retrying. Resolve protected conflicts manually. After repair, verify the result and publish it to the source fork personal branch before retrying. Never discard a failed builder until its diagnostics are saved.
 
 Only the production runner requires `alfredomtx/t3code-personal-releases`. Direct desktop packaging retains `T3CODE_DESKTOP_UPDATE_REPOSITORY` for explicit test builds. Set it before the full web build. Use `--build-version`, and do not use `--skip-build` for release artifacts.

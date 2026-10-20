@@ -75,7 +75,6 @@ export async function acquireLock(directory) {
     } catch (cause) {
       if (cause.code !== "ESRCH") return null;
     }
-    // Only one contender can reclaim a dead owner's directory.
     try {
       await NodeFSP.writeFile(NodePath.join(directory, "reclaim"), token, { flag: "wx" });
     } catch (cause) {
@@ -108,8 +107,11 @@ export async function acquireLock(directory) {
 
 export function protectedPath(file) {
   return (
-    /(?:^|\/)(?:\.github|\.agents|\.husky|testing|__tests__)(?:\/|$)/u.test(file) ||
+    /(?:^|\/)(?:\.github|\.agents|\.claude|\.husky|testing|__tests__)(?:\/|$)/u.test(file) ||
     /(?:^|\/)(?:AGENTS|CLAUDE)\.md$/u.test(file) ||
+    /(?:^|\/)\.env[^/]*$/iu.test(file) ||
+    file === "packages/shared/src/personalDesktop.ts" ||
+    file.startsWith(".git/") ||
     /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|.*config\.[^/]+|.*\.plist)$/u.test(
       file,
     ) ||
@@ -118,13 +120,80 @@ export function protectedPath(file) {
   );
 }
 
-export async function repairSnapshot(root, files) {
+async function inputFiles(root, directory = "") {
+  const files = [];
+  for (const entry of await NodeFSP.readdir(NodePath.join(root, directory), {
+    withFileTypes: true,
+  })) {
+    if (["node_modules", ".git"].includes(entry.name)) continue;
+    const file = directory ? `${directory}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) files.push(...(await inputFiles(root, file)));
+    else files.push(file);
+  }
+  return files;
+}
+
+export async function assertBuildEnvironment(root) {
+  const files = await inputFiles(root);
+  NodeAssert.ok(
+    !files.some(
+      (file) =>
+        NodePath.basename(file).toLowerCase().startsWith(".env") &&
+        NodePath.basename(file).toLowerCase() !== ".env.example",
+    ),
+    "The dedicated builder contains an environment input. Remove it before building.",
+  );
+  for (const file of files) {
+    const stat = await NodeFSP.lstat(NodePath.join(root, file));
+    NodeAssert.ok(
+      !stat.isSymbolicLink() || file === ".claude/skills",
+      `The dedicated builder contains a linked input: ${file}`,
+    );
+  }
+}
+
+export async function repairSnapshot(root, files, conflicts) {
+  const discovered = await inputFiles(root);
+  const gitFiles = [
+    ".git/config",
+    ".git/config.worktree",
+    ".git/HEAD",
+    ".git/MERGE_HEAD",
+    ".git/info/attributes",
+    ".git/info/exclude",
+  ];
+  try {
+    NodeAssert.ok(
+      (await NodeFSP.lstat(NodePath.join(root, ".git"))).isDirectory(),
+      "The builder must have a private Git directory.",
+    );
+    const hooks = NodePath.join(root, ".git/hooks");
+    NodeAssert.ok(
+      (await NodeFSP.lstat(hooks)).isDirectory(),
+      "Git hooks must use a private directory.",
+    );
+    gitFiles.push(...(await inputFiles(hooks)).map((file) => `.git/hooks/${file}`));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
   const result = {};
-  for (const file of files.filter(protectedPath)) {
+  for (const file of [...new Set([...files, ...discovered, ...gitFiles])].sort()) {
+    NodeAssert.ok(
+      !NodePath.isAbsolute(file) && !file.split("/").includes(".."),
+      "Invalid repair input path.",
+    );
+    if (!protectedPath(file) && (!conflicts || conflicts.includes(file))) continue;
     try {
-      result[file] = NodeCrypto.createHash("sha256")
-        .update(await NodeFSP.readFile(NodePath.join(root, file)))
-        .digest("hex");
+      const path = NodePath.join(root, file);
+      const stat = await NodeFSP.lstat(path);
+      if (stat.isSymbolicLink() && file === ".claude/skills") {
+        result[file] = `symlink:${await NodeFSP.readlink(path)}`;
+        continue;
+      }
+      NodeAssert.ok(stat.isFile(), `Repair input must be a regular file: ${file}`);
+      result[file] = `${stat.mode}:${NodeCrypto.createHash("sha256")
+        .update(await NodeFSP.readFile(path))
+        .digest("hex")}`;
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
       result[file] = null;
@@ -133,12 +202,28 @@ export async function repairSnapshot(root, files) {
   return result;
 }
 
+export function publicationPending(record) {
+  return record?.readyForPublication === true && record.published === false ? record : null;
+}
+
+export function defaultRevision({ pending, status, upstreamCommit, originCommit }) {
+  if (pending) return parseNightly(pending.version).sequence % 1000;
+  if (status?.upstreamCommit === upstreamCommit)
+    return (
+      (parseNightly(status.version).sequence % 1000) +
+      (status.sourceCommit === originCommit ? 0 : 1)
+    );
+  return 1;
+}
+
+export function isAncestor(runGit, ancestor, descendant) {
+  const result = runGit(["merge-base", "--is-ancestor", fullSha(ancestor), fullSha(descendant)]);
+  NodeAssert.ok(!result.error && [0, 1].includes(result.status), "Git ancestry check failed.");
+  return result.status === 0;
+}
+
 export function checkRepairScope(before, after) {
-  NodeAssert.deepEqual(
-    after,
-    before,
-    "Repair changed protected tests, configuration, or release/signing code.",
-  );
+  NodeAssert.deepEqual(after, before, "Repair changed a file outside the permitted conflicts.");
 }
 
 export function reviewAccepted(value) {

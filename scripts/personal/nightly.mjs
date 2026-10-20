@@ -21,8 +21,12 @@ import {
   reviewAccepted,
   publicBuildEnvironment,
   protectedPath,
+  assertBuildEnvironment,
+  publicationPending,
+  defaultRevision,
+  isAncestor,
 } from "./core.mjs";
-import { verifyArtifact, smokeApp, fileDigest } from "./verify-artifact.mjs";
+import { verifyArtifact, smokeApp, fileDigest, syncReleaseAssets } from "./verify-artifact.mjs";
 
 const source = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
 const root = NodePath.join(NodeOS.homedir(), ".local/share/t3-personal");
@@ -111,7 +115,7 @@ async function repairMerge(runDirectory, conflicts) {
     !conflicts.some(protectedPath),
     "A protected file conflicts. Human repair is required.",
   );
-  const before = await repairSnapshot(builder, files);
+  const before = await repairSnapshot(builder, files, conflicts);
   await writeJson(NodePath.join(runDirectory, "repair-before.json"), before);
   const prompt = `Resolve only the current Git merge conflicts in this builder checkout. Preserve the personal desktop identity, collapsed-result preference, and exact protocol checks. Do not commit, publish, run applications, change tests, configuration, scripts, signing, release gates, or agent instructions. Stop if a protected file conflicts. The original source contract is in the existing code. Use the smallest correction. Conflicted files: ${conflicts.join(", ")}`;
   run(
@@ -129,13 +133,7 @@ async function repairMerge(runDirectory, conflicts) {
     ],
     { timeout: 10 * 60_000 },
   );
-  const afterFiles = [
-    ...new Set([
-      ...git("ls-files", "-z").split("\0").filter(Boolean),
-      ...git("ls-files", "--others", "--exclude-standard", "-z").split("\0").filter(Boolean),
-    ]),
-  ];
-  checkRepairScope(before, await repairSnapshot(builder, afterFiles));
+  checkRepairScope(before, await repairSnapshot(builder, files, conflicts));
   const schemaFile = NodePath.join(runDirectory, "review-schema.json");
   await writeJson(schemaFile, {
     type: "object",
@@ -164,22 +162,13 @@ async function repairMerge(runDirectory, conflicts) {
     ],
     { timeout: 10 * 60_000 },
   );
+  checkRepairScope(before, await repairSnapshot(builder, files, conflicts));
   reviewAccepted(await readJson(reviewFile));
   NodeAssert.equal(git("rev-parse", "HEAD"), repairHead, "AI repair changed HEAD.");
   NodeAssert.equal(
     git("rev-parse", "MERGE_HEAD"),
     mergeHead,
     "AI repair changed the merge target.",
-  );
-  checkRepairScope(
-    before,
-    await repairSnapshot(builder, [
-      ...new Set([
-        ...afterFiles,
-        ...git("ls-files", "-z").split("\0").filter(Boolean),
-        ...git("ls-files", "--others", "--exclude-standard", "-z").split("\0").filter(Boolean),
-      ]),
-    ]),
   );
   NodeAssert.ok(
     !git("diff", "--name-only", "--diff-filter=U"),
@@ -209,35 +198,16 @@ async function releaseRecord(tag) {
   return null;
 }
 
-async function readBack(release, directory, assets) {
-  await NodeFSP.mkdir(directory, { recursive: true });
-  for (const asset of assets) {
-    NodeAssert.ok(
-      release.assets.some((remote) => remote.name === NodePath.basename(asset)),
-      `Remote asset is missing: ${asset}`,
-    );
-    run(
-      "gh",
-      [
-        "release",
-        "download",
-        release.tagName,
-        "--repo",
-        identity.updateRepository,
-        "--pattern",
-        NodePath.basename(asset),
-        "--dir",
-        directory,
-      ],
-      { cwd: source },
-    );
-    NodeAssert.equal(
-      await fileDigest(NodePath.join(directory, NodePath.basename(asset))),
-      await fileDigest(asset),
-      "Remote asset hash differs.",
-    );
-    await NodeFSP.rm(NodePath.join(directory, NodePath.basename(asset)));
-  }
+async function readBack(release, directory, assets, repairDraft = false) {
+  await syncReleaseAssets({
+    release,
+    directory,
+    assets,
+    repository: identity.updateRepository,
+    run: (...parameters) => gh(...parameters),
+    repairDraft,
+    refresh: () => releaseRecord(release.tagName),
+  });
 }
 
 async function main() {
@@ -266,12 +236,17 @@ async function main() {
     RUSTUP_TOOLCHAIN: "1.95.0",
   };
   for (const key of Object.keys(environment))
-    if (/^(?:T3CODE_|VITE_|EXPO_PUBLIC_|APP_VERSION|APPLE_|CSC_)/u.test(key))
+    if (/^(?:T3CODE_|VITE_|EXPO_PUBLIC_|APP_VERSION|APPLE_|CSC_|GIT_)/u.test(key))
       delete environment[key];
   environment.T3CODE_PERSONAL_SIGN_IDENTITY = config.signingIdentity;
   environment.T3CODE_DESKTOP_UPDATE_REPOSITORY = identity.updateRepository;
   environment.GITHUB_REPOSITORY = identity.sourceRepository;
   environment.CSC_IDENTITY_AUTO_DISCOVERY = "false";
+  environment.GIT_CONFIG_GLOBAL = "/dev/null";
+  environment.GIT_CONFIG_NOSYSTEM = "1";
+  environment.GIT_CONFIG_COUNT = "1";
+  environment.GIT_CONFIG_KEY_0 = "core.hooksPath";
+  environment.GIT_CONFIG_VALUE_0 = "/dev/null";
   if (check) {
     run(config.node, ["--version"], { cwd: source });
     run("gh", ["auth", "status"], { cwd: source });
@@ -324,6 +299,7 @@ async function main() {
       "The release feed must remain public.",
     );
     const sourceUrl = `https://github.com/${identity.sourceRepository}.git`;
+    const previousPending = publicationPending(await readJson(requestFile));
     try {
       await NodeFSP.access(NodePath.join(builder, ".git"));
     } catch (error) {
@@ -333,20 +309,34 @@ async function main() {
       });
     }
     NodeAssert.equal(git("remote", "get-url", "origin"), sourceUrl);
-    NodeAssert.ok(
-      !git("status", "--porcelain"),
-      "Builder has uncommitted changes. Preserve and inspect the previous failure.",
-    );
+    if (git("status", "--porcelain")) {
+      NodeAssert.ok(
+        !previousPending,
+        "A verified publication has a dirty builder. Preserve it for inspection.",
+      );
+      const failure = await readJson(NodePath.join(root, "last-failure.json"));
+      NodeAssert.ok(
+        failure && NodePath.dirname(failure.runDirectory) === NodePath.join(root, "runs"),
+        "Inspect the dirty builder without recorded failure diagnostics.",
+      );
+      await NodeFSP.rename(builder, NodePath.join(runDirectory, "failed-builder"));
+      run("git", ["clone", "--filter=blob:none", "--branch", "personal", sourceUrl, builder], {
+        cwd: root,
+      });
+    }
+    await assertBuildEnvironment(builder);
     git("fetch", "--filter=blob:none", "origin", "personal");
     const originCommit = fullSha(git("rev-parse", "origin/personal"));
-    const previousPending = await readJson(requestFile);
-    // A verified pending source push can precede a failed release publication.
     const accepted = status?.sourceCommit ? fullSha(status.sourceCommit) : originCommit;
     if (status?.sourceCommit) {
       NodeAssert.ok(
         originCommit === accepted ||
           originCommit === previousPending?.sourceCommit ||
-          git("merge-base", "--is-ancestor", accepted, originCommit) === "",
+          isAncestor(
+            (parameters) => run("git", parameters, { acceptFailure: true }),
+            accepted,
+            originCommit,
+          ),
         "The source branch diverged from accepted history.",
       );
     }
@@ -393,9 +383,7 @@ async function main() {
       );
     const revision =
       explicitRevision ??
-      (previousPending && !previousPending.published
-        ? parseNightly(previousPending.version).sequence % 1000
-        : 1);
+      defaultRevision({ pending: previousPending, status, upstreamCommit, originCommit });
     const version = personalVersion(upstreamTag, revision);
     const personalTags = gh(
       "api",
@@ -430,12 +418,24 @@ async function main() {
         "Increment --revision for another source revision of this nightly.",
       );
     }
-    let pending = previousPending;
+    const verifiedCandidate = await readJson(
+      NodePath.join(root, "artifacts", version, "verified.json"),
+    );
+    let pending =
+      previousPending ??
+      (verifiedCandidate?.upstreamCommit === upstreamCommit &&
+      verifiedCandidate.baseSourceCommit === originCommit
+        ? verifiedCandidate
+        : null);
     const resume = pending?.version === version && pending.upstreamCommit === upstreamCommit;
     if (resume) {
       fullSha(pending.sourceCommit);
       NodeAssert.ok(
-        git("merge-base", "--is-ancestor", originCommit, pending.sourceCommit) === "",
+        isAncestor(
+          (parameters) => run("git", parameters, { acceptFailure: true }),
+          originCommit,
+          pending.sourceCommit,
+        ),
         "Pending source no longer extends origin/personal.",
       );
       git("checkout", "--detach", pending.sourceCommit);
@@ -461,11 +461,13 @@ async function main() {
         version,
         upstreamTag,
         upstreamCommit,
+        baseSourceCommit: originCommit,
         sourceCommit: fullSha(git("rev-parse", "HEAD")),
         published: false,
       };
-      await writeJson(requestFile, pending);
+      await writeJson(NodePath.join(runDirectory, "candidate.json"), pending);
     }
+    await assertBuildEnvironment(builder);
     const publicEnvironment = publicBuildEnvironment(
       await NodeFSP.readFile(NodePath.join(builder, ".env.example"), "utf8"),
     );
@@ -504,6 +506,7 @@ async function main() {
     const verified = await readJson(NodePath.join(directory, "verified.json"));
     const buildDirectory = verified ? directory : NodePath.join(runDirectory, "package");
     if (!verified) {
+      await assertBuildEnvironment(builder);
       await NodeFSP.mkdir(buildDirectory);
       run(
         config.node,
@@ -551,10 +554,7 @@ async function main() {
         size: (await NodeFSP.stat(NodePath.join(buildDirectory, name))).size,
       });
     await writeJson(NodePath.join(buildDirectory, "provenance.json"), provenance);
-    await writeJson(NodePath.join(buildDirectory, "verified.json"), {
-      version,
-      sourceCommit: pending.sourceCommit,
-    });
+    await writeJson(NodePath.join(buildDirectory, "verified.json"), pending);
     if (!verified) {
       await NodeFSP.mkdir(NodePath.dirname(directory), { recursive: true });
       await NodeFSP.rename(buildDirectory, directory);
@@ -565,6 +565,8 @@ async function main() {
       );
       return;
     }
+    pending = { ...pending, readyForPublication: true };
+    await writeJson(requestFile, pending);
     const tag = `v${version}`;
     let release = await releaseRecord(tag);
     const assets = [...assetNames, "provenance.json"].map((name) => NodePath.join(directory, name));
@@ -600,11 +602,7 @@ async function main() {
         release = await releaseRecord(tag);
       }
       NodeAssert.ok(release.isDraft, "Assets can only be added to a draft.");
-      for (const asset of assets)
-        if (!release.assets.some((remote) => remote.name === NodePath.basename(asset)))
-          gh("release", "upload", tag, asset, "--repo", identity.updateRepository);
-      release = await releaseRecord(tag);
-      await readBack(release, NodePath.join(runDirectory, "draft-readback"), assets);
+      await readBack(release, NodePath.join(runDirectory, "draft-readback"), assets, true);
       gh(
         "release",
         "edit",
@@ -645,6 +643,7 @@ async function main() {
     const published = gh(
       "api",
       `repos/${identity.updateRepository}/releases?per_page=100`,
+      "--paginate",
       "--jq",
       ".[] | select(.draft == false) | .tag_name",
     ).split("\n");
@@ -657,16 +656,17 @@ async function main() {
       }
     console.log(`Published ${release.url}`);
   } catch (error) {
-    await writeJson(NodePath.join(root, "last-failure.json"), {
+    const failure = {
       error: error.message,
       runDirectory,
       failedAt: new Date().toISOString(),
       acceptedRelease: status?.releaseUrl ?? null,
-    });
+    };
+    await writeJson(NodePath.join(runDirectory, "failure.json"), failure);
+    await writeJson(NodePath.join(root, "last-failure.json"), failure);
     throw error;
   } finally {
     if (artifact) await NodeFSP.rm(artifact.temporary, { recursive: true, force: true });
-    await NodeFSP.rm(NodePath.join(runDirectory, "package"), { recursive: true, force: true });
     await new Promise((resolve) => log.end(resolve));
     await unlock();
   }

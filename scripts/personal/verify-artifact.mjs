@@ -138,6 +138,84 @@ export async function verifyArtifact({
   }
 }
 
+export async function syncReleaseAssets({
+  release,
+  directory,
+  assets,
+  repository,
+  run,
+  repairDraft = false,
+  refresh,
+}) {
+  await NodeFSP.mkdir(directory, { recursive: true });
+  for (const asset of assets) {
+    const name = NodePath.basename(asset);
+    const downloaded = NodePath.join(directory, name);
+    const exists = release.assets.some((remote) => remote.name === name);
+    let matches = false;
+    if (exists) {
+      await run(
+        "release",
+        "download",
+        release.tagName,
+        "--repo",
+        repository,
+        "--pattern",
+        name,
+        "--dir",
+        directory,
+      );
+      matches = (await fileDigest(downloaded)) === (await fileDigest(asset));
+      await NodeFSP.rm(downloaded);
+    }
+    if (!matches) {
+      NodeAssert.ok(
+        repairDraft && release.isDraft,
+        `Remote asset is missing or its hash differs: ${name}`,
+      );
+      const current = await refresh();
+      NodeAssert.ok(current?.isDraft, "Assets can only be replaced on a draft.");
+      if (current.assets.some((remote) => remote.name === name))
+        await run("release", "delete-asset", release.tagName, name, "--repo", repository, "--yes");
+      await run("release", "upload", release.tagName, asset, "--repo", repository);
+      await run(
+        "release",
+        "download",
+        release.tagName,
+        "--repo",
+        repository,
+        "--pattern",
+        name,
+        "--dir",
+        directory,
+      );
+      NodeAssert.equal(
+        await fileDigest(downloaded),
+        await fileDigest(asset),
+        "Remote asset hash differs after upload.",
+      );
+      await NodeFSP.rm(downloaded);
+    }
+  }
+}
+
+async function portIsClosed(port) {
+  return new Promise((resolve, reject) => {
+    const socket = NodeNet.createConnection({ host: "127.0.0.1", port });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", (error) =>
+      error.code === "ECONNREFUSED" ? resolve(true) : reject(error),
+    );
+    socket.setTimeout(1000, () => {
+      socket.destroy();
+      reject(new Error("Backend port closure check timed out."));
+    });
+  });
+}
+
 export async function smokeApp({ executable, temporary, logFile }) {
   const home = NodePath.join(temporary, "app-home");
   const osHome = NodePath.join(temporary, "os-home");
@@ -145,38 +223,22 @@ export async function smokeApp({ executable, temporary, logFile }) {
   await NodeFSP.mkdir(osHome, { recursive: true });
   const output = await NodeFSP.open(logFile, "a", 0o600);
   const reservation = NodeNet.createServer();
-  reservation.listen(0, "127.0.0.1");
-  await NodeEvents.once(reservation, "listening");
-  const port = reservation.address().port;
-  await new Promise((resolve, reject) =>
-    reservation.close((error) => (error ? reject(error) : resolve())),
-  );
-  const env = {
-    ...process.env,
-    HOME: osHome,
-    T3CODE_HOME: home,
-    T3CODE_DISABLE_AUTO_UPDATE: "true",
-    T3CODE_PORT: String(port),
-  };
-  delete env.ELECTRON_RUN_AS_NODE;
-  delete env.VITE_DEV_SERVER_URL;
-  const child = NodeChildProcess.spawn(executable, [], {
-    env,
-    detached: true,
-    stdio: ["ignore", output.fd, output.fd],
-  });
-  const exited = NodeEvents.once(child, "exit");
+  let child;
+  let port;
+  let startupError;
+  let cleanupError;
   const owned = new Map();
   function captureOwnedProcesses() {
-    const rows = run("/bin/ps", ["-axo", "pid=,ppid=,lstart="])
+    if (!child?.pid) return;
+    const rows = run("/bin/ps", ["-axo", "pid=,ppid=,pgid=,lstart="])
       .split("\n")
-      .map((line) => /^\s*(\d+)\s+(\d+)\s+(.+)$/u.exec(line))
+      .map((line) => /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.+)$/u.exec(line))
       .filter(Boolean);
     let added;
     do {
       added = false;
-      for (const [, pid, parent, started] of rows) {
-        if ((Number(pid) === child.pid || owned.has(Number(parent))) && !owned.has(Number(pid))) {
+      for (const [, pid, parent, group, started] of rows) {
+        if ((Number(group) === child.pid || owned.has(Number(parent))) && !owned.has(Number(pid))) {
           owned.set(Number(pid), started.trim());
           added = true;
         }
@@ -189,13 +251,61 @@ export async function smokeApp({ executable, temporary, logFile }) {
     });
     return result.status === 0 && result.stdout.trim() === started;
   }
-  let startupError;
+  function signalOwned(signal) {
+    captureOwnedProcesses();
+    const targets = [...owned].filter(([pid, started]) => stillOwned(pid, started));
+    if (!targets.length) return;
+    try {
+      process.kill(-child.pid, signal);
+    } catch (error) {
+      if (error.code !== "ESRCH") throw error;
+    }
+    for (const [pid, started] of targets) {
+      if (!stillOwned(pid, started)) continue;
+      try {
+        process.kill(pid, signal);
+      } catch (error) {
+        if (error.code !== "ESRCH") throw error;
+      }
+    }
+  }
+  function processesRemain() {
+    captureOwnedProcesses();
+    return [...owned].some(([pid, started]) => stillOwned(pid, started));
+  }
   try {
-    NodeAssert.ok(child.pid, "The isolated app did not start.");
+    reservation.listen(0, "127.0.0.1");
+    await NodeEvents.once(reservation, "listening");
+    port = reservation.address().port;
+    await new Promise((resolve, reject) =>
+      reservation.close((error) => (error ? reject(error) : resolve())),
+    );
+    const env = {
+      ...process.env,
+      HOME: osHome,
+      T3CODE_HOME: home,
+      T3CODE_DISABLE_AUTO_UPDATE: "true",
+      T3CODE_PORT: String(port),
+    };
+    delete env.ELECTRON_RUN_AS_NODE;
+    delete env.VITE_DEV_SERVER_URL;
+    child = NodeChildProcess.spawn(executable, [], {
+      env,
+      detached: true,
+      stdio: ["ignore", output.fd, output.fd],
+    });
+    await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("spawn", resolve);
+    });
+    child.on("error", (error) => {
+      startupError ??= error;
+    });
     const deadline = Date.now() + 60_000;
     let ready = false;
     while (Date.now() < deadline) {
       captureOwnedProcesses();
+      if (startupError) throw startupError;
       NodeAssert.ok(
         child.exitCode === null && child.signalCode === null,
         "The isolated app exited during startup.",
@@ -208,16 +318,12 @@ export async function smokeApp({ executable, temporary, logFile }) {
         "The isolated app reported a startup error.",
       );
       if (log.includes("desktop app control socket ready") && log.includes("app ready")) {
-        try {
-          const response = await fetch(`http://127.0.0.1:${port}/.well-known/t3/environment`, {
-            signal: AbortSignal.timeout(1000),
-          });
-          if (response.ok) {
-            ready = true;
-            break;
-          }
-        } catch {
-          /* The backend may still be starting. */
+        const response = await fetch(`http://127.0.0.1:${port}/.well-known/t3/environment`, {
+          signal: AbortSignal.timeout(1000),
+        }).catch(() => null);
+        if (response?.ok) {
+          ready = true;
+          break;
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
@@ -226,46 +332,36 @@ export async function smokeApp({ executable, temporary, logFile }) {
     await NodeFSP.access(NodePath.join(home, "electron-profile"));
   } catch (error) {
     startupError = error;
-  }
-  await stopOwnedApp();
-  async function stopOwnedApp() {
-    captureOwnedProcesses();
-    for (const [pid, started] of owned) {
-      if (!stillOwned(pid, started)) continue;
+  } finally {
+    try {
+      if (reservation.listening) await new Promise((resolve) => reservation.close(resolve));
+      signalOwned("SIGTERM");
+      const deadline = Date.now() + 10_000;
+      while (processesRemain() && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      const forced = processesRemain();
+      if (forced) {
+        signalOwned("SIGKILL");
+        const killDeadline = Date.now() + 2000;
+        while (processesRemain() && Date.now() < killDeadline)
+          await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      NodeAssert.ok(!processesRemain(), "An owned smoke process did not exit.");
+      if (port) NodeAssert.ok(await portIsClosed(port), "The owned backend port is still open.");
+      NodeAssert.ok(!forced, "The isolated app or backend required forced shutdown.");
+    } catch (error) {
+      cleanupError = error;
+    } finally {
       try {
-        process.kill(pid, "SIGTERM");
+        await output.close();
       } catch (error) {
-        if (error.code !== "ESRCH") throw error;
+        cleanupError ??= error;
       }
     }
-    await Promise.race([exited, new Promise((resolve) => setTimeout(resolve, 10_000))]);
-    const deadline = Date.now() + 10_000;
-    while ([...owned].some(([pid, started]) => stillOwned(pid, started)) && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    const remaining = [...owned].filter(([pid, started]) => stillOwned(pid, started));
-    for (const [pid] of remaining) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch (error) {
-        if (error.code !== "ESRCH") throw error;
-      }
-    }
-    if (remaining.length) {
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      NodeAssert.ok(
-        remaining.every(([pid, started]) => !stillOwned(pid, started)),
-        "An owned smoke process did not exit.",
-      );
-      throw new Error("The isolated app or backend required forced shutdown.");
-    }
-    await output.close();
-    await NodeAssert.rejects(
-      fetch(`http://127.0.0.1:${port}/.well-known/t3/environment`, {
-        signal: AbortSignal.timeout(1000),
-      }),
-      "The owned backend port is still open.",
-    );
   }
-  if (startupError) throw startupError;
+  if (startupError) {
+    if (cleanupError) startupError.cause = cleanupError;
+    throw startupError;
+  }
+  if (cleanupError) throw cleanupError;
 }
