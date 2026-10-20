@@ -27,6 +27,22 @@ afterEach(() => {
 });
 
 describe("theme failure handling", () => {
+  it("follows only theme keys and removes values deleted in the main app", async () => {
+    const storage = createStorage();
+    storage.setItem("private-draft", "preserve");
+    storage.setItem("t3code:theme-halves:v1", "old");
+    vi.stubGlobal("window", { localStorage: storage });
+    const { applySharedThemePreferences, readThemePreference } = await import("./useTheme");
+    applySharedThemePreferences({
+      following: true,
+      values: { "t3code:theme": "dark", "private-draft": "discard" },
+    });
+    expect(readThemePreference()).toBe("dark");
+    expect(storage.getItem("t3code:theme-halves:v1")).toBeNull();
+    expect(storage.getItem("private-draft")).toBe("preserve");
+    applySharedThemePreferences({ following: true, values: null });
+    expect(readThemePreference()).toBe("dark");
+  });
   it("preserves exact storage causes and operation context", async () => {
     const readCause = new Error("storage read blocked");
     const writeCause = new Error("storage quota exceeded");

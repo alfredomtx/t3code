@@ -27,6 +27,7 @@ import {
   isAncestor,
 } from "./core.mjs";
 import { verifyArtifact, smokeApp, fileDigest, syncReleaseAssets } from "./verify-artifact.mjs";
+import { reportNightlyStatus } from "./alerts.mjs";
 
 const source = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
 const root = NodePath.join(NodeOS.homedir(), ".local/share/t3-personal");
@@ -47,7 +48,17 @@ for (let i = 0; i < args.length; i++) {
 NodeAssert.ok(!(publish && args.includes("--build-only")), "Choose --build-only or --publish.");
 if (explicitRevision !== undefined) personalVersion("1.0.0-nightly.20260101.1", explicitRevision);
 let log;
+let config;
+let failureRecord;
 let environment = { ...process.env };
+async function reportStatus(input) {
+  if (!publish || check) return;
+  try {
+    await reportNightlyStatus({ root, notifier: config?.notifier, ...input });
+  } catch (error) {
+    console.error(error);
+  }
+}
 function run(
   command,
   parameters,
@@ -75,6 +86,7 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters, { cwd: source }).output;
 const browserTests = [
+  "apps/web/src/hooks/useSettings.personal.browser.test.tsx",
   "apps/web/src/components/chat/RenderedResultDisclosure.browser.test.tsx",
   "apps/web/src/components/chat/HtmlRenderFrame.browser.test.tsx",
   "apps/web/src/components/chat/McpAppFrame.browser.test.tsx",
@@ -97,6 +109,9 @@ async function requiredTests() {
   fixed.push(
     "packages/contracts/src/settings.test.ts",
     "apps/web/src/clientPersistenceStorage.test.ts",
+    "apps/desktop/src/settings/DesktopClientSettings.test.ts",
+    "apps/web/src/hooks/useSettings.test.ts",
+    "apps/web/src/hooks/useTheme.test.ts",
   );
   for (const file of [...fixed, ...browserTests])
     await NodeFSP.access(NodePath.join(builder, file));
@@ -211,7 +226,7 @@ async function readBack(release, directory, assets, repairDraft = false) {
 }
 
 async function main() {
-  const config = await readJson(configFile);
+  config = await readJson(configFile);
   NodeAssert.ok(config, "Generate the personal runner configuration first.");
   NodeAssert.equal(
     config.sourceCheckout,
@@ -418,6 +433,7 @@ async function main() {
         originCommit === status.sourceCommit
       ) {
         console.log(`Already published ${version}.`);
+        await reportStatus({ release: status });
         return;
       }
       NodeAssert.ok(
@@ -484,7 +500,11 @@ async function main() {
     Object.assign(environment, publicEnvironment);
     const tests = await requiredTests();
     run("vp", ["install", "--frozen-lockfile"]);
-    run(config.node, ["--test", "scripts/personal/core.test.mjs"]);
+    run(config.node, [
+      "--test",
+      "scripts/personal/core.test.mjs",
+      "scripts/personal/alerts.test.mjs",
+    ]);
     run("vp", ["test", "run", ...tests]);
     run("vp", ["exec", "playwright", "install", "chromium"], {
       cwd: NodePath.join(builder, "apps/web"),
@@ -667,6 +687,7 @@ async function main() {
           await NodeFSP.rm(NodePath.join(root, "artifacts", name), { recursive: true });
       }
     console.log(`Published ${release.url}`);
+    await reportStatus({ release: status });
   } catch (error) {
     const failure = {
       error: error.message,
@@ -674,6 +695,7 @@ async function main() {
       failedAt: new Date().toISOString(),
       acceptedRelease: status?.releaseUrl ?? null,
     };
+    failureRecord = failure;
     await writeJson(NodePath.join(runDirectory, "failure.json"), failure);
     await writeJson(NodePath.join(root, "last-failure.json"), failure);
     throw error;
@@ -683,7 +705,20 @@ async function main() {
     await unlock();
   }
 }
-main().catch((error) => {
+main().catch(async (error) => {
   console.error(error);
   process.exitCode = 1;
+  if (publish && !check) {
+    const failure = failureRecord ?? {
+      error: error.message,
+      failedAt: new Date().toISOString(),
+      runDirectory: null,
+    };
+    try {
+      if (!failureRecord) await writeJson(NodePath.join(root, "last-failure.json"), failure);
+    } catch (diagnosticError) {
+      console.error(diagnosticError);
+    }
+    await reportStatus({ failure });
+  }
 });

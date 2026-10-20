@@ -2,6 +2,7 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useEffect, useSyncExternalStore } from "react";
+import { PERSONAL_SHARED_THEME_KEYS } from "@t3tools/shared/personalDesktop";
 import {
   applyThemePalette,
   CUSTOM_THEMES_STORAGE_KEY,
@@ -136,6 +137,39 @@ let snapshotStale = true;
 let lastDesktopTheme: "light" | "dark" | "system" | null = null;
 let lastAppliedTheme: Omit<ThemeSnapshot, "resolvedTheme"> | null = null;
 let themeStorageReadFailure: ThemeStorageError | null = null;
+let followsMainTheme = false;
+
+export function applySharedThemePreferences(input: {
+  following: boolean;
+  values: Readonly<Record<string, string>> | null;
+}) {
+  followsMainTheme = input.following;
+  if (!input.following || input.values === null || typeof window === "undefined") return;
+  let changed = false;
+  for (const key of PERSONAL_SHARED_THEME_KEYS) {
+    const value = input.values[key] ?? null;
+    if (window.localStorage.getItem(key) === value) continue;
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
+    changed = true;
+  }
+  if (changed) {
+    invalidateCustomThemes();
+    refreshTheme();
+  }
+}
+
+function rejectSharedThemeEdit() {
+  if (!followsMainTheme) return false;
+  void import("~/components/ui/toast").then(({ toastManager }) => {
+    toastManager.add({
+      type: "info",
+      title: "Theme follows T3 Code Nightly",
+      description: "Change the theme in the main app. Return here to apply it.",
+    });
+  });
+  return true;
+}
 
 function emitChange() {
   snapshotStale = true;
@@ -505,6 +539,7 @@ export function useRenderedAppearance() {
 }
 
 function setTheme(next: Theme): boolean {
+  if (rejectSharedThemeEdit()) return false;
   if (typeof window === "undefined") return false;
   try {
     // Preserve the current mode before replacing a legacy or inferred theme
@@ -549,6 +584,7 @@ function setTheme(next: Theme): boolean {
 }
 
 function setAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
+  if (rejectSharedThemeEdit()) return false;
   if (typeof window === "undefined") return false;
   try {
     writeAppearanceModePreference(nextAppearanceMode);
@@ -574,6 +610,7 @@ function setAppearanceMode(nextAppearanceMode: ThemePreferenceMode): boolean {
 }
 
 function setThemeHalf(appearance: ThemeAppearance, themeId: string | null): boolean {
+  if (rejectSharedThemeEdit()) return false;
   if (typeof window === "undefined") return false;
   try {
     const current = readStoredThemeHalvesRaw();
@@ -604,6 +641,7 @@ function setThemeHalf(appearance: ThemeAppearance, themeId: string | null): bool
 }
 
 function clearThemeHalves(): boolean {
+  if (rejectSharedThemeEdit()) return false;
   if (typeof window === "undefined") return false;
   try {
     window.localStorage.removeItem(THEME_HALVES_STORAGE_KEY);

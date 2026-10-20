@@ -51,7 +51,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import { primaryServerSettingsAtom, serverEnvironment } from "~/state/server";
 import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { useAtomCommand } from "~/state/use-atom-command";
-import { useTheme } from "./useTheme";
+import { applySharedThemePreferences, useTheme } from "./useTheme";
 import {
   environmentSession,
   environmentSessionStatesAtom,
@@ -74,6 +74,51 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
+let followsMainPreferences = false;
+
+async function readPersistedClientSettings() {
+  const shared =
+    typeof window === "undefined"
+      ? null
+      : await window.desktopBridge?.getPersonalSharedPreferences?.();
+  followsMainPreferences = shared != null;
+  applySharedThemePreferences({
+    following: followsMainPreferences,
+    values: shared?.themeValues ?? null,
+  });
+  return shared?.clientSettings ?? ensureLocalApi().persistence.getClientSettings();
+}
+
+function rejectSharedPreferenceEdit(patch: ClientSettingsPatch) {
+  if (
+    !followsMainPreferences ||
+    Object.keys(patch).every((key) => key === "collapseRenderedResults")
+  )
+    return false;
+  toastManager.add({
+    type: "info",
+    title: "Preferences follow T3 Code Nightly",
+    description: "Change shared preferences in the main app. Return here to apply them.",
+  });
+  return true;
+}
+
+export function refreshClientSettings(): Promise<void> {
+  return enqueueClientSettingsPersistence(async () => {
+    if (clientSettingsHydrationStatus !== "ready") return hydrateClientSettings();
+    const persisted = await readPersistedClientSettings();
+    if (persisted) replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persisted });
+  });
+}
+
+function refreshOnFocus() {
+  void refreshClientSettings().catch((error) => {
+    console.error(
+      `${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} refresh failed`,
+      safeErrorLogAttributes(error),
+    );
+  });
+}
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -106,9 +151,13 @@ function setClientSettingsHydrationStatus(nextStatus: ClientSettingsHydrationSta
 
 function subscribeClientSettings(listener: () => void): () => void {
   clientSettingsListeners.add(listener);
+  if (clientSettingsListeners.size === 1 && typeof window !== "undefined")
+    window.addEventListener("focus", refreshOnFocus);
   void hydrateClientSettings().catch(() => undefined);
   return () => {
     clientSettingsListeners.delete(listener);
+    if (clientSettingsListeners.size === 0 && typeof window !== "undefined")
+      window.removeEventListener("focus", refreshOnFocus);
   };
 }
 
@@ -144,7 +193,7 @@ async function hydrateClientSettings(): Promise<void> {
   );
   const nextHydration = (async () => {
     try {
-      const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
+      const persistedSettings = await readPersistedClientSettings();
       if (hydrationGeneration !== clientSettingsHydrationGeneration) {
         return;
       }
@@ -190,6 +239,7 @@ export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<void> {
+  if (rejectSharedPreferenceEdit(patch)) return Promise.resolve();
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
@@ -204,6 +254,7 @@ export function persistClientSettingsPatch(
         if (clientSettingsHydrationStatus !== "ready") {
           await hydrateClientSettings();
         }
+        if (rejectSharedPreferenceEdit(patch)) return;
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
         deferredClientSettingsPatchCount -= 1;
@@ -234,6 +285,13 @@ export async function persistClientSettingsUpdate(
     for (;;) {
       const current = getClientSettingsSnapshot();
       const next = update(current);
+      if (
+        followsMainPreferences &&
+        !Equal.equals({ ...current, collapseRenderedResults: next.collapseRenderedResults }, next)
+      ) {
+        rejectSharedPreferenceEdit(next);
+        return current;
+      }
       await persist(next);
       if (getClientSettingsSnapshot() === current) {
         replaceClientSettingsSnapshot(next);
@@ -745,6 +803,8 @@ export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> 
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
+  followsMainPreferences = false;
+  applySharedThemePreferences({ following: false, values: null });
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsHydrationStatus = "pending";

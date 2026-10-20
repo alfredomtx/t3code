@@ -78,7 +78,7 @@ const decodeClientSettingsJson = Schema.decodeEffect(Schema.fromJsonString(Clien
 const decodeRecordJson = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
 );
-function layer(baseDir: string) {
+function layer(baseDir: string, followsMain = false) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
     homeDirectory: baseDir,
@@ -91,7 +91,10 @@ function layer(baseDir: string) {
     runningUnderArm64Translation: false,
   }).pipe(
     Layer.provide(
-      Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
+      Layer.mergeAll(
+        NodeServices.layer,
+        DesktopConfig.layerTest(followsMain ? {} : { T3CODE_HOME: baseDir }),
+      ),
     ),
   );
 
@@ -103,16 +106,65 @@ function layer(baseDir: string) {
 
 const withClientSettings = <A, E, R>(
   effect: Effect.Effect<A, E, R | DesktopClientSettings.DesktopClientSettings>,
+  followsMain = false,
 ) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const baseDir = yield* fileSystem.makeTempDirectoryScoped({
       prefix: "t3-desktop-client-settings-test-",
     });
-    return yield* effect.pipe(Effect.provide(layer(baseDir)));
+    return yield* effect.pipe(Effect.provide(layer(baseDir, followsMain)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
+  it.effect(
+    "follows main preferences without writing them and retains the personal collapse switch",
+    () =>
+      withClientSettings(
+        Effect.gen(function* () {
+          const environment = yield* DesktopEnvironment.DesktopEnvironment;
+          const fs = yield* FileSystem.FileSystem;
+          const service = yield* DesktopClientSettings.DesktopClientSettings;
+          const officialPath = `${environment.homeDirectory}/.t3/userdata/client-settings.json`;
+          yield* fs.makeDirectory(`${environment.homeDirectory}/.t3/userdata`, { recursive: true });
+          const official = JSON.stringify({
+            ...clientSettings,
+            timestampFormat: "12-hour",
+            collapseRenderedResults: true,
+          });
+          yield* fs.writeFileString(officialPath, official);
+          yield* service.set({
+            ...clientSettings,
+            timestampFormat: "24-hour",
+            collapseRenderedResults: false,
+          });
+          assert.equal(yield* fs.readFileString(officialPath), official);
+          assert.deepEqual(JSON.parse(yield* fs.readFileString(environment.clientSettingsPath)), {
+            collapseRenderedResults: false,
+          });
+          const effective = Option.getOrThrow(yield* service.get);
+          assert.equal(effective.timestampFormat, "12-hour");
+          assert.isFalse(effective.collapseRenderedResults);
+          yield* fs.writeFileString(
+            `${officialPath}.next`,
+            JSON.stringify({ timestampFormat: "locale" }),
+          );
+          yield* fs.rename(`${officialPath}.next`, officialPath);
+          const refreshed = Option.getOrThrow(yield* service.get);
+          assert.equal(refreshed.timestampFormat, "locale");
+          assert.isFalse(refreshed.collapseRenderedResults);
+          yield* fs.writeFileString(officialPath, "invalid JSON");
+          assert.equal((yield* Effect.flip(service.get)).operation, "decode-document");
+          assert.isFalse(
+            JSON.parse(yield* fs.readFileString(environment.clientSettingsPath))
+              .collapseRenderedResults,
+          );
+          yield* fs.remove(officialPath);
+          assert.equal((yield* Effect.flip(service.get)).operation, "read-file");
+        }),
+        true,
+      ),
+  );
   it.effect("returns none when no client settings file exists", () =>
     withClientSettings(
       Effect.gen(function* () {

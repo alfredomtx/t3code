@@ -64,6 +64,7 @@ describe("preview IPC methods", () => {
           manager as PreviewManager.PreviewManager["Service"],
         ),
         Effect.provideService(DesktopClientSettings.DesktopClientSettings, {
+          sharedPreferences: Effect.succeed(null),
           get: Effect.succeedNone,
           set: () => Effect.void,
         }),

@@ -25,6 +25,7 @@ import {
   persistClientSettingsUpdate,
   prepareModelPreferencesPatch,
   resolveEnvironmentIdentificationMode,
+  refreshClientSettings,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 
@@ -36,6 +37,39 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe("following main app preferences", () => {
+  it("refreshes followed values, blocks duplicate edits, and keeps the last good snapshot on read failure", async () => {
+    const shared = vi.fn().mockResolvedValue({
+      clientSettings: { ...DEFAULT_CLIENT_SETTINGS, wordWrap: false },
+      themeValues: null,
+    });
+    vi.stubGlobal("window", { desktopBridge: { getPersonalSharedPreferences: shared } });
+    await ensureClientSettingsHydrated();
+    expect(getClientSettings().wordWrap).toBe(false);
+    await persistClientSettingsPatch({ wordWrap: true });
+    expect(getClientSettings().wordWrap).toBe(false);
+    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+    await persistClientSettingsPatch({ collapseRenderedResults: false });
+    expect(getClientSettings().collapseRenderedResults).toBe(false);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledOnce();
+    shared.mockResolvedValueOnce({
+      clientSettings: {
+        ...DEFAULT_CLIENT_SETTINGS,
+        wordWrap: true,
+        collapseRenderedResults: false,
+      },
+      themeValues: null,
+    });
+    await refreshClientSettings();
+    expect(getClientSettings().wordWrap).toBe(true);
+    shared.mockRejectedValueOnce(new Error("Unreadable main settings"));
+    await expect(refreshClientSettings()).rejects.toThrow("Unreadable main settings");
+    expect(getClientSettings().wordWrap).toBe(true);
+    expect(getClientSettings().collapseRenderedResults).toBe(false);
+  });
 });
 
 describe("client settings hydration", () => {

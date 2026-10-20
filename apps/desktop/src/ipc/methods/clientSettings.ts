@@ -1,4 +1,4 @@
-import { ClientSettingsSchema } from "@t3tools/contracts";
+import { ClientSettingsSchema, PersonalSharedPreferencesSchema } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -15,6 +15,16 @@ export const getClientSettings = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.clientSettings.get")(function* () {
     const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
     return Option.getOrNull(yield* clientSettings.get);
+  }),
+});
+
+export const getPersonalSharedPreferences = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.GET_PERSONAL_SHARED_PREFERENCES_CHANNEL,
+  payload: Schema.Void,
+  result: Schema.NullOr(PersonalSharedPreferencesSchema),
+  handler: Effect.fn("desktop.ipc.personalSharedPreferences.get")(function* () {
+    const clientSettings = yield* DesktopClientSettings.DesktopClientSettings;
+    return yield* clientSettings.sharedPreferences;
   }),
 });
 

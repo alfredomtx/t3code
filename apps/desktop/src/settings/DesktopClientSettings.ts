@@ -1,4 +1,9 @@
-import { ClientSettingsSchema, type ClientSettings } from "@t3tools/contracts";
+import {
+  ClientSettingsSchema,
+  type ClientSettings,
+  type PersonalSharedPreferences,
+} from "@t3tools/contracts";
+import { PERSONAL_DESKTOP, PERSONAL_SHARED_THEME_KEYS } from "@t3tools/shared/personalDesktop";
 import { fromLenientJson } from "@t3tools/shared/schemaJson";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
 import * as Context from "effect/Context";
@@ -12,6 +17,7 @@ import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { readChromiumLocalStorage } from "../app/chromiumLocalStorage.ts";
 
 const ClientSettingsJson = fromLenientJson(ClientSettingsSchema);
 const decodeClientSettingsDocument = Schema.decodeEffect(
@@ -26,6 +32,9 @@ const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
   );
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
+const encodePersonalSettingsJson = Schema.encodeEffect(
+  fromLenientJson(Schema.Struct({ collapseRenderedResults: Schema.Boolean })),
+);
 
 export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopClientSettingsReadError>()(
   "DesktopClientSettingsReadError",
@@ -66,6 +75,10 @@ export class DesktopClientSettings extends Context.Service<
   DesktopClientSettings,
   {
     readonly get: Effect.Effect<Option.Option<ClientSettings>, DesktopClientSettingsReadError>;
+    readonly sharedPreferences: Effect.Effect<
+      PersonalSharedPreferences | null,
+      DesktopClientSettingsReadError
+    >;
     readonly set: (
       settings: ClientSettings,
     ) => Effect.Effect<void, DesktopClientSettingsWriteError>;
@@ -127,6 +140,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   readonly settingsPath: string;
   readonly settings: ClientSettings;
   readonly suffix: string;
+  readonly personalOnly?: boolean;
 }): Effect.fn.Return<void, DesktopClientSettingsWriteError> {
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, input.fileSystem),
@@ -142,7 +156,13 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   );
   const directory = input.path.dirname(targetPath);
   const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;
-  const encoded = yield* encodeClientSettingsJson(input.settings).pipe(
+  const encoded = yield* (
+    input.personalOnly
+      ? encodePersonalSettingsJson({
+          collapseRenderedResults: input.settings.collapseRenderedResults,
+        })
+      : encodeClientSettingsJson(input.settings)
+  ).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopClientSettingsWriteError({
@@ -189,11 +209,63 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const crypto = yield* Crypto.Crypto;
+  const followsMain =
+    environment.isPackaged &&
+    !environment.isDevelopment &&
+    environment.baseDir === path.join(environment.homeDirectory, PERSONAL_DESKTOP.homeName);
+  const officialPath = path.join(
+    environment.homeDirectory,
+    ".t3",
+    "userdata",
+    "client-settings.json",
+  );
+  const readSettings = Effect.gen(function* () {
+    const local = yield* readClientSettings(fileSystem, environment.clientSettingsPath);
+    if (!followsMain) return local;
+    const official = yield* readClientSettings(fileSystem, officialPath);
+    if (Option.isNone(official)) {
+      return yield* new DesktopClientSettingsReadError({
+        operation: "read-file",
+        path: officialPath,
+        cause: new Error("Main app preferences are missing."),
+      });
+    }
+    return Option.some({
+      ...official.value,
+      collapseRenderedResults: Option.getOrNull(local)?.collapseRenderedResults ?? true,
+    });
+  });
+  const sharedPreferences = Effect.gen(function* () {
+    if (!followsMain) return null;
+    const settings = yield* readSettings;
+    if (Option.isNone(settings)) return null;
+    const themeValues = yield* readChromiumLocalStorage(
+      path.join(environment.appDataDirectory, "t3code-v2", "Local Storage", "leveldb"),
+      "t3code://app",
+    ).pipe(
+      Effect.map((items) =>
+        Object.fromEntries(
+          PERSONAL_SHARED_THEME_KEYS.flatMap((key) => {
+            const value = items.get(key);
+            return value === undefined ? [] : [[key, value]];
+          }),
+        ),
+      ),
+      Effect.catch((cause) =>
+        Effect.logWarning("Could not read main app theme preferences.", cause).pipe(
+          Effect.as(null),
+        ),
+      ),
+    );
+    return { clientSettings: settings.value, themeValues };
+  }).pipe(
+    Effect.provideService(FileSystem.FileSystem, fileSystem),
+    Effect.provideService(Path.Path, path),
+  );
 
   return DesktopClientSettings.of({
-    get: readClientSettings(fileSystem, environment.clientSettingsPath).pipe(
-      Effect.withSpan("desktop.clientSettings.get"),
-    ),
+    get: readSettings.pipe(Effect.withSpan("desktop.clientSettings.get")),
+    sharedPreferences,
     set: (settings) =>
       crypto.randomUUIDv4().pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
@@ -212,6 +284,7 @@ export const make = Effect.gen(function* () {
             settingsPath: environment.clientSettingsPath,
             settings,
             suffix,
+            personalOnly: followsMain,
           }),
         ),
         Effect.withSpan("desktop.clientSettings.set"),
@@ -227,6 +300,7 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
     Effect.gen(function* () {
       const settingsRef = yield* Ref.make(initialSettings);
       return DesktopClientSettings.of({
+        sharedPreferences: Effect.succeed(null),
         get: Ref.get(settingsRef),
         set: (settings) => Ref.set(settingsRef, Option.some(settings)),
       });

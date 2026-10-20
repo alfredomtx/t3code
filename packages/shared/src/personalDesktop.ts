@@ -10,3 +10,11 @@ export const PERSONAL_DESKTOP = {
   sourceRepository: "alfredomtx/t3code",
   updateRepository: "alfredomtx/t3code-personal-releases",
 } as const;
+
+export const PERSONAL_SHARED_THEME_KEYS = [
+  "t3code:theme",
+  "t3code:themes:v1",
+  "t3code:theme-follow-system",
+  "t3code:theme-appearance-mode",
+  "t3code:theme-halves:v1",
+] as const;

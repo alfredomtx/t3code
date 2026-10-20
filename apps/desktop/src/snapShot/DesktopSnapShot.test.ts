@@ -508,6 +508,7 @@ const layerTest = (
         Layer.succeed(
           DesktopClientSettings.DesktopClientSettings,
           DesktopClientSettings.DesktopClientSettings.of({
+            sharedPreferences: Effect.succeed(null),
             get: settingsGet,
             set: () => Effect.void,
           }),

@@ -30,8 +30,14 @@ const config = {
   codex: NodeChildProcess.execFileSync("/bin/zsh", ["-lc", "command -v codex"], {
     encoding: "utf8",
   }).trim(),
+  notifier: "/opt/homebrew/bin/terminal-notifier",
 };
-for (const value of [config.node, NodePath.join(config.vpBin, "vp"), config.codex]) {
+for (const value of [
+  config.node,
+  NodePath.join(config.vpBin, "vp"),
+  config.codex,
+  config.notifier,
+]) {
   NodeAssert.ok(NodePath.isAbsolute(value));
   await NodeFSP.access(value);
 }

@@ -127,6 +127,11 @@ NodeTest.test(
       const bin = NodePath.join(root, "bin");
       await NodeFSP.mkdir(bin);
       const calls = NodePath.join(root, "calls.txt");
+      const notifications = NodePath.join(root, "notifications.txt");
+      const notifier = NodePath.join(bin, "notify");
+      await NodeFSP.writeFile(notifier, `#!/bin/sh\nprintf '%s\\n' "$*" >> '${notifications}'\n`, {
+        mode: 0o755,
+      });
       const script = `#!/bin/sh\nprintf '%s %s\\n' "$0" "$*" >> '${calls}'\ncase "$*" in\n  'auth status') exit 0;;\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'ls-remote --exit-code https://github.com/alfredomtx/t3code.git refs/heads/personal') echo 'd36b7da2485bc889b320a285deea181f637d760a refs/heads/personal';;\n  *) echo 'Unexpected command' >&2; exit 9;;\nesac\n`;
       for (const command of ["gh", "git", "codex", "vp"])
         await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
@@ -140,6 +145,7 @@ NodeTest.test(
         vpHome: root,
         vpBin: bin,
         codex: NodePath.join(bin, "codex"),
+        notifier,
       };
       await writeJson(configFile, config);
       const run = (args) =>
@@ -165,6 +171,11 @@ NodeTest.test(
       );
       await writeJson(configFile, { ...config, updateRepository: "alfredomtx/t3code" });
       NodeAssert.equal(run(["--publish"]).status, 1);
+      NodeAssert.equal(run(["--publish"]).status, 1);
+      NodeAssert.equal(
+        (await NodeFSP.readFile(notifications, "utf8")).trim().split("\n").length,
+        1,
+      );
       NodeAssert.equal(await NodeFSP.readFile(calls, "utf8"), firstCalls);
       await NodeAssert.rejects(
         NodeFSP.access(NodePath.join(root, ".local/share/t3-personal/status.json")),
