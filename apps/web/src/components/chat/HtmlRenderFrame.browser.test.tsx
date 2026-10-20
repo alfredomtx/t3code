@@ -77,6 +77,7 @@ it("keeps the HTML document and draft across collapse", async () => {
   );
   container = document.body.appendChild(document.createElement("div"));
   root = createRoot(container);
+  const onFullscreenChange = vi.fn();
   await act(() =>
     root?.render(
       <RenderedResultDisclosure
@@ -85,7 +86,7 @@ it("keeps the HTML document and draft across collapse", async () => {
         defaultCollapsed={true}
         overrides={new Map()}
         onToggle={() => {}}
-        onFullscreenChange={() => {}}
+        onFullscreenChange={onFullscreenChange}
       >
         {({ onFullscreenChange }) => (
           <HtmlRenderFrame
@@ -122,4 +123,12 @@ it("keeps the HTML document and draft across collapse", async () => {
   });
   frame?.contentWindow?.postMessage("read-draft", "*");
   expect(await value).toBe("Retain this input");
+  const disclosureButton = container.querySelector("button");
+  await userEvent.click(browserPage.getByRole("button", { name: "Open full screen" }));
+  await expect.poll(() => disclosureButton?.disabled).toBe(true);
+  expect(onFullscreenChange).toHaveBeenLastCalledWith(true);
+  await userEvent.click(browserPage.getByRole("button", { name: "Close", exact: true }));
+  await expect.poll(() => disclosureButton?.disabled).toBe(false);
+  expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
+  expect(container.querySelector("iframe")).toBe(frame);
 });
