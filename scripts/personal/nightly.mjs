@@ -247,6 +247,10 @@ async function main() {
   environment.GIT_CONFIG_COUNT = "1";
   environment.GIT_CONFIG_KEY_0 = "core.hooksPath";
   environment.GIT_CONFIG_VALUE_0 = "/dev/null";
+  environment.GIT_AUTHOR_NAME = identity.productName;
+  environment.GIT_COMMITTER_NAME = identity.productName;
+  environment.GIT_AUTHOR_EMAIL = "alfredomtx@users.noreply.github.com";
+  environment.GIT_COMMITTER_EMAIL = "alfredomtx@users.noreply.github.com";
   if (check) {
     run(config.node, ["--version"], { cwd: source });
     run("gh", ["auth", "status"], { cwd: source });
