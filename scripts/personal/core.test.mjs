@@ -296,6 +296,7 @@ NodeTest.test(
         NodePath.join(root, "node_modules/ignored/.env"),
         "dependency fixture",
       );
+      await NodeFSP.writeFile(NodePath.join(root, ".envrc"), "layout node");
       await assertBuildEnvironment(root);
       await NodeFSP.symlink(".env.example", NodePath.join(root, ".env"));
       await NodeAssert.rejects(assertBuildEnvironment(root));

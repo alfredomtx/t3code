@@ -138,7 +138,7 @@ export async function assertBuildEnvironment(root) {
   NodeAssert.ok(
     !files.some(
       (file) =>
-        NodePath.basename(file).toLowerCase().startsWith(".env") &&
+        /^\.env(?:\.|$)/iu.test(NodePath.basename(file)) &&
         NodePath.basename(file).toLowerCase() !== ".env.example",
     ),
     "The dedicated builder contains an environment input. Remove it before building.",
