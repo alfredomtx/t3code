@@ -543,6 +543,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? ["Diff colors"]
       : []),
     ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+    ...(settings.collapseRenderedResults !== DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults
+      ? ["Collapse rendered results"]
+      : []),
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
       : []),
@@ -720,6 +723,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      collapseRenderedResults: DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults,
       mathRenderingEnabled: DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
@@ -1376,6 +1380,32 @@ export function AppearanceSettingsPanel() {
                 </SelectPopup>
               </Select>
             </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("collapse-rendered-results")}
+          description="Start HTML pages and interactive app results collapsed. Expand any result to view it."
+          resetAction={
+            settings.collapseRenderedResults !==
+            DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults ? (
+              <SettingResetButton
+                label="collapse rendered results"
+                onClick={() =>
+                  updateSettings({
+                    collapseRenderedResults: DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.collapseRenderedResults}
+              onCheckedChange={(checked) =>
+                updateSettings({ collapseRenderedResults: Boolean(checked) })
+              }
+              aria-label="Collapse rendered results"
+            />
           }
         />
         <SettingsRow

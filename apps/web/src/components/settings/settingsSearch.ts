@@ -239,6 +239,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "collapse-rendered-results",
+    title: "Collapse rendered results",
+    to: "/settings/appearance",
+    searchTerms: ["html mcp app iframe expand disclosure"],
+  },
+  {
     id: "math-rendering",
     title: "Render math",
     to: "/settings/appearance",

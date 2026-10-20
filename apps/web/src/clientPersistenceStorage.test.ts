@@ -114,6 +114,18 @@ describe("clientPersistenceStorage", () => {
     expect(settings).not.toHaveProperty("diffWordWrap");
   });
 
+  it("persists the rendered result preference and defaults old settings to collapsed", async () => {
+    const testWindow = getTestWindow();
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
+    expect(readBrowserClientSettings()?.collapseRenderedResults).toBe(true);
+    for (const collapseRenderedResults of [false, true]) {
+      writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, collapseRenderedResults });
+      expect(readBrowserClientSettings()?.collapseRenderedResults).toBe(collapseRenderedResults);
+    }
+  });
+
   it("keeps the default diff file state across reloads and defaults it to collapsed", async () => {
     const testWindow = getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =

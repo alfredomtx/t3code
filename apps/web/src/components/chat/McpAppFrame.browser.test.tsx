@@ -10,7 +10,7 @@ import "~/index.css";
 // and asks on load, right after it is told it left full screen, and whenever
 // it loses focus while inline. It reports each answer to the page with a
 // message the host ignores.
-const APP_HTML = `<!doctype html><button>Open full screen</button><script>
+const APP_HTML = `<!doctype html><button>Open full screen</button><input aria-label="Draft"><script>
 let nextId = 0;
 const pending = new Map();
 const request = (method, params) =>
@@ -32,6 +32,7 @@ const refocusAndAsk = (source) => {
   void askFullscreen(source);
 };
 addEventListener("message", ({ data }) => {
+  if (data === "read-draft") return parent.postMessage({ probe: "draft:" + document.querySelector("input").value }, "*");
   if (data === "retry") return refocusAndAsk("retry");
   if (pending.has(data.id)) {
     pending.get(data.id)(data.result);
@@ -76,6 +77,7 @@ vi.mock(import("../../hooks/useHtmlRenderTheme"), async (original) => ({
 }));
 
 import { McpAppFrame } from "./McpAppFrame";
+import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
 
 let root: Root | undefined;
 let skew = 0;
@@ -87,11 +89,12 @@ const onProbe = (event: MessageEvent) => {
   answers.push(probe);
   answered?.();
 };
-const nextAnswer = async (action: () => Promise<unknown>) => {
+const nextAnswer = async (action: () => Promise<unknown>, prefix = "") => {
   const seen = answers.length;
   const answer = new Promise<string>((resolve) => {
     answered = () => {
-      if (answers.length > seen) resolve(answers[seen]!);
+      const answer = answers.slice(seen).find((value) => value.startsWith(prefix));
+      if (answer !== undefined) resolve(answer);
     };
   });
   await action();
@@ -119,20 +122,33 @@ afterEach(async () => {
 
 const isFullscreen = () => document.querySelector("[data-mcp-app-fullscreen]") !== null;
 
-const renderApp = async () => {
+const renderApp = async (defaultCollapsed = false) => {
   const container = document.body.appendChild(document.createElement("div"));
   root = createRoot(container);
   await act(async () =>
     root?.render(
-      <McpAppFrame
-        environmentId={EnvironmentId.make("env")}
-        threadId={ThreadId.make("thread")}
-        conversationThreadId={ThreadId.make("thread")}
-        itemId={TurnItemId.make("item")}
-        revision="1"
-        app={{ attachmentId: "app", server: "srv", tool: "show", resourceUri: "ui://srv/app" }}
-        onSendMessage={undefined}
-      />,
+      <RenderedResultDisclosure
+        rowId="app"
+        title="Interactive app"
+        defaultCollapsed={defaultCollapsed}
+        overrides={new Map()}
+        onToggle={() => {}}
+        onFullscreenChange={() => {}}
+      >
+        {({ visible, onFullscreenChange }) => (
+          <McpAppFrame
+            visible={visible}
+            onFullscreenChange={onFullscreenChange}
+            environmentId={EnvironmentId.make("env")}
+            threadId={ThreadId.make("thread")}
+            conversationThreadId={ThreadId.make("thread")}
+            itemId={TurnItemId.make("item")}
+            revision="1"
+            app={{ attachmentId: "app", server: "srv", tool: "show", resourceUri: "ui://srv/app" }}
+            onSendMessage={undefined}
+          />
+        )}
+      </RenderedResultDisclosure>,
     ),
   );
 };
@@ -140,7 +156,7 @@ const renderApp = async () => {
 const retry = () =>
   nextAnswer(async () => {
     document.querySelector("iframe")!.contentWindow!.postMessage("retry", "*");
-  });
+  }, "retry:");
 
 it("keeps load and idle retries inline even after the page-input cooldown", async () => {
   expect(await nextAnswer(renderApp)).toBe("load:inline");
@@ -157,6 +173,12 @@ it("allows an app click immediately after loading on an idle page", async () => 
     .getByRole("button", { name: "Open full screen" });
   expect(await nextAnswer(() => userEvent.click(appButton))).toBe("tap:fullscreen");
   expect(isFullscreen()).toBe(true);
+  const disclosure = page.getByRole("button", { name: "Interactive app", exact: true });
+  await expect.element(disclosure).toBeDisabled();
+  expect(
+    await nextAnswer(() => userEvent.click(page.getByRole("button", { name: "Exit full screen" }))),
+  ).toBe("exit:inline");
+  await expect.element(disclosure).toBeEnabled();
 });
 
 it("opens full screen only from a tap in the app, never from activation the page got elsewhere", async () => {
@@ -193,4 +215,30 @@ it("opens full screen only from a tap in the app, never from activation the page
   (await exit.element()).focus();
   expect(await nextAnswer(() => userEvent.keyboard("{Escape}"))).toBe("exit:inline");
   expect(isFullscreen()).toBe(false);
+});
+
+it("keeps the MCP document and draft across collapse and refuses hidden fullscreen requests", async () => {
+  expect(await nextAnswer(() => renderApp(true))).toBe("load:inline");
+  const disclosure = page.getByRole("button", { name: "Interactive app", exact: true });
+  const frame = document.querySelector("iframe");
+  if (!frame) throw new Error("Missing app frame");
+  const content = frame.closest("[aria-hidden]");
+  if (!content) throw new Error("Missing app content");
+  expect(content.getBoundingClientRect().height).toBe(0);
+  await userEvent.click(disclosure);
+  const draft = page
+    .frameLocator(page.getByTitle("srv app"))
+    .getByRole("textbox", { name: "Draft" });
+  await userEvent.fill(draft, "Keep this draft");
+  await userEvent.click(disclosure);
+  skew += 5_000;
+  expect(await retry()).toBe("retry:inline");
+  expect(isFullscreen()).toBe(false);
+  expect(content.getBoundingClientRect().height).toBe(0);
+  await userEvent.click(disclosure);
+  expect(document.querySelector("iframe")).toBe(frame);
+  expect(
+    await nextAnswer(async () => frame.contentWindow?.postMessage("read-draft", "*"), "draft:"),
+  ).toBe("draft:Keep this draft");
+  expect(answers.filter((answer) => answer.startsWith("load:"))).toHaveLength(1);
 });
