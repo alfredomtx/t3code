@@ -1,6 +1,4 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   htmlRenderTheme,
@@ -11,6 +9,7 @@ import { T3_CODE_DARK_THEME_COLORS } from "@t3tools/shared/themePalettes";
 
 import "~/index.css";
 
+import { render as renderUi } from "../../../test/render";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
 import { page as browserPage, userEvent } from "vite-plus/test/browser";
@@ -31,33 +30,26 @@ vi.mock(import("~/hooks/useHtmlRenderTheme"), async (original) => ({
     htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_DEFAULT_FONTS),
 }));
 
-let root: Root | undefined;
-let container: HTMLDivElement | undefined;
-
-afterEach(async () => {
-  await act(() => root?.unmount());
-  container?.remove();
-  URL.revokeObjectURL(page.url);
-});
+function setup() {
+  page.url = "";
+}
 
 it("grows past the agent's height to fit the page the client lays out", async () => {
+  setup();
   page.url = URL.createObjectURL(
     new Blob([injectHtmlRenderBootstrap('<div style="height:2345px"></div>')], {
       type: "text/html",
     }),
   );
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
-  await act(() =>
-    root!.render(
-      <HtmlRenderFrame
-        environmentId={EnvironmentId.make("environment-1")}
-        htmlRender={{ attachmentId: "html", title: "Tall page", height: 400 }}
-        threadRef={undefined}
-      />,
-    ),
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(page.url) };
+  await using screen = await renderUi(
+    <HtmlRenderFrame
+      environmentId={EnvironmentId.make("environment-1")}
+      htmlRender={{ attachmentId: "html", title: "Tall page", height: 400 }}
+      threadRef={undefined}
+    />,
   );
+  const { container } = screen;
 
   const box = container.firstElementChild as HTMLElement;
   await expect.poll(() => box.style.height).toBe("2345px");
@@ -65,6 +57,7 @@ it("grows past the agent's height to fit the page the client lays out", async ()
 });
 
 it("keeps the HTML document and draft across collapse", async () => {
+  setup();
   page.url = URL.createObjectURL(
     new Blob(
       [
@@ -75,30 +68,28 @@ it("keeps the HTML document and draft across collapse", async () => {
       { type: "text/html" },
     ),
   );
-  container = document.body.appendChild(document.createElement("div"));
-  root = createRoot(container);
+  using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(page.url) };
   const onFullscreenChange = vi.fn();
-  await act(() =>
-    root?.render(
-      <RenderedResultDisclosure
-        rowId="html"
-        title="HTML result"
-        defaultCollapsed={true}
-        overrides={new Map()}
-        onToggle={() => {}}
-        onFullscreenChange={onFullscreenChange}
-      >
-        {({ onFullscreenChange }) => (
-          <HtmlRenderFrame
-            environmentId={EnvironmentId.make("environment-1")}
-            htmlRender={{ attachmentId: "html", title: "Page", height: 400 }}
-            threadRef={undefined}
-            onFullscreenChange={onFullscreenChange}
-          />
-        )}
-      </RenderedResultDisclosure>,
-    ),
+  await using screen = await renderUi(
+    <RenderedResultDisclosure
+      rowId="html"
+      title="HTML result"
+      defaultCollapsed={true}
+      overrides={new Map()}
+      onToggle={() => {}}
+      onFullscreenChange={onFullscreenChange}
+    >
+      {({ onFullscreenChange }) => (
+        <HtmlRenderFrame
+          environmentId={EnvironmentId.make("environment-1")}
+          htmlRender={{ attachmentId: "html", title: "Page", height: 400 }}
+          threadRef={undefined}
+          onFullscreenChange={onFullscreenChange}
+        />
+      )}
+    </RenderedResultDisclosure>,
   );
+  const { container } = screen;
   const disclosure = browserPage.getByRole("button", { name: "HTML result" });
   await expect.poll(() => container?.querySelector("iframe")).toBeTruthy();
   const frame = container.querySelector("iframe");

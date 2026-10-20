@@ -1,5 +1,5 @@
-import { act, createElement } from "react";
-import { createRoot } from "react-dom/client";
+import { createElement } from "react";
+import { act, render as renderUi } from "../../test/render";
 import { expect, it, vi } from "vite-plus/test";
 import { DEFAULT_CLIENT_SETTINGS, type ClientSettings } from "@t3tools/contracts/settings";
 import {
@@ -27,14 +27,12 @@ it("refreshes main preferences on window focus while keeping the personal collap
     clientSettings: current,
     themeValues: { "t3code:theme": "dark" },
   }));
-  const container = document.createElement("div");
-  const root = createRoot(container);
   try {
-    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.stubGlobal("desktopBridge", { getPersonalSharedPreferences: read });
     __resetClientSettingsPersistenceForTests();
     await ensureClientSettingsHydrated();
-    await act(() => root.render(createElement(PreferenceReader)));
+    await using screen = await renderUi(createElement(PreferenceReader));
+    const { container } = screen;
     expect(container.textContent).toBe("12-hour");
     current = { ...current, timestampFormat: "24-hour" };
     await act(async () => {
@@ -44,7 +42,6 @@ it("refreshes main preferences on window focus while keeping the personal collap
     expect(getClientSettings().collapseRenderedResults).toBe(false);
     expect(document.documentElement.classList.contains("dark")).toBe(true);
   } finally {
-    await act(() => root.unmount());
     __resetClientSettingsPersistenceForTests();
     vi.unstubAllGlobals();
   }

@@ -1,46 +1,37 @@
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, expect, it, vi } from "vite-plus/test";
+import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
 
-let root: Root | undefined;
-let container: HTMLDivElement | undefined;
-afterEach(async () => {
-  await act(() => root?.unmount());
-  container?.remove();
-});
+import { render as renderUi } from "../../../test/render";
 
 it("retains the iframe and input across pointer and keyboard disclosure and remembers overrides on remount", async () => {
-  container = document.body.appendChild(document.createElement("div"));
+  await using screen = await renderUi(null);
+  const container = screen.container;
   container.style.width = "640px";
-  root = createRoot(container);
   const overrides = new Map<string, boolean>();
   const onToggle = vi.fn();
   const render = async (defaultCollapsed: boolean, mounted = true) => {
-    await act(() =>
-      root?.render(
-        mounted ? (
-          <RenderedResultDisclosure
-            rowId="result"
-            defaultCollapsed={defaultCollapsed}
-            overrides={overrides}
-            onToggle={onToggle}
-            onFullscreenChange={() => {}}
-          >
-            {() => (
-              <iframe
-                sandbox="allow-same-origin"
-                title="Interactive result"
-                srcDoc='<input aria-label="Draft" />'
-                style={{ width: "100%", height: 250 }}
-              />
-            )}
-          </RenderedResultDisclosure>
-        ) : null,
-      ),
+    await screen.rerender(
+      mounted ? (
+        <RenderedResultDisclosure
+          rowId="result"
+          defaultCollapsed={defaultCollapsed}
+          overrides={overrides}
+          onToggle={onToggle}
+          onFullscreenChange={() => {}}
+        >
+          {() => (
+            <iframe
+              sandbox="allow-same-origin"
+              title="Interactive result"
+              srcDoc='<input aria-label="Draft" />'
+              style={{ width: "100%", height: 250 }}
+            />
+          )}
+        </RenderedResultDisclosure>
+      ) : null,
     );
   };
   await render(true);
@@ -79,23 +70,21 @@ it("retains the iframe and input across pointer and keyboard disclosure and reme
 });
 
 it("follows preference changes until overridden", async () => {
-  container = document.body.appendChild(document.createElement("div"));
-  root = createRoot(container);
+  await using screen = await renderUi(null);
+  const container = screen.container;
   const overrides = new Map<string, boolean>();
   const render = async (defaultCollapsed: boolean) => {
-    await act(() =>
-      root?.render(
-        <RenderedResultDisclosure
-          rowId="result"
-          title="Page"
-          defaultCollapsed={defaultCollapsed}
-          overrides={overrides}
-          onToggle={() => {}}
-          onFullscreenChange={() => {}}
-        >
-          {() => <iframe sandbox="" title="Page content" srcDoc="A rendered result" />}
-        </RenderedResultDisclosure>,
-      ),
+    await screen.rerender(
+      <RenderedResultDisclosure
+        rowId="result"
+        title="Page"
+        defaultCollapsed={defaultCollapsed}
+        overrides={overrides}
+        onToggle={() => {}}
+        onFullscreenChange={() => {}}
+      >
+        {() => <iframe sandbox="" title="Page content" srcDoc="A rendered result" />}
+      </RenderedResultDisclosure>,
     );
   };
   await render(true);
