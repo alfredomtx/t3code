@@ -70,6 +70,11 @@ function run(
 }
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters, { cwd: source }).output;
+const browserTests = [
+  "apps/web/src/components/chat/RenderedResultDisclosure.browser.test.tsx",
+  "apps/web/src/components/chat/HtmlRenderFrame.browser.test.tsx",
+  "apps/web/src/components/chat/McpAppFrame.browser.test.tsx",
+];
 async function requiredTests() {
   const fixed = [
     "scripts/build-desktop-artifact.test.ts",
@@ -85,13 +90,12 @@ async function requiredTests() {
     "apps/desktop/src/app/DesktopAppIdentity.test.ts",
     "apps/desktop/src/electron/ElectronProtocol.test.ts",
   ];
-  const files = git("ls-files").split("\n");
-  for (const name of ["collapseRenderedResults", "RenderedResultDisclosure"]) {
-    const test = files.find((file) => new RegExp(`(?:^|/)${name}\\.test\\.tsx?$`, "u").test(file));
-    NodeAssert.ok(test, `Required integrated UI test is missing: ${name}.test.ts or .tsx`);
-    fixed.push(test);
-  }
-  for (const file of fixed) await NodeFSP.access(NodePath.join(builder, file));
+  fixed.push(
+    "packages/contracts/src/settings.test.ts",
+    "apps/web/src/clientPersistenceStorage.test.ts",
+  );
+  for (const file of [...fixed, ...browserTests])
+    await NodeFSP.access(NodePath.join(builder, file));
   return fixed;
 }
 
@@ -470,6 +474,20 @@ async function main() {
     run("vp", ["install", "--frozen-lockfile"]);
     run(config.node, ["--test", "scripts/personal/core.test.mjs"]);
     run("vp", ["test", "run", ...tests]);
+    run("vp", ["exec", "playwright", "install", "chromium"]);
+    run(
+      "vp",
+      [
+        "test",
+        "run",
+        ...browserTests.map((file) => file.slice("apps/web/".length)),
+        "--project",
+        "browser",
+      ],
+      {
+        cwd: NodePath.join(builder, "apps/web"),
+      },
+    );
     const changedFiles = git("diff", "--name-only", `${upstreamCommit}...HEAD`)
       .split("\n")
       .filter((file) => /\.(?:[cm]?[jt]sx?)$/u.test(file));
