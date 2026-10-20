@@ -1,3 +1,4 @@
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
@@ -83,7 +84,9 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
 }
 
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
-  const url = new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`);
+  const url = new URL(
+    `${development ? PERSONAL_DESKTOP.developmentScheme : PERSONAL_DESKTOP.scheme}://auth/codex`,
+  );
   url.searchParams.set("request", encodeHandoff(input));
   return url.toString();
 }
@@ -93,7 +96,8 @@ export function readCodexAuthHandoff(value: string, development: boolean) {
     const url = new URL(value);
     if (
       value.length > 32_768 ||
-      url.protocol !== (development ? "t3code-dev:" : "t3code:") ||
+      url.protocol !==
+        `${development ? PERSONAL_DESKTOP.developmentScheme : PERSONAL_DESKTOP.scheme}:` ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||

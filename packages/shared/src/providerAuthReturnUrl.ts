@@ -1,10 +1,14 @@
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import { isLoopbackHost } from "./preview.ts";
 
 export function providerAuthReturnUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    const desktop = ["t3code:", "t3code-dev:"].includes(url.protocol) && url.host === "app";
+    const desktop =
+      [`${PERSONAL_DESKTOP.scheme}:`, `${PERSONAL_DESKTOP.developmentScheme}:`].includes(
+        url.protocol,
+      ) && url.host === "app";
     const web =
       ["http:", "https:"].includes(url.protocol) &&
       (isLoopbackHost(url.hostname) || url.origin === "https://app.t3.codes");

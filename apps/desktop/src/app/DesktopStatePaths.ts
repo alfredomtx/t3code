@@ -1,3 +1,4 @@
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import * as Option from "effect/Option";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
@@ -16,7 +17,7 @@ export function resolveDesktopBaseDir(input: {
   readonly t3Home: Option.Option<string>;
 }): string {
   return Option.getOrElse(normalizeConfiguredBaseDir(input.t3Home), () =>
-    input.joinPath(input.homeDirectory, ".t3"),
+    input.joinPath(input.homeDirectory, PERSONAL_DESKTOP.homeName),
   );
 }
 

@@ -502,6 +502,10 @@
     "./markdownMath": {
       "types": "./src/markdownMath.ts",
       "import": "./src/markdownMath.ts"
+    },
+    "./personalDesktop": {
+      "types": "./src/personalDesktop.ts",
+      "import": "./src/personalDesktop.ts"
     }
   },
   "scripts": {
