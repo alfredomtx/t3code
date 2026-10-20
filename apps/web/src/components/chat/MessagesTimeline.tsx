@@ -175,6 +175,7 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
+import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -353,6 +354,7 @@ interface TimelineRowSharedState {
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
+  collapseRenderedResults: boolean;
   workGroupViewState: WorkGroupViewState;
 }
 
@@ -373,6 +375,7 @@ const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
   expandedEntries: Set<string>;
+  renderedResultOverrides: Map<string, boolean>;
 }
 
 const WorkGroupViewCtx = createContext<{
@@ -388,9 +391,11 @@ function timelineListStateFor(identity: string): {
   return {
     identity,
     rememberedPosition,
-    workGroupViewState: rememberedPosition?.disclosures?.workGroupState ?? {
-      scrollPositions: new Map(),
-      expandedEntries: new Set(),
+    workGroupViewState: {
+      scrollPositions: rememberedPosition?.disclosures?.workGroupState.scrollPositions ?? new Map(),
+      expandedEntries: rememberedPosition?.disclosures?.workGroupState.expandedEntries ?? new Set(),
+      renderedResultOverrides:
+        rememberedPosition?.disclosures?.workGroupState.renderedResultOverrides ?? new Map(),
     },
   };
 }
@@ -619,6 +624,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
+  const collapseRenderedResults = useClientSettings((settings) => settings.collapseRenderedResults);
+  const previousCollapsePreference = useRef(collapseRenderedResults);
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   // The remembered position is a snapshot taken when the list identity changes;
   // scrolling keeps rewriting the stored entry, which must not move the restore.
@@ -728,13 +735,22 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string, collapsed = false) => {
+  const suspendEndScrollMaintenanceForDisclosure = (
+    anchorKey: string | null,
+    collapsed = false,
+  ) => {
     disclosureAnchorKeyRef.current = anchorKey;
     disclosureCollapsedRef.current = collapsed;
     disclosurePinsEndRef.current = resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
+
+  useLayoutEffect(() => {
+    if (previousCollapsePreference.current === collapseRenderedResults) return;
+    previousCollapsePreference.current = collapseRenderedResults;
+    suspendEndScrollMaintenanceForDisclosure(null, collapseRenderedResults);
+  });
 
   const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
     if (disclosurePinsEndRef.current) return false;
@@ -1313,6 +1329,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleAttemptFold,
     onToggleWorkGroup,
     onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    collapseRenderedResults,
     onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
     retryableWorkspacePreparationRunIds,
     onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
@@ -2875,18 +2892,26 @@ function ProposedPlanTimelineRow({
 
 function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "html-render" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { onAppFullscreenChange } = ctx;
-  const onFullscreenChange = (fullscreen: boolean) => onAppFullscreenChange(row.id, fullscreen);
-
   return (
     <div className="min-w-0 px-1">
-      <HtmlRenderFrame
-        key={row.htmlRender.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        htmlRender={row.htmlRender}
-        threadRef={ctx.threadRef ?? undefined}
-        onFullscreenChange={onFullscreenChange}
-      />
+      <RenderedResultDisclosure
+        rowId={row.id}
+        title={row.htmlRender.title}
+        defaultCollapsed={ctx.collapseRenderedResults}
+        overrides={ctx.workGroupViewState.renderedResultOverrides}
+        onToggle={ctx.onToggleWorkEntry}
+        onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
+      >
+        {({ onFullscreenChange }) => (
+          <HtmlRenderFrame
+            key={row.htmlRender.attachmentId}
+            environmentId={ctx.activeThreadEnvironmentId}
+            htmlRender={row.htmlRender}
+            threadRef={ctx.threadRef ?? undefined}
+            onFullscreenChange={onFullscreenChange}
+          />
+        )}
+      </RenderedResultDisclosure>
     </div>
   );
 }
@@ -2897,18 +2922,30 @@ function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app
 
   return (
     <div className="min-w-0 px-1">
-      <McpAppFrame
-        key={row.mcpApp.attachmentId}
-        environmentId={ctx.activeThreadEnvironmentId}
-        threadId={row.sourceThreadId}
-        conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
-        itemId={row.itemId}
-        revision={row.revision}
-        app={row.mcpApp}
-        onSendMessage={ctx.onSendAppMessage}
-        awaitingUser={awaitingUser}
+      <RenderedResultDisclosure
+        rowId={row.id}
+        title="Interactive app"
+        defaultCollapsed={ctx.collapseRenderedResults}
+        overrides={ctx.workGroupViewState.renderedResultOverrides}
+        onToggle={ctx.onToggleWorkEntry}
         onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
-      />
+      >
+        {({ visible, onFullscreenChange }) => (
+          <McpAppFrame
+            key={row.mcpApp.attachmentId}
+            environmentId={ctx.activeThreadEnvironmentId}
+            threadId={row.sourceThreadId}
+            conversationThreadId={ctx.threadRef?.threadId ?? row.sourceThreadId}
+            itemId={row.itemId}
+            revision={row.revision}
+            app={row.mcpApp}
+            onSendMessage={ctx.onSendAppMessage}
+            awaitingUser={awaitingUser}
+            visible={visible}
+            onFullscreenChange={onFullscreenChange}
+          />
+        )}
+      </RenderedResultDisclosure>
     </div>
   );
 }

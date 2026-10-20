@@ -1274,3 +1274,17 @@ describe("server model preferences", () => {
     });
   });
 });
+
+describe("ClientSettings rendered results", () => {
+  it("defaults to collapsed and round-trips either preference", () => {
+    expect(decodeClientSettings({}).collapseRenderedResults).toBe(true);
+    expect(decodeClientSettingsPatch({})).not.toHaveProperty("collapseRenderedResults");
+    for (const collapseRenderedResults of [true, false]) {
+      const preference = { collapseRenderedResults };
+      expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+      expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+    }
+    expect(() => decodeClientSettings({ collapseRenderedResults: "yes" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ collapseRenderedResults: "yes" })).toThrow();
+  });
+});

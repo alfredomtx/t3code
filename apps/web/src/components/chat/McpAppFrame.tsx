@@ -71,6 +71,7 @@ export function McpAppFrame(props: {
   readonly app: McpAppReference;
   readonly onSendMessage: ((text: string) => Promise<void>) | undefined;
   readonly awaitingUser?: boolean;
+  readonly visible?: boolean;
   readonly onFullscreenChange?: (fullscreen: boolean) => void;
 }) {
   const { app } = props;
@@ -360,7 +361,8 @@ export function McpAppFrame(props: {
         const otherFullscreen = document.querySelector("[data-mcp-app-fullscreen]");
         if (
           mode === "fullscreen" &&
-          (document.activeElement !== frameRef.current ||
+          (latest.current.props.visible === false ||
+            document.activeElement !== frameRef.current ||
             !navigator.userActivation?.isActive ||
             performance.now() - lastPageInputAt.current < PAGE_ACTIVATION_MS ||
             latest.current.props.awaitingUser === true ||
