@@ -38,6 +38,8 @@ import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import { resolveSymlinkTarget } from "@t3tools/shared/symlink";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import * as ServerConfig from "./config.ts";
 import { type DeepPartial, deepMerge } from "@t3tools/shared/Struct";
 import { fromJsonStringPretty, fromLenientJson } from "@t3tools/shared/schemaJson";
@@ -66,6 +68,31 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+
+const personalSettingsKeys = [
+  "worktreeCleanup",
+  "storageCleanup",
+  "worktreesDirectory",
+  "previousWorktreesDirectories",
+  "addProjectBaseDirectory",
+  "enableProviderUpdateChecks",
+  "continueThreadsAfterServerUpdate",
+  "observability",
+  "cursorKeychainUsageEnabled",
+  "environmentIcon",
+  "deviceHosts",
+  "easDeviceHosts",
+  "deviceOnboardingCompleted",
+  "projectSettingsOverrides",
+  "projectSettingsFolded",
+  "projectScriptOverrides",
+  "projectAutoPullOverrides",
+  "projectAgentBrowserAccessOverrides",
+  "providerInstances",
+  "sourceControlHosts",
+  "usageLimitSources",
+] as const satisfies ReadonlyArray<keyof ServerSettings>;
+const personalSettingsKeySet = new Set<string>(personalSettingsKeys);
 
 /**
  * Old settings files can hold both flags with conflicting values; an explicit false on either
@@ -560,9 +587,75 @@ function foldLegacyProjectSettings(
 }
 
 const make = Effect.gen(function* () {
-  const { settingsPath } = yield* ServerConfig.ServerConfig;
+  const config = yield* ServerConfig.ServerConfig;
+  const { settingsPath } = config;
   const fs = yield* FileSystem.FileSystem;
   const pathService = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const followsMain =
+    config.baseDir === pathService.join(home, PERSONAL_DESKTOP.homeName) &&
+    settingsPath === pathService.join(config.baseDir, "userdata", "settings.json") &&
+    config.devUrl === undefined;
+  const mainSettingsPath = pathService.join(home, ".t3", "userdata", "settings.json");
+  const lastMainSettings = yield* Ref.make(Option.none<ServerSettings>());
+  const reloadMainSettings = Effect.gen(function* () {
+    const raw = yield* fs.readFileString(mainSettingsPath);
+    const decoded = decodeServerSettingsJsonExit(raw);
+    if (Exit.isFailure(decoded)) {
+      return yield* new ServerSettingsError({
+        settingsPath: mainSettingsPath,
+        operation: "read-file",
+        cause: Cause.squash(decoded.cause),
+      });
+    }
+    yield* Ref.set(lastMainSettings, Option.some(decoded.value));
+    return decoded.value;
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ServerSettingsError({ settingsPath: mainSettingsPath, operation: "read-file", cause }),
+    ),
+    Effect.catch((error) =>
+      Ref.get(lastMainSettings).pipe(
+        Effect.flatMap(
+          Option.match({
+            onNone: () => Effect.fail(error),
+            onSome: (settings) =>
+              Effect.logWarning("Could not refresh main app preferences.", error).pipe(
+                Effect.as(settings),
+              ),
+          }),
+        ),
+      ),
+    ),
+  );
+  const effectiveSettings = (personal: ServerSettings) =>
+    followsMain
+      ? Ref.get(lastMainSettings).pipe(
+          Effect.flatMap(
+            Option.match({ onNone: () => reloadMainSettings, onSome: Effect.succeed }),
+          ),
+          Effect.map((main) => ({
+            ...main,
+            ...Object.fromEntries(personalSettingsKeys.map((key) => [key, personal[key]])),
+          })),
+          Effect.catch((error) =>
+            Effect.logWarning(
+              "Could not read main app preferences. Using personal settings.",
+              error,
+            ).pipe(Effect.as(personal)),
+          ),
+        )
+      : Effect.succeed(personal);
+  const allowPersonalPatch = (patch: ServerSettingsPatch) =>
+    followsMain && Object.keys(patch).some((key) => !personalSettingsKeySet.has(key))
+      ? Effect.fail(
+          new ServerSettingsError({
+            settingsPath: mainSettingsPath,
+            operation: "follow-main-read-only",
+          }),
+        )
+      : Effect.void;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const sql = yield* SqlClient.SqlClient;
   const writeSemaphore = yield* Semaphore.make(1);
@@ -574,7 +667,10 @@ const make = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
 
   const emitChange = (settings: ServerSettings) =>
-    PubSub.publish(changesPubSub, settings).pipe(Effect.asVoid);
+    effectiveSettings(settings).pipe(
+      Effect.flatMap((effective) => PubSub.publish(changesPubSub, effective)),
+      Effect.asVoid,
+    );
 
   const readConfigExists = fs.exists(settingsPath).pipe(
     Effect.mapError(
@@ -1029,13 +1125,16 @@ const make = Effect.gen(function* () {
         );
         yield* Cache.set(settingsCache, cacheKey, { settings: next, parseFailure: Option.none() });
         yield* emitChange(next);
-        return resolveTextGenerationProvider(materialized);
+        return yield* effectiveSettings(materialized).pipe(
+          Effect.map(resolveTextGenerationProvider),
+        );
       }),
     );
 
   const withSettingsSnapshot: ServerSettingsService["Service"]["withSettingsSnapshot"] = (use) =>
     writeSemaphore.withPermits(1)(
       getSettingsFromCache.pipe(
+        Effect.flatMap(effectiveSettings),
         Effect.flatMap(materializeSettingsSecrets),
         Effect.map(resolveTextGenerationProvider),
         Effect.flatMap(use),
@@ -1045,25 +1144,40 @@ const make = Effect.gen(function* () {
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
       const { settings } = yield* reloadSettings;
+      if (followsMain) yield* reloadMainSettings.pipe(Effect.ignore({ log: true }));
       yield* emitChange(settings);
     }),
   );
 
-  const watchFileChanges = (filePath: string) => {
-    const directory = pathService.dirname(filePath);
-    const fileName = pathService.basename(filePath);
-    const resolvedFilePath = pathService.resolve(filePath);
-    return fs
-      .watch(directory)
-      .pipe(
-        Stream.filter(
-          (event) =>
-            event.path === fileName ||
-            event.path === filePath ||
-            pathService.resolve(directory, event.path) === resolvedFilePath,
-        ),
-      );
-  };
+  const watchFileChanges = (filePath: string): ReturnType<typeof fs.watch> =>
+    Stream.unwrap(
+      Effect.gen(function* () {
+        const directory = pathService.dirname(filePath);
+        if (!(yield* fs.exists(directory))) {
+          return watchFileChanges(directory).pipe(
+            Stream.take(1),
+            Stream.flatMap(() =>
+              Stream.concat(
+                Stream.succeed({ _tag: "Update" as const, path: filePath }),
+                watchFileChanges(filePath),
+              ),
+            ),
+          );
+        }
+        const fileName = pathService.basename(filePath);
+        const resolvedFilePath = pathService.resolve(filePath);
+        return fs
+          .watch(directory)
+          .pipe(
+            Stream.filter(
+              (event) =>
+                event.path === fileName ||
+                event.path === filePath ||
+                pathService.resolve(directory, event.path) === resolvedFilePath,
+            ),
+          );
+      }),
+    );
 
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
@@ -1084,39 +1198,51 @@ const make = Effect.gen(function* () {
     // A symlinked settings file is rewritten in its destination's directory,
     // which a watch on the link's directory never sees. The link is resolved
     // again whenever it changes, so repointing it moves the watch along.
-    const watchLinkTarget = Effect.gen(function* () {
-      const linkTargetPath = yield* resolveSymlinkTarget(settingsPath).pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, pathService),
-      );
-      if (linkTargetPath === pathService.resolve(settingsPath)) {
-        return Option.none<string>();
-      }
-      yield* fs
-        .makeDirectory(pathService.dirname(linkTargetPath), { recursive: true })
-        .pipe(Effect.ignore({ log: true }));
-      return Option.some(linkTargetPath);
-    }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
-
-    const initialLinkTarget = yield* watchLinkTarget;
-    const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
-      Stream.concat(watchFileChanges(settingsPath).pipe(Stream.mapEffect(() => watchLinkTarget))),
-      Stream.changes,
-      Stream.switchMap(
-        Option.match({
-          onNone: () => Stream.empty,
-          onSome: (linkTargetPath) =>
-            watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
-        }),
-      ),
+    const watchLinkTarget = Effect.fn("serverSettings.watchLinkTarget")(
+      function* (filePath: string) {
+        const linkTargetPath = yield* resolveSymlinkTarget(filePath).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, pathService),
+        );
+        if (linkTargetPath === pathService.resolve(filePath)) {
+          return Option.none<string>();
+        }
+        if (filePath === settingsPath)
+          yield* fs
+            .makeDirectory(pathService.dirname(linkTargetPath), { recursive: true })
+            .pipe(Effect.ignore({ log: true }));
+        return Option.some(linkTargetPath);
+      },
+      (effect) => effect.pipe(Effect.orElseSucceed(() => Option.none<string>())),
     );
 
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = Stream.merge(
-      watchFileChanges(settingsPath),
-      linkTargetEvents,
-    ).pipe(Stream.debounce(Duration.millis(100)));
+    const observedEvents = Effect.fn("serverSettings.observedEvents")(function* (filePath: string) {
+      const initialLinkTarget = yield* watchLinkTarget(filePath);
+      const linkTargetEvents = Stream.make(initialLinkTarget).pipe(
+        Stream.concat(
+          watchFileChanges(filePath).pipe(Stream.mapEffect(() => watchLinkTarget(filePath))),
+        ),
+        Stream.changes,
+        Stream.switchMap(
+          Option.match({
+            onNone: () => Stream.empty,
+            onSome: (linkTargetPath) =>
+              watchFileChanges(linkTargetPath).pipe(Stream.ignore({ log: true })),
+          }),
+        ),
+      );
+
+      // Editors emit multiple events per save (truncate, write, rename) and
+      // `fs.watch` can fire before the content has been flushed to disk.
+      return Stream.merge(watchFileChanges(filePath), linkTargetEvents);
+    });
+    const personalEvents = yield* observedEvents(settingsPath);
+    const mainEvents = followsMain
+      ? (yield* observedEvents(mainSettingsPath)).pipe(Stream.ignore({ log: true }))
+      : Stream.empty;
+    const debouncedSettingsEvents = Stream.merge(personalEvents, mainEvents).pipe(
+      Stream.debounce(Duration.millis(100)),
+    );
 
     yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
       Effect.ignoreCause({ log: true }),
@@ -1133,7 +1259,8 @@ const make = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* reloadSettings;
+      const { settings } = yield* reloadSettings;
+      yield* effectiveSettings(settings);
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -1149,20 +1276,29 @@ const make = Effect.gen(function* () {
     start,
     ready: Deferred.await(startedDeferred),
     getSettings: getSettingsFromCache.pipe(
+      Effect.flatMap(effectiveSettings),
       Effect.flatMap(materializeSettingsSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
     updateSettings: (patch) =>
-      updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+      allowPersonalPatch(patch).pipe(
+        Effect.andThen(
+          updateAndPersistSettings((current) =>
+            Effect.succeed(applyServerSettingsPatch(current, patch)),
+          ),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
-      updateAndPersistSettings((current) =>
-        Effect.gen(function* () {
-          yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
-          const patched = applyServerSettingsPatch(current, patch);
-          return applyProviderInstanceMutation(patched, mutation);
-        }),
+      allowPersonalPatch(patch).pipe(
+        Effect.andThen(
+          updateAndPersistSettings((current) =>
+            Effect.gen(function* () {
+              yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
+              const patched = applyServerSettingsPatch(current, patch);
+              return applyProviderInstanceMutation(patched, mutation);
+            }),
+          ),
+        ),
       ),
     withSettingsSnapshot,
     get streamChanges() {

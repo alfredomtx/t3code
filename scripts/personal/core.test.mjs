@@ -450,7 +450,7 @@ NodeTest.test("smoke cleanup finds a backend after its launcher exits and closes
     const pidFile = NodePath.join(root, "backend.json");
     await NodeFSP.writeFile(
       script,
-      `#!${process.execPath}\nconst {spawn} = require('node:child_process');\nconst code = ${JSON.stringify("const fs = require('node:fs'); const net = require('node:net'); const server = net.createServer(); server.listen(Number(process.env.T3CODE_PORT), '127.0.0.1', () => { fs.writeFileSync(" + JSON.stringify(pidFile) + ", JSON.stringify({ pid: process.pid, port: server.address().port })); console.log('fatal startup error'); });")};\nspawn(process.execPath, ['-e', code], {stdio:'inherit'}).unref();\n`,
+      `#!${process.execPath}\nconst {spawn} = require('node:child_process');\nconst code = ${JSON.stringify("const fs = require('node:fs'); const net = require('node:net'); const server = net.createServer(); server.listen(Number(process.env.T3CODE_PORT), '127.0.0.1', () => { fs.writeFileSync(" + JSON.stringify(pidFile) + ", JSON.stringify({ pid: process.pid, port: server.address().port, home: process.env.HOME, t3home: process.env.T3CODE_HOME })); console.log('fatal startup error'); });")};\nspawn(process.execPath, ['-e', code], {stdio:'inherit'}).unref();\n`,
       { mode: 0o755 },
     );
     await NodeAssert.rejects(
@@ -458,6 +458,8 @@ NodeTest.test("smoke cleanup finds a backend after its launcher exits and closes
       /exited during startup|reported a startup error/u,
     );
     const backend = JSON.parse(await NodeFSP.readFile(pidFile, "utf8"));
+    NodeAssert.equal(backend.home, process.env.HOME);
+    NodeAssert.equal(backend.t3home, NodePath.join(root, "app-home"));
     NodeAssert.throws(() => process.kill(backend.pid, 0), { code: "ESRCH" });
     await NodeAssert.rejects(fetch(`http://127.0.0.1:${backend.port}`));
   }),

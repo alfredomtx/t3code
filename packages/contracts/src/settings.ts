@@ -1336,6 +1336,7 @@ export const resolveProjectProviderInstanceEnabled = (
 };
 
 export const ServerSettingsOperation = Schema.Literals([
+  "follow-main-read-only",
   "normalize",
   "check-exists",
   "create-provider-instance",
@@ -1362,6 +1363,9 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
   },
 ) {
   override get message(): string {
+    if (this.operation === "follow-main-read-only") {
+      return "These settings follow the main T3 Code app. Change them in the main app.";
+    }
     const provider =
       this.providerInstanceId === undefined ? "" : ` for provider ${this.providerInstanceId}`;
     const variable =

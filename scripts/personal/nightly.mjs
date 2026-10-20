@@ -96,6 +96,7 @@ async function requiredTests() {
     "scripts/build-desktop-artifact.test.ts",
     "scripts/sign-personal-macos.test.ts",
     "apps/server/src/auth/EnvironmentAuth.test.ts",
+    "apps/server/src/serverSettings.test.ts",
     "apps/desktop/src/app/DesktopCliCommand.test.ts",
     "apps/desktop/src/app/DesktopCliShim.test.ts",
     "packages/shared/src/providerAuthReturnUrl.test.ts",
@@ -532,6 +533,7 @@ async function main() {
       "@t3tools/desktop",
       "@t3tools/client-runtime",
       "@t3tools/web",
+      "t3",
     ])
       run("vp", ["exec", "--filter", workspace, "--", "tsc-rs", "--noEmit"]);
     const directory = NodePath.join(root, "artifacts", version);

@@ -127,7 +127,6 @@ export async function verifyArtifact({
         ...process.env,
         ELECTRON_RUN_AS_NODE: "1",
         T3CODE_HOME: home,
-        HOME: NodePath.join(temporary, "os-home"),
       },
     });
     NodeAssert.ok(output.includes(version), "Bundled CLI version does not match the package.");
@@ -218,9 +217,7 @@ async function portIsClosed(port) {
 
 export async function smokeApp({ executable, temporary, logFile }) {
   const home = NodePath.join(temporary, "app-home");
-  const osHome = NodePath.join(temporary, "os-home");
   await NodeFSP.mkdir(home);
-  await NodeFSP.mkdir(osHome, { recursive: true });
   const output = await NodeFSP.open(logFile, "a", 0o600);
   const reservation = NodeNet.createServer();
   let child;
@@ -282,7 +279,6 @@ export async function smokeApp({ executable, temporary, logFile }) {
     );
     const env = {
       ...process.env,
-      HOME: osHome,
       T3CODE_HOME: home,
       T3CODE_DISABLE_AUTO_UPDATE: "true",
       T3CODE_PORT: String(port),

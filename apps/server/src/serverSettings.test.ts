@@ -33,6 +33,7 @@ import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as ServerSettingsModule from "./serverSettings.ts";
 import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
@@ -96,6 +97,205 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
       )
     `;
   });
+
+const withMainPreferences = <A, E, R>(effect: Effect.Effect<A, E, R>, useDefaultHome = true) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "t3-follow-main-" });
+      yield* fs.makeDirectory(path.join(home, ".t3", "userdata"), { recursive: true });
+      yield* fs.writeFileString(path.join(home, ".t3", "userdata", "settings.json"), "{}");
+      const config = ServerConfig.layerTest(
+        process.cwd(),
+        path.join(home, useDefaultHome ? ".t3-personal" : "custom-home"),
+      );
+      const layer = ServerSettingsModule.layer.pipe(
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+        Layer.provideMerge(config),
+      );
+      return yield* effect.pipe(
+        Effect.provide(layer),
+        Effect.provideService(HostProcess.HomeDirectory, home),
+      );
+    }),
+  );
+
+it.layer(NodeServices.layer)("following main server preferences", (it) => {
+  it.effect(
+    "uses main model options and favorites while rejecting duplicate edits without writing main",
+    () =>
+      withMainPreferences(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* HostProcess.HomeDirectory;
+          const config = yield* ServerConfig.ServerConfig;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const mainPath = path.join(home, ".t3", "userdata", "settings.json");
+          const main = JSON.stringify({
+            defaultModelSelection: {
+              instanceId: "codex",
+              model: "main-model",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            },
+            favorites: [{ provider: "codex", model: "main-model" }],
+            pullRequestMergeMethod: "squash",
+            enableProviderUpdateChecks: true,
+            providerInstances: {
+              privateMain: { driver: "codex", config: { binaryPath: "/main-only" } },
+            },
+          });
+          yield* fs.writeFileString(mainPath, main);
+          yield* fs.writeFileString(
+            config.settingsPath,
+            JSON.stringify({ projectSettingsFolded: true, enableProviderUpdateChecks: false }),
+          );
+          const current = yield* service.getSettings;
+          assert.equal(current.defaultModelSelection?.model, "main-model");
+          assert.deepEqual(current.defaultModelSelection?.options, [
+            { id: "reasoningEffort", value: "high" },
+          ]);
+          assert.deepEqual(current.favorites, [
+            { provider: ProviderInstanceId.make("codex"), model: "main-model" },
+          ]);
+          assert.isFalse(current.enableProviderUpdateChecks);
+          assert.isUndefined(current.providerInstances[ProviderInstanceId.make("privateMain")]);
+          assert.equal(
+            yield* service.withSettingsSnapshot((settings) =>
+              Effect.succeed(settings.defaultModelSelection?.model),
+            ),
+            "main-model",
+          );
+          const localBefore = yield* fs.readFileString(config.settingsPath);
+          const rejection = yield* Effect.flip(
+            service.updateSettings({
+              defaultModelSelection: null,
+              enableProviderUpdateChecks: true,
+            }),
+          );
+          assert.equal(rejection.operation, "follow-main-read-only");
+          assert.include(rejection.message, "Change them in the main app");
+          assert.equal(yield* fs.readFileString(config.settingsPath), localBefore);
+          assert.equal(
+            (yield* Effect.flip(service.updateSettings({ setModelFavorites: [] }))).operation,
+            "follow-main-read-only",
+          );
+          const updated = yield* service.updateSettings({ enableProviderUpdateChecks: true });
+          assert.equal(updated.defaultModelSelection?.model, "main-model");
+          const stored = JSON.parse(yield* fs.readFileString(config.settingsPath));
+          assert.isUndefined(stored.defaultModelSelection);
+          assert.isUndefined(stored.favorites);
+          assert.equal(yield* fs.readFileString(mainPath), main);
+        }),
+      ),
+  );
+
+  it.effect(
+    "streams atomic main changes, clears preferences and recovers after invalid input",
+    () =>
+      withMainPreferences(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* HostProcess.HomeDirectory;
+          const service = yield* ServerSettingsModule.ServerSettingsService;
+          const mainPath = path.join(home, ".t3", "userdata", "settings.json");
+          yield* fs.writeFileString(
+            mainPath,
+            JSON.stringify({
+              defaultModelSelection: { instanceId: "codex", model: "first" },
+              favorites: [{ provider: "codex", model: "first" }],
+            }),
+          );
+          yield* service.start;
+          const changes = yield* service.subscribeChanges;
+          yield* writeFileStringAtomically({
+            filePath: mainPath,
+            contents: JSON.stringify({ defaultModelSelection: null, favorites: [] }),
+          });
+          const cleared = Option.getOrThrow(
+            yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds")),
+          );
+          assert.isNull(cleared.defaultModelSelection);
+          assert.deepEqual(cleared.favorites, []);
+          const invalidChanges = yield* service.subscribeChanges;
+          yield* writeFileStringAtomically({ filePath: mainPath, contents: "invalid JSON" });
+          const retained = Option.getOrThrow(
+            yield* invalidChanges.pipe(Stream.runHead, Effect.timeout("2 seconds")),
+          );
+          assert.deepEqual(retained.favorites, []);
+          const recovery = yield* service.subscribeChanges;
+          yield* writeFileStringAtomically({
+            filePath: mainPath,
+            contents: JSON.stringify({
+              defaultModelSelection: { instanceId: "codex", model: "recovered" },
+            }),
+          });
+          const recovered = Option.getOrThrow(
+            yield* recovery.pipe(Stream.runHead, Effect.timeout("2 seconds")),
+          );
+          assert.equal(recovered.defaultModelSelection?.model, "recovered");
+          assert.equal((yield* service.getSettings).defaultModelSelection?.model, "recovered");
+        }),
+      ).pipe(TestClock.withLive),
+  );
+
+  it.effect(
+    "starts with personal values until main appears and keeps custom homes independent",
+    () =>
+      Effect.gen(function* () {
+        yield* withMainPreferences(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const home = yield* HostProcess.HomeDirectory;
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            const mainPath = path.join(home, ".t3", "userdata", "settings.json");
+            yield* fs.remove(path.join(home, ".t3"), { recursive: true });
+            yield* service.start;
+            assert.isNull((yield* service.getSettings).defaultModelSelection);
+            const personalChanges = yield* service.subscribeChanges;
+            const config = yield* ServerConfig.ServerConfig;
+            yield* writeFileStringAtomically({
+              filePath: config.settingsPath,
+              contents: JSON.stringify({ enableProviderUpdateChecks: false }),
+            });
+            const personalChanged = Option.getOrThrow(
+              yield* personalChanges.pipe(Stream.runHead, Effect.timeout("2 seconds")),
+            );
+            assert.isFalse(personalChanged.enableProviderUpdateChecks);
+            const changes = yield* service.subscribeChanges;
+            yield* fs.makeDirectory(path.dirname(mainPath), { recursive: true });
+            yield* writeFileStringAtomically({
+              filePath: mainPath,
+              contents: JSON.stringify({
+                defaultModelSelection: { instanceId: "codex", model: "main-appeared" },
+              }),
+            });
+            const appeared = Option.getOrThrow(
+              yield* changes.pipe(Stream.runHead, Effect.timeout("2 seconds")),
+            );
+            assert.equal(appeared.defaultModelSelection?.model, "main-appeared");
+          }),
+        );
+        yield* withMainPreferences(
+          Effect.gen(function* () {
+            const service = yield* ServerSettingsModule.ServerSettingsService;
+            yield* service.updateSettings({
+              defaultModelSelection: {
+                instanceId: ProviderInstanceId.make("codex"),
+                model: "local-model",
+              },
+            });
+            assert.equal((yield* service.getSettings).defaultModelSelection?.model, "local-model");
+          }),
+          false,
+        );
+      }).pipe(TestClock.withLive),
+  );
+});
 
 it.layer(NodeServices.layer)("server settings", (it) => {
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
