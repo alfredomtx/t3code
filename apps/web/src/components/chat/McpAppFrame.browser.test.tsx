@@ -76,7 +76,7 @@ vi.mock(import("../../hooks/useHtmlRenderTheme"), async (original) => ({
 
 import { render as renderUi } from "../../../test/render";
 import { McpAppFrame } from "./McpAppFrame";
-import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
+import { JiraResultDisclosure } from "./JiraResultDisclosure";
 
 function setup() {
   let skew = 0;
@@ -108,9 +108,9 @@ function setup() {
 
   const renderApp = async (defaultCollapsed = false) =>
     renderUi(
-      <RenderedResultDisclosure
+      <JiraResultDisclosure
+        resourceUri="ui://widget/jira-widget.html"
         rowId="app"
-        title="Interactive app"
         defaultCollapsed={defaultCollapsed}
         overrides={new Map()}
         onToggle={() => {}}
@@ -129,7 +129,7 @@ function setup() {
             onSendMessage={undefined}
           />
         )}
-      </RenderedResultDisclosure>,
+      </JiraResultDisclosure>,
     );
 
   const retry = () =>
@@ -182,7 +182,7 @@ it("allows an app click immediately after loading on an idle page", async () => 
     .getByRole("button", { name: "Open full screen" });
   expect(await nextAnswer(() => userEvent.click(appButton))).toBe("tap:fullscreen");
   expect(isFullscreen()).toBe(true);
-  const disclosure = page.getByRole("button", { name: "Interactive app", exact: true });
+  const disclosure = page.getByRole("button", { name: "Jira result", exact: true });
   await expect.element(disclosure).toBeDisabled();
   expect(
     await nextAnswer(() => userEvent.click(page.getByRole("button", { name: "Exit full screen" }))),
@@ -239,7 +239,7 @@ it("keeps the MCP document and draft across collapse and refuses hidden fullscre
       screens.use(await renderApp(true));
     }),
   ).toBe("load:inline");
-  const disclosure = page.getByRole("button", { name: "Interactive app", exact: true });
+  const disclosure = page.getByRole("button", { name: "Jira result", exact: true });
   const frame = document.querySelector("iframe");
   if (!frame) throw new Error("Missing app frame");
   const content = frame.closest("[aria-hidden]");

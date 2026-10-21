@@ -240,9 +240,9 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "collapse-rendered-results",
-    title: "Collapse rendered results",
+    title: "Collapse Jira results",
     to: "/settings/appearance",
-    searchTerms: ["html mcp app iframe expand disclosure"],
+    searchTerms: ["jira ticket issue mcp app expand disclosure"],
   },
   {
     id: "math-rendering",

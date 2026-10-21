@@ -105,21 +105,6 @@ export async function acquireLock(directory) {
   };
 }
 
-export function protectedPath(file) {
-  return (
-    /(?:^|\/)(?:\.github|\.agents|\.claude|\.husky|testing|__tests__)(?:\/|$)/u.test(file) ||
-    /(?:^|\/)(?:AGENTS|CLAUDE)\.md$/u.test(file) ||
-    /(?:^|\/)\.env[^/]*$/iu.test(file) ||
-    file === "packages/shared/src/personalDesktop.ts" ||
-    file.startsWith(".git/") ||
-    /(?:^|\/)(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|.*config\.[^/]+|.*\.plist)$/u.test(
-      file,
-    ) ||
-    /(?:^|\/)[^/]*(?:test|spec)\.[^/]+$/u.test(file) ||
-    /^(?:scripts\/|apps\/desktop\/scripts\/)/u.test(file)
-  );
-}
-
 async function inputFiles(root, directory = "") {
   const files = [];
   for (const entry of await NodeFSP.readdir(NodePath.join(root, directory), {
@@ -152,56 +137,6 @@ export async function assertBuildEnvironment(root) {
   }
 }
 
-export async function repairSnapshot(root, files, conflicts) {
-  const discovered = await inputFiles(root);
-  const gitFiles = [
-    ".git/config",
-    ".git/config.worktree",
-    ".git/HEAD",
-    ".git/MERGE_HEAD",
-    ".git/info/attributes",
-    ".git/info/exclude",
-  ];
-  try {
-    NodeAssert.ok(
-      (await NodeFSP.lstat(NodePath.join(root, ".git"))).isDirectory(),
-      "The builder must have a private Git directory.",
-    );
-    const hooks = NodePath.join(root, ".git/hooks");
-    NodeAssert.ok(
-      (await NodeFSP.lstat(hooks)).isDirectory(),
-      "Git hooks must use a private directory.",
-    );
-    gitFiles.push(...(await inputFiles(hooks)).map((file) => `.git/hooks/${file}`));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-  const result = {};
-  for (const file of [...new Set([...files, ...discovered, ...gitFiles])].sort()) {
-    NodeAssert.ok(
-      !NodePath.isAbsolute(file) && !file.split("/").includes(".."),
-      "Invalid repair input path.",
-    );
-    if (!protectedPath(file) && (!conflicts || conflicts.includes(file))) continue;
-    try {
-      const path = NodePath.join(root, file);
-      const stat = await NodeFSP.lstat(path);
-      if (stat.isSymbolicLink() && file === ".claude/skills") {
-        result[file] = `symlink:${await NodeFSP.readlink(path)}`;
-        continue;
-      }
-      NodeAssert.ok(stat.isFile(), `Repair input must be a regular file: ${file}`);
-      result[file] = `${stat.mode}:${NodeCrypto.createHash("sha256")
-        .update(await NodeFSP.readFile(path))
-        .digest("hex")}`;
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      result[file] = null;
-    }
-  }
-  return result;
-}
-
 export function publicationPending(record) {
   return record?.readyForPublication === true && record.published === false ? record : null;
 }
@@ -220,20 +155,6 @@ export function isAncestor(runGit, ancestor, descendant) {
   const result = runGit(["merge-base", "--is-ancestor", fullSha(ancestor), fullSha(descendant)]);
   NodeAssert.ok(!result.error && [0, 1].includes(result.status), "Git ancestry check failed.");
   return result.status === 0;
-}
-
-export function checkRepairScope(before, after) {
-  NodeAssert.deepEqual(after, before, "Repair changed a file outside the permitted conflicts.");
-}
-
-export function reviewAccepted(value) {
-  NodeAssert.ok(
-    value &&
-      value.verdict === "accept" &&
-      Array.isArray(value.findings) &&
-      value.findings.length === 0,
-    "Independent repair review rejected the change.",
-  );
 }
 
 export const PUBLIC_BUILD_KEYS = [

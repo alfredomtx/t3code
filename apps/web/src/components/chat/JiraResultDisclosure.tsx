@@ -5,9 +5,9 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { Button } from "../ui/button";
 
-export function RenderedResultDisclosure({
+export function JiraResultDisclosure({
   rowId,
-  title,
+  resourceUri,
   defaultCollapsed,
   overrides,
   onToggle,
@@ -15,7 +15,7 @@ export function RenderedResultDisclosure({
   children,
 }: {
   readonly rowId: string;
-  readonly title?: string;
+  readonly resourceUri: string;
   readonly defaultCollapsed: boolean;
   readonly overrides: Map<string, boolean>;
   readonly onToggle: (rowId: string, collapsed: boolean) => void;
@@ -34,6 +34,9 @@ export function RenderedResultDisclosure({
     onFullscreenChange(active);
   });
 
+  if (resourceUri !== "ui://widget/jira-widget.html")
+    return children({ visible: true, onFullscreenChange });
+
   return (
     <div>
       <Button
@@ -50,7 +53,7 @@ export function RenderedResultDisclosure({
         }}
       >
         <ChevronRightIcon className={expanded ? "size-3.5 rotate-90" : "size-3.5"} />
-        <span className="truncate">{title?.trim() || "Rendered result"}</span>
+        <span className="truncate">Jira result</span>
       </Button>
       <div
         id={contentId}

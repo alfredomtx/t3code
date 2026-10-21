@@ -544,7 +544,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
     ...(settings.collapseRenderedResults !== DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults
-      ? ["Collapse rendered results"]
+      ? ["Collapse Jira results"]
       : []),
     ...(settings.mathRenderingEnabled !== DEFAULT_UNIFIED_SETTINGS.mathRenderingEnabled
       ? ["Render math"]
@@ -1384,12 +1384,12 @@ export function AppearanceSettingsPanel() {
         />
         <SettingsRow
           {...searchableSetting("collapse-rendered-results")}
-          description="Start HTML pages and interactive app results collapsed. Expand any result to view it."
+          description="Start Jira results collapsed. Other HTML pages and interactive apps keep their normal display."
           resetAction={
             settings.collapseRenderedResults !==
             DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults ? (
               <SettingResetButton
-                label="collapse rendered results"
+                label="collapse Jira results"
                 onClick={() =>
                   updateSettings({
                     collapseRenderedResults: DEFAULT_UNIFIED_SETTINGS.collapseRenderedResults,
@@ -1404,7 +1404,7 @@ export function AppearanceSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ collapseRenderedResults: Boolean(checked) })
               }
-              aria-label="Collapse rendered results"
+              aria-label="Collapse Jira results"
             />
           }
         />

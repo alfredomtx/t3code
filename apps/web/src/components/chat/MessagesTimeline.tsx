@@ -175,7 +175,7 @@ import {
   SnapShotAttachmentDetails,
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
-import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
+import { JiraResultDisclosure } from "./JiraResultDisclosure";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { ChangedFilesCard } from "./ChangedFilesTree";
@@ -2894,24 +2894,13 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
   const ctx = use(TimelineRowCtx);
   return (
     <div className="min-w-0 px-1">
-      <RenderedResultDisclosure
-        rowId={row.id}
-        title={row.htmlRender.title}
-        defaultCollapsed={ctx.collapseRenderedResults}
-        overrides={ctx.workGroupViewState.renderedResultOverrides}
-        onToggle={ctx.onToggleWorkEntry}
+      <HtmlRenderFrame
+        key={row.htmlRender.attachmentId}
+        environmentId={ctx.activeThreadEnvironmentId}
+        htmlRender={row.htmlRender}
+        threadRef={ctx.threadRef ?? undefined}
         onFullscreenChange={(fullscreen) => ctx.onAppFullscreenChange(row.id, fullscreen)}
-      >
-        {({ onFullscreenChange }) => (
-          <HtmlRenderFrame
-            key={row.htmlRender.attachmentId}
-            environmentId={ctx.activeThreadEnvironmentId}
-            htmlRender={row.htmlRender}
-            threadRef={ctx.threadRef ?? undefined}
-            onFullscreenChange={onFullscreenChange}
-          />
-        )}
-      </RenderedResultDisclosure>
+      />
     </div>
   );
 }
@@ -2922,9 +2911,9 @@ function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app
 
   return (
     <div className="min-w-0 px-1">
-      <RenderedResultDisclosure
+      <JiraResultDisclosure
+        resourceUri={row.mcpApp.resourceUri}
         rowId={row.id}
-        title="Interactive app"
         defaultCollapsed={ctx.collapseRenderedResults}
         overrides={ctx.workGroupViewState.renderedResultOverrides}
         onToggle={ctx.onToggleWorkEntry}
@@ -2945,7 +2934,7 @@ function McpAppTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mcp-app
             onFullscreenChange={onFullscreenChange}
           />
         )}
-      </RenderedResultDisclosure>
+      </JiraResultDisclosure>
     </div>
   );
 }

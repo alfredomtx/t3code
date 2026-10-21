@@ -2,7 +2,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { RenderedResultDisclosure } from "./RenderedResultDisclosure";
+import { JiraResultDisclosure } from "./JiraResultDisclosure";
 
 import { render as renderUi } from "../../../test/render";
 
@@ -15,7 +15,8 @@ it("retains the iframe and input across pointer and keyboard disclosure and reme
   const render = async (defaultCollapsed: boolean, mounted = true) => {
     await screen.rerender(
       mounted ? (
-        <RenderedResultDisclosure
+        <JiraResultDisclosure
+          resourceUri="ui://widget/jira-widget.html"
           rowId="result"
           defaultCollapsed={defaultCollapsed}
           overrides={overrides}
@@ -30,12 +31,12 @@ it("retains the iframe and input across pointer and keyboard disclosure and reme
               style={{ width: "100%", height: 250 }}
             />
           )}
-        </RenderedResultDisclosure>
+        </JiraResultDisclosure>
       ) : null,
     );
   };
   await render(true);
-  const button = page.getByRole("button", { name: "Rendered result" });
+  const button = page.getByRole("button", { name: "Jira result" });
   const frame = container.querySelector("iframe");
   if (!frame) throw new Error("Missing result frame");
   const content = frame.parentElement;
@@ -71,24 +72,23 @@ it("retains the iframe and input across pointer and keyboard disclosure and reme
 
 it("follows preference changes until overridden", async () => {
   await using screen = await renderUi(null);
-  const container = screen.container;
   const overrides = new Map<string, boolean>();
   const render = async (defaultCollapsed: boolean) => {
     await screen.rerender(
-      <RenderedResultDisclosure
+      <JiraResultDisclosure
+        resourceUri="ui://widget/jira-widget.html"
         rowId="result"
-        title="Page"
         defaultCollapsed={defaultCollapsed}
         overrides={overrides}
         onToggle={() => {}}
         onFullscreenChange={() => {}}
       >
         {() => <iframe sandbox="" title="Page content" srcDoc="A rendered result" />}
-      </RenderedResultDisclosure>,
+      </JiraResultDisclosure>,
     );
   };
   await render(true);
-  const button = page.getByRole("button", { name: "Page", exact: true });
+  const button = page.getByRole("button", { name: "Jira result", exact: true });
   await expect.element(button).toHaveAttribute("aria-expanded", "false");
   await render(false);
   await expect.element(button).toHaveAttribute("aria-expanded", "true");
@@ -100,4 +100,33 @@ it("follows preference changes until overridden", async () => {
   await userEvent.click(button);
   await render(false);
   await expect.element(button).toHaveAttribute("aria-expanded", "false");
+});
+
+it("leaves other MCP apps visible without adding disclosure controls", async () => {
+  const onFullscreenChange = vi.fn();
+  await using screen = await renderUi(
+    <JiraResultDisclosure
+      resourceUri="ui://widget/other-app.html"
+      rowId="other-app"
+      defaultCollapsed={true}
+      overrides={new Map()}
+      onToggle={() => {}}
+      onFullscreenChange={onFullscreenChange}
+    >
+      {({ visible }) => (
+        <iframe
+          sandbox=""
+          title="Other app"
+          srcDoc="<input aria-label='Draft'>"
+          data-visible={visible}
+          style={{ height: 250 }}
+        />
+      )}
+    </JiraResultDisclosure>,
+  );
+  const frame = screen.container.querySelector("iframe");
+  expect(frame?.getBoundingClientRect().height).toBe(250);
+  expect(frame?.getAttribute("data-visible")).toBe("true");
+  expect(screen.container.querySelector("button")).toBeNull();
+  expect(screen.container.querySelector("[inert]")).toBeNull();
 });

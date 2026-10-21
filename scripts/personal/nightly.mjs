@@ -16,18 +16,13 @@ import {
   personalVersion,
   writeJson,
   readJson,
-  repairSnapshot,
-  checkRepairScope,
-  reviewAccepted,
   publicBuildEnvironment,
-  protectedPath,
   assertBuildEnvironment,
   publicationPending,
   defaultRevision,
   isAncestor,
 } from "./core.mjs";
 import { verifyArtifact, smokeApp, fileDigest, syncReleaseAssets } from "./verify-artifact.mjs";
-import { reportNightlyStatus } from "./alerts.mjs";
 
 const source = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
 const root = NodePath.join(NodeOS.homedir(), ".local/share/t3-personal");
@@ -51,14 +46,6 @@ let log;
 let config;
 let failureRecord;
 let environment = { ...process.env };
-async function reportStatus(input) {
-  if (!publish || check) return;
-  try {
-    await reportNightlyStatus({ root, notifier: config?.notifier, ...input });
-  } catch (error) {
-    console.error(error);
-  }
-}
 function run(
   command,
   parameters,
@@ -87,7 +74,7 @@ const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters, { cwd: source }).output;
 const browserTests = [
   "apps/web/src/hooks/useSettings.personal.browser.test.tsx",
-  "apps/web/src/components/chat/RenderedResultDisclosure.browser.test.tsx",
+  "apps/web/src/components/chat/JiraResultDisclosure.browser.test.tsx",
   "apps/web/src/components/chat/HtmlRenderFrame.browser.test.tsx",
   "apps/web/src/components/chat/McpAppFrame.browser.test.tsx",
 ];
@@ -117,79 +104,6 @@ async function requiredTests() {
   for (const file of [...fixed, ...browserTests])
     await NodeFSP.access(NodePath.join(builder, file));
   return fixed;
-}
-
-async function repairMerge(runDirectory, conflicts) {
-  NodeAssert.ok(
-    conflicts.length > 0,
-    "The merge failed without conflicts. AI repair is not permitted.",
-  );
-  const repairHead = fullSha(git("rev-parse", "HEAD"));
-  const mergeHead = fullSha(git("rev-parse", "MERGE_HEAD"));
-  const files = git("ls-files", "-z").split("\0").filter(Boolean);
-  NodeAssert.ok(
-    !conflicts.some(protectedPath),
-    "A protected file conflicts. Human repair is required.",
-  );
-  const before = await repairSnapshot(builder, files, conflicts);
-  await writeJson(NodePath.join(runDirectory, "repair-before.json"), before);
-  const prompt = `Resolve only the current Git merge conflicts in this builder checkout. Preserve the personal desktop identity, collapsed-result preference, and exact protocol checks. Do not commit, publish, run applications, change tests, configuration, scripts, signing, release gates, or agent instructions. Stop if a protected file conflicts. The original source contract is in the existing code. Use the smallest correction. Conflicted files: ${conflicts.join(", ")}`;
-  run(
-    "codex",
-    [
-      "exec",
-      "--sandbox",
-      "workspace-write",
-      "--config",
-      'approval_policy="never"',
-      "--ephemeral",
-      "--output-last-message",
-      NodePath.join(runDirectory, "repair.txt"),
-      prompt,
-    ],
-    { timeout: 10 * 60_000 },
-  );
-  checkRepairScope(before, await repairSnapshot(builder, files, conflicts));
-  const schemaFile = NodePath.join(runDirectory, "review-schema.json");
-  await writeJson(schemaFile, {
-    type: "object",
-    additionalProperties: false,
-    required: ["verdict", "findings"],
-    properties: {
-      verdict: { type: "string", enum: ["accept", "reject"] },
-      findings: { type: "array", items: { type: "string" } },
-    },
-  });
-  const reviewFile = NodePath.join(runDirectory, "review.json");
-  run(
-    "codex",
-    [
-      "exec",
-      "--sandbox",
-      "read-only",
-      "--config",
-      'approval_policy="never"',
-      "--ephemeral",
-      "--output-schema",
-      schemaFile,
-      "--output-last-message",
-      reviewFile,
-      `Independently review the current merge repair. Do not edit, delegate, commit, or launch applications. Reject lost upstream behavior, changed personal identity/protocol, data isolation defects, disabled validation, or weakened tests/security. Compare the current worktree with both MERGE_HEAD and HEAD. Prior repair report is ${NodePath.join(runDirectory, "repair.txt")}. Return accept only with no findings.`,
-    ],
-    { timeout: 10 * 60_000 },
-  );
-  checkRepairScope(before, await repairSnapshot(builder, files, conflicts));
-  reviewAccepted(await readJson(reviewFile));
-  NodeAssert.equal(git("rev-parse", "HEAD"), repairHead, "AI repair changed HEAD.");
-  NodeAssert.equal(
-    git("rev-parse", "MERGE_HEAD"),
-    mergeHead,
-    "AI repair changed the merge target.",
-  );
-  NodeAssert.ok(
-    !git("diff", "--name-only", "--diff-filter=U"),
-    "Repair left unresolved conflicts.",
-  );
 }
 
 async function releaseRecord(tag) {
@@ -241,13 +155,13 @@ async function main() {
   );
   NodeAssert.equal(config.sourceRepository, identity.sourceRepository);
   NodeAssert.ok(/^[A-F0-9]{40}$/u.test(config.signingIdentity), "Signing fingerprint is missing.");
-  for (const value of [config.node, config.vpBin, config.codex]) {
+  for (const value of [config.node, config.vpBin]) {
     NodeAssert.ok(NodePath.isAbsolute(value));
     await NodeFSP.access(value);
   }
   environment = {
     ...process.env,
-    PATH: `${config.vpBin}:${NodePath.dirname(config.node)}:${NodePath.dirname(config.codex)}:${NodeOS.homedir()}/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin`,
+    PATH: `${config.vpBin}:${NodePath.dirname(config.node)}:${NodeOS.homedir()}/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin`,
     VP_HOME: config.vpHome,
     RUSTUP_TOOLCHAIN: "1.95.0",
   };
@@ -290,7 +204,6 @@ async function main() {
         source,
         builder,
         updateRepository: config.updateRepository,
-        intervalSeconds: 900,
         appLaunched: false,
         mutations: false,
       }),
@@ -434,7 +347,6 @@ async function main() {
         originCommit === status.sourceCommit
       ) {
         console.log(`Already published ${version}.`);
-        await reportStatus({ release: status });
         return;
       }
       NodeAssert.ok(
@@ -475,11 +387,11 @@ async function main() {
       const merge = run("git", ["merge", "--no-ff", "--no-commit", upstreamCommit], {
         acceptFailure: true,
       });
-      if (merge.status !== 0)
-        await repairMerge(
-          runDirectory,
-          git("diff", "--name-only", "--diff-filter=U").split("\n").filter(Boolean),
-        );
+      NodeAssert.equal(
+        merge.status,
+        0,
+        "The upstream merge failed. Use the T3 repair thread to review and fix the source.",
+      );
       if (git("status", "--porcelain")) {
         git("add", "--all");
         git("commit", "-m", `chore(personal): integrate ${upstreamTag}`);
@@ -501,11 +413,7 @@ async function main() {
     Object.assign(environment, publicEnvironment);
     const tests = await requiredTests();
     run("vp", ["install", "--frozen-lockfile"]);
-    run(config.node, [
-      "--test",
-      "scripts/personal/core.test.mjs",
-      "scripts/personal/alerts.test.mjs",
-    ]);
+    run(config.node, ["--test", "scripts/personal/core.test.mjs"]);
     run("vp", ["test", "run", ...tests]);
     run("vp", ["exec", "playwright", "install", "chromium"], {
       cwd: NodePath.join(builder, "apps/web"),
@@ -689,7 +597,6 @@ async function main() {
           await NodeFSP.rm(NodePath.join(root, "artifacts", name), { recursive: true });
       }
     console.log(`Published ${release.url}`);
-    await reportStatus({ release: status });
   } catch (error) {
     const failure = {
       error: error.message,
@@ -721,6 +628,5 @@ main().catch(async (error) => {
     } catch (diagnosticError) {
       console.error(diagnosticError);
     }
-    await reportStatus({ failure });
   }
 });

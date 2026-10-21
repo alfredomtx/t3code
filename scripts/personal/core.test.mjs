@@ -11,15 +11,11 @@ import {
   personalVersion,
   fullSha,
   writeJson,
-  repairSnapshot,
-  checkRepairScope,
-  reviewAccepted,
   publicBuildEnvironment,
   publicationPending,
   defaultRevision,
   isAncestor,
   assertBuildEnvironment,
-  protectedPath,
 } from "./core.mjs";
 import { verifyManifest, syncReleaseAssets, smokeApp } from "./verify-artifact.mjs";
 
@@ -73,29 +69,6 @@ NodeTest.test("one owner excludes another process and a dead PID can be reclaime
     await recovered();
   }),
 );
-NodeTest.test(
-  "repair protection compares the pre-AI working state and rejects protected edits",
-  () =>
-    temporary(async (root) => {
-      await NodeFSP.mkdir(NodePath.join(root, "scripts"));
-      await NodeFSP.writeFile(NodePath.join(root, "scripts/gate.mjs"), "legitimate upstream gate");
-      await NodeFSP.writeFile(
-        NodePath.join(root, "feature.test.ts"),
-        "legitimate upstream NodeTest.test",
-      );
-      await NodeFSP.writeFile(NodePath.join(root, "feature.ts"), "<<<<<<< conflict");
-      const files = ["scripts/gate.mjs", "feature.test.ts", "feature.ts"];
-      const before = await repairSnapshot(root, files);
-      await NodeFSP.writeFile(NodePath.join(root, "feature.ts"), "resolved");
-      checkRepairScope(before, await repairSnapshot(root, files));
-      await NodeFSP.writeFile(NodePath.join(root, "scripts/gate.mjs"), "disabled gate");
-      const after = await repairSnapshot(root, files);
-      NodeAssert.throws(() => checkRepairScope(before, after));
-      reviewAccepted({ verdict: "accept", findings: [] });
-      NodeAssert.throws(() => reviewAccepted({ verdict: "reject", findings: [] }));
-      NodeAssert.throws(() => reviewAccepted({ verdict: "accept", findings: ["lost behavior"] }));
-    }),
-);
 NodeTest.test("public defaults exclude Apple and private credentials", () => {
   const env = publicBuildEnvironment(
     "T3CODE_CLERK_PUBLISHABLE_KEY=pk_live_public\nT3CODE_CLERK_JWT_TEMPLATE=t3-relay\nT3CODE_CLERK_CLI_OAUTH_CLIENT_ID=public\nT3CODE_RELAY_URL=https://relay.t3.codes\nT3CODE_APPLE_TEAM_ID=private\nGH_TOKEN=secret",
@@ -133,7 +106,7 @@ NodeTest.test(
         mode: 0o755,
       });
       const script = `#!/bin/sh\nprintf '%s %s\\n' "$0" "$*" >> '${calls}'\ncase "$*" in\n  'auth status') exit 0;;\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'ls-remote --exit-code https://github.com/alfredomtx/t3code.git refs/heads/personal') echo 'd36b7da2485bc889b320a285deea181f637d760a refs/heads/personal';;\n  *) echo 'Unexpected command' >&2; exit 9;;\nesac\n`;
-      for (const command of ["gh", "git", "codex", "vp"])
+      for (const command of ["gh", "git", "vp"])
         await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
       const configFile = NodePath.join(root, ".local/share/t3-personal/config.json");
       const config = {
@@ -144,7 +117,6 @@ NodeTest.test(
         node: process.execPath,
         vpHome: root,
         vpBin: bin,
-        codex: NodePath.join(bin, "codex"),
         notifier,
       };
       await writeJson(configFile, config);
@@ -172,10 +144,7 @@ NodeTest.test(
       await writeJson(configFile, { ...config, updateRepository: "alfredomtx/t3code" });
       NodeAssert.equal(run(["--publish"]).status, 1);
       NodeAssert.equal(run(["--publish"]).status, 1);
-      NodeAssert.equal(
-        (await NodeFSP.readFile(notifications, "utf8")).trim().split("\n").length,
-        1,
-      );
+      await NodeAssert.rejects(NodeFSP.access(notifications), { code: "ENOENT" });
       NodeAssert.equal(await NodeFSP.readFile(calls, "utf8"), firstCalls);
       await NodeAssert.rejects(
         NodeFSP.access(NodePath.join(root, ".local/share/t3-personal/status.json")),
@@ -195,7 +164,7 @@ NodeTest.test("a repeated accepted nightly poll does not build, publish, or chan
     const tag = "v0.1.1-nightly.20261020.3411";
     const version = personalVersion(tag, 3);
     const script = `#!/bin/sh\nprintf '%s %s\\n' "$0" "$*" >> '${calls}'\ncase "$*" in\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'api repos/pingdotgg/t3code/releases?per_page=100'*) echo '${tag}';;\n  'api repos/alfredomtx/t3code-personal-releases/releases?per_page=100'*) echo 'v${version}';;\n  'remote get-url origin') echo https://github.com/alfredomtx/t3code.git;;\n  'remote get-url upstream') echo https://github.com/pingdotgg/t3code.git;;\n  'status --porcelain') exit 0;;\n  'fetch '*) exit 0;;\n  'rev-parse origin/personal'|'rev-parse ${tag}^{commit}') echo '${sha}';;\n  'rev-parse --is-shallow-repository') echo false;;\n  'remote') printf 'origin\\nupstream\\n';;\n  *) echo "Unexpected mutation: $*" >&2; exit 9;;\nesac\n`;
-    for (const command of ["gh", "git", "codex", "vp"])
+    for (const command of ["gh", "git", "vp"])
       await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
     await writeJson(NodePath.join(stateRoot, "config.json"), {
       sourceCheckout: source,
@@ -205,7 +174,6 @@ NodeTest.test("a repeated accepted nightly poll does not build, publish, or chan
       node: process.execPath,
       vpHome: root,
       vpBin: bin,
-      codex: NodePath.join(bin, "codex"),
     });
     const status = { version, sourceCommit: sha, upstreamCommit: sha };
     await writeJson(NodePath.join(stateRoot, "status.json"), status);
@@ -265,53 +233,20 @@ NodeTest.test("ancestry uses Git exit status and rejects execution failures", ()
     NodeAssert.throws(() => isAncestor(() => result, "a".repeat(40), "b".repeat(40)));
 });
 
-NodeTest.test(
-  "repair protects ignored environment, identity, hooks, and non-conflicted source inputs",
-  () =>
-    temporary(async (root) => {
-      for (const directory of [
-        ".git/hooks",
-        "packages/shared/src",
-        "apps/web",
-        "node_modules/ignored",
-      ])
-        await NodeFSP.mkdir(NodePath.join(root, directory), { recursive: true });
-      const files = [
-        ".env.local",
-        "apps/web/.env.production.local",
-        "packages/shared/src/personalDesktop.ts",
-        ".git/config",
-        ".git/hooks/pre-commit",
-        "other.ts",
-        "conflict.ts",
-      ];
-      for (const file of files) await NodeFSP.writeFile(NodePath.join(root, file), "before");
-      for (const file of files.slice(0, 5)) NodeAssert.ok(protectedPath(file));
-      const before = await repairSnapshot(root, files, ["conflict.ts"]);
-      await NodeFSP.writeFile(NodePath.join(root, "conflict.ts"), "resolved");
-      checkRepairScope(before, await repairSnapshot(root, files, ["conflict.ts"]));
-      for (const file of files.filter((file) => file !== "conflict.ts")) {
-        await NodeFSP.writeFile(NodePath.join(root, file), "changed");
-        const after = await repairSnapshot(root, files, ["conflict.ts"]);
-        NodeAssert.throws(() => checkRepairScope(before, after), file);
-        await NodeFSP.writeFile(NodePath.join(root, file), "before");
-      }
-      await NodeFSP.writeFile(NodePath.join(root, "apps/web/.env.new"), "new ignored input");
-      const after = await repairSnapshot(root, files, ["conflict.ts"]);
-      NodeAssert.throws(() => checkRepairScope(before, after));
-      await NodeAssert.rejects(assertBuildEnvironment(root));
-      for (const file of [".env.local", "apps/web/.env.production.local", "apps/web/.env.new"])
-        await NodeFSP.rm(NodePath.join(root, file));
-      await NodeFSP.writeFile(NodePath.join(root, ".env.example"), "public defaults");
-      await NodeFSP.writeFile(
-        NodePath.join(root, "node_modules/ignored/.env"),
-        "dependency fixture",
-      );
-      await NodeFSP.writeFile(NodePath.join(root, ".envrc"), "layout node");
-      await assertBuildEnvironment(root);
-      await NodeFSP.symlink(".env.example", NodePath.join(root, ".env"));
-      await NodeAssert.rejects(assertBuildEnvironment(root));
-    }),
+NodeTest.test("build inputs reject hidden environment files and symlinks", () =>
+  temporary(async (root) => {
+    await NodeFSP.mkdir(NodePath.join(root, "apps/web"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "node_modules/ignored"), { recursive: true });
+    const hidden = NodePath.join(root, "apps/web/.env.production.local");
+    await NodeFSP.writeFile(hidden, "VITE_UNEXPECTED=value");
+    await NodeAssert.rejects(assertBuildEnvironment(root));
+    await NodeFSP.rm(hidden);
+    await NodeFSP.writeFile(NodePath.join(root, ".env.example"), "public defaults");
+    await NodeFSP.writeFile(NodePath.join(root, "node_modules/ignored/.env"), "dependency");
+    await assertBuildEnvironment(root);
+    await NodeFSP.symlink(".env.example", NodePath.join(root, ".env"));
+    await NodeAssert.rejects(assertBuildEnvironment(root));
+  }),
 );
 
 NodeTest.test(
@@ -393,7 +328,7 @@ NodeTest.test(
       await NodeFSP.writeFile(NodePath.join(cached, "app.zip"), "retained evidence");
       const calls = NodePath.join(root, "calls.txt");
       const script = `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$*" in\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'api repos/pingdotgg/t3code/releases?per_page=100'*) echo '${tag}';;\n  'api repos/alfredomtx/t3code-personal-releases/releases?per_page=100'*) exit 0;;\n  'remote get-url origin') echo https://github.com/alfredomtx/t3code.git;;\n  'remote get-url upstream') echo https://github.com/pingdotgg/t3code.git;;\n  'status --porcelain'|'fetch '*|'checkout --detach '*|'merge --no-ff --no-commit '*) exit 0;;\n  'rev-parse origin/personal'|'rev-parse ${tag}^{commit}'|'rev-parse HEAD') echo '${sha}';;\n  'rev-parse --is-shallow-repository') echo false;;\n  'remote') printf 'origin\\nupstream\\n';;\n  'cat-file -e ${missing}^{commit}') exit 128;;\n  *) echo "Unexpected command: $*" >&2; exit 9;;\nesac\n`;
-      for (const command of ["gh", "git", "codex", "vp"])
+      for (const command of ["gh", "git", "vp"])
         await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
       await writeJson(NodePath.join(stateRoot, "config.json"), {
         sourceCheckout: source,
@@ -403,7 +338,6 @@ NodeTest.test(
         node: process.execPath,
         vpHome: root,
         vpBin: bin,
-        codex: NodePath.join(bin, "codex"),
       });
       const result = NodeChildProcess.spawnSync(
         process.execPath,
@@ -482,7 +416,7 @@ NodeTest.test(
       const calls = NodePath.join(root, "calls");
       const tagFile = NodePath.join(root, "tag");
       const script = `#!/bin/sh\nprintf '%s\\n' "$*" >> '${calls}'\ncase "$*" in\n  'api repos/alfredomtx/t3code-personal-releases --jq .visibility') echo public;;\n  'api repos/pingdotgg/t3code/releases?per_page=100'*) cat '${tagFile}';;\n  'api repos/alfredomtx/t3code-personal-releases/releases?per_page=100'*) exit 0;;\n  'remote get-url origin') echo https://github.com/alfredomtx/t3code.git;;\n  'remote get-url upstream') echo https://github.com/pingdotgg/t3code.git;;\n  'status --porcelain'|'fetch '*|'checkout '*|'merge --no-ff --no-commit '*|'merge-base --is-ancestor '*|'cat-file -e '*) exit 0;;\n  'rev-parse origin/personal'|'rev-parse HEAD'|'rev-parse v'*'^{commit}') echo '${sha}';;\n  'rev-parse --is-shallow-repository') echo false;;\n  'remote') printf 'origin\\nupstream\\n';;\n  *) echo "Unexpected: $*" >&2; exit 9;;\nesac\n`;
-      for (const command of ["gh", "git", "codex", "vp"])
+      for (const command of ["gh", "git", "vp"])
         await NodeFSP.writeFile(NodePath.join(bin, command), script, { mode: 0o755 });
       await writeJson(NodePath.join(stateRoot, "config.json"), {
         sourceCheckout: source,
@@ -492,7 +426,6 @@ NodeTest.test(
         node: process.execPath,
         vpHome: root,
         vpBin: bin,
-        codex: NodePath.join(bin, "codex"),
       });
       const failures = [];
       for (const [index, mode] of ["--publish", "--build-only"].entries()) {
@@ -542,6 +475,24 @@ NodeTest.test(
       await NodeAssert.rejects(NodeFSP.access(NodePath.join(stateRoot, "pending.json")), {
         code: "ENOENT",
       });
+      await NodeFSP.writeFile(tagFile, "v0.1.1-nightly.20261020.3413");
+      const mergeFailureScript = script.replace(
+        'case "$*" in\n',
+        "case \"$*\" in\n  'merge --no-ff --no-commit '*) exit 1;;\n",
+      );
+      await NodeFSP.writeFile(NodePath.join(bin, "git"), mergeFailureScript);
+      const mergeFailure = NodeChildProcess.spawnSync(
+        process.execPath,
+        [NodePath.join(source, "scripts/personal/nightly.mjs"), "--publish"],
+        { env: { ...process.env, HOME: root }, encoding: "utf8" },
+      );
+      NodeAssert.equal(mergeFailure.status, 1);
+      NodeAssert.match(mergeFailure.stderr, /Use the T3 repair thread/u);
+      const mergeDiagnostic = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(stateRoot, "last-failure.json"), "utf8"),
+      );
+      NodeAssert.match(mergeDiagnostic.error, /Use the T3 repair thread/u);
+      await NodeAssert.rejects(NodeFSP.access(NodePath.join(stateRoot, "pending.json")));
       NodeAssert.notEqual(failures[0].runDirectory, failures[1].runDirectory);
       for (const failure of failures)
         NodeAssert.deepEqual(
