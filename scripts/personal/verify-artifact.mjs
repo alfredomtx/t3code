@@ -319,7 +319,7 @@ export async function smokeApp({ executable, temporary, logFile }) {
       );
       NodeAssert.ok(await portIsClosed(port), "The isolated app started an unexpected backend.");
       if (
-        log.includes("desktop app control socket ready") &&
+        log.includes("main window created") &&
         log.includes("app ready") &&
         log.includes("bootstrap skipping local environment (disabled in settings)")
       ) {

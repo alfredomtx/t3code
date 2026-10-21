@@ -198,7 +198,7 @@ assert.equal(process.env.HOME, ${JSON.stringify(process.env.HOME)});
 const settings = JSON.parse(fs.readFileSync(path.join(process.env.T3CODE_HOME, 'userdata/desktop-settings.json')));
 assert.equal(settings.localEnvironmentEnabled, false);
 fs.mkdirSync(path.join(process.env.T3CODE_HOME, 'electron-profile'));
-console.log('desktop app control socket ready');
+console.log('main window created');
 console.log('bootstrap skipping local environment (disabled in settings)');
 console.log('app ready');
 setInterval(() => {}, 1000);
