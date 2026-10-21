@@ -126,29 +126,15 @@ export async function assertBuildEnvironment(root) {
         /^\.env(?:\.|$)/iu.test(NodePath.basename(file)) &&
         NodePath.basename(file).toLowerCase() !== ".env.example",
     ),
-    "The dedicated builder contains an environment input. Remove it before building.",
+    "The source checkout contains an environment input. Remove it before building.",
   );
   for (const file of files) {
     const stat = await NodeFSP.lstat(NodePath.join(root, file));
     NodeAssert.ok(
       !stat.isSymbolicLink() || file === ".claude/skills",
-      `The dedicated builder contains a linked input: ${file}`,
+      `The source checkout contains a linked input: ${file}`,
     );
   }
-}
-
-export function publicationPending(record) {
-  return record?.readyForPublication === true && record.published === false ? record : null;
-}
-
-export function defaultRevision({ pending, status, upstreamCommit, originCommit }) {
-  if (pending) return parseNightly(pending.version).sequence % 1000;
-  if (status?.upstreamCommit === upstreamCommit)
-    return (
-      (parseNightly(status.version).sequence % 1000) +
-      (status.sourceCommit === originCommit ? 0 : 1)
-    );
-  return 1;
 }
 
 export function isAncestor(runGit, ancestor, descendant) {

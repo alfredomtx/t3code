@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* oxlint-disable t3code/no-global-process-runtime -- This synchronous scheduler CLI runs outside the Effect application runtime. */
+/* oxlint-disable t3code/no-global-process-runtime -- This release CLI runs outside the Effect application runtime. */
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
@@ -7,54 +7,41 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
+import * as NodeUtil from "node:util";
 import { PERSONAL_DESKTOP as identity } from "../../packages/shared/src/personalDesktop.ts";
 import {
   acquireLock,
   compareVersions,
   fullSha,
-  parseNightly,
   personalVersion,
   writeJson,
-  readJson,
   publicBuildEnvironment,
   assertBuildEnvironment,
-  publicationPending,
-  defaultRevision,
   isAncestor,
 } from "./core.mjs";
 import { verifyArtifact, smokeApp, fileDigest, syncReleaseAssets } from "./verify-artifact.mjs";
 
 const source = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "../..");
 const root = NodePath.join(NodeOS.homedir(), ".local/share/t3-personal");
-const builder = NodePath.join(root, "builder");
-const configFile = NodePath.join(root, "config.json");
-const stateFile = NodePath.join(root, "status.json");
-const requestFile = NodePath.join(root, "pending.json");
-const args = process.argv.slice(2);
-const publish = args.includes("--publish");
-const check = args.includes("--check") || args.includes("--dry-run");
-const revisionIndex = args.indexOf("--revision");
-const explicitRevision = revisionIndex < 0 ? undefined : Number(args[revisionIndex + 1]);
-const allowed = new Set(["--publish", "--build-only", "--check", "--dry-run", "--revision"]);
-for (let i = 0; i < args.length; i++) {
-  NodeAssert.ok(allowed.has(args[i]), `Unknown argument: ${args[i]}`);
-  if (args[i] === "--revision") i++;
-}
-NodeAssert.ok(!(publish && args.includes("--build-only")), "Choose --build-only or --publish.");
-if (explicitRevision !== undefined) personalVersion("1.0.0-nightly.20260101.1", explicitRevision);
+const { values: args } = NodeUtil.parseArgs({
+  options: {
+    "upstream-tag": { type: "string" },
+    revision: { type: "string", default: "1" },
+    publish: { type: "boolean", default: false },
+    check: { type: "boolean", default: false },
+    help: { type: "boolean", default: false },
+  },
+});
 let log;
-let config;
-let failureRecord;
-let environment = { ...process.env };
+let environment;
 function run(
   command,
   parameters,
-  { cwd = builder, input, timeout = 30 * 60_000, acceptFailure = false, env = environment } = {},
+  { cwd = source, timeout = 30 * 60_000, acceptFailure = false } = {},
 ) {
   const result = NodeChildProcess.spawnSync(command, parameters, {
     cwd,
-    env,
-    input,
+    env: environment,
     encoding: "utf8",
     timeout,
     maxBuffer: 64 * 1024 * 1024,
@@ -71,7 +58,7 @@ function run(
   return { ...result, output: result.stdout?.trim() ?? "" };
 }
 const git = (...parameters) => run("git", parameters).output;
-const gh = (...parameters) => run("gh", parameters, { cwd: source }).output;
+const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
   "apps/web/src/hooks/useSettings.personal.browser.test.tsx",
   "apps/web/src/components/chat/JiraResultDisclosure.browser.test.tsx",
@@ -93,16 +80,13 @@ async function requiredTests() {
     "apps/desktop/src/app/DesktopEnvironment.test.ts",
     "apps/desktop/src/app/DesktopAppIdentity.test.ts",
     "apps/desktop/src/electron/ElectronProtocol.test.ts",
-  ];
-  fixed.push(
     "packages/contracts/src/settings.test.ts",
     "apps/web/src/clientPersistenceStorage.test.ts",
     "apps/desktop/src/settings/DesktopClientSettings.test.ts",
     "apps/web/src/hooks/useSettings.test.ts",
     "apps/web/src/hooks/useTheme.test.ts",
-  );
-  for (const file of [...fixed, ...browserTests])
-    await NodeFSP.access(NodePath.join(builder, file));
+  ];
+  for (const file of [...fixed, ...browserTests]) await NodeFSP.access(NodePath.join(source, file));
   return fixed;
 }
 
@@ -141,187 +125,99 @@ async function readBack(release, directory, assets, repairDraft = false) {
 }
 
 async function main() {
-  config = await readJson(configFile);
-  NodeAssert.ok(config, "Generate the personal runner configuration first.");
-  NodeAssert.equal(
-    config.sourceCheckout,
-    source,
-    "Run the scheduler from its configured stable source checkout.",
-  );
-  NodeAssert.equal(
-    config.updateRepository,
-    identity.updateRepository,
-    "The production runner requires the production release feed.",
-  );
-  NodeAssert.equal(config.sourceRepository, identity.sourceRepository);
-  NodeAssert.ok(/^[A-F0-9]{40}$/u.test(config.signingIdentity), "Signing fingerprint is missing.");
-  for (const value of [config.node, config.vpBin]) {
-    NodeAssert.ok(NodePath.isAbsolute(value));
-    await NodeFSP.access(value);
+  if (args.help) {
+    console.log(
+      "Usage: node scripts/personal/nightly.mjs --upstream-tag TAG [--revision 1..999] [--publish]\n       node scripts/personal/nightly.mjs --check",
+    );
+    return;
   }
-  environment = {
-    ...process.env,
-    PATH: `${config.vpBin}:${NodePath.dirname(config.node)}:${NodeOS.homedir()}/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin`,
-    VP_HOME: config.vpHome,
-    RUSTUP_TOOLCHAIN: "1.95.0",
-  };
+  NodeAssert.ok(Number(process.versions.node.split(".")[0]) >= 24, "Use Node 24 or later.");
+  const certificate = process.env.T3CODE_PERSONAL_SIGN_IDENTITY;
+  NodeAssert.ok(
+    /^[A-F0-9]{40}$/u.test(certificate ?? ""),
+    "Set T3CODE_PERSONAL_SIGN_IDENTITY to the existing certificate fingerprint.",
+  );
+  NodeAssert.ok(!(args.check && args.publish), "Choose --check or --publish.");
+  const upstreamTag = args["upstream-tag"];
+  const version = args.check ? null : personalVersion(upstreamTag ?? "", Number(args.revision));
+  environment = { ...process.env };
   for (const key of Object.keys(environment))
     if (/^(?:T3CODE_|VITE_|EXPO_PUBLIC_|APP_VERSION|APPLE_|CSC_|GIT_)/u.test(key))
       delete environment[key];
-  environment.T3CODE_PERSONAL_SIGN_IDENTITY = config.signingIdentity;
-  environment.T3CODE_DESKTOP_UPDATE_REPOSITORY = identity.updateRepository;
-  environment.GITHUB_REPOSITORY = identity.sourceRepository;
-  environment.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-  environment.GIT_CONFIG_GLOBAL = "/dev/null";
-  environment.GIT_CONFIG_NOSYSTEM = "1";
-  environment.GIT_CONFIG_COUNT = "2";
-  environment.GIT_CONFIG_KEY_0 = "core.hooksPath";
-  environment.GIT_CONFIG_VALUE_0 = "/dev/null";
-  environment.GIT_CONFIG_KEY_1 = "credential.helper";
-  environment.GIT_CONFIG_VALUE_1 = "!gh auth git-credential";
-  environment.GIT_TERMINAL_PROMPT = "0";
-  environment.GIT_AUTHOR_NAME = identity.productName;
-  environment.GIT_COMMITTER_NAME = identity.productName;
-  environment.GIT_AUTHOR_EMAIL = "alfredomtx@users.noreply.github.com";
-  environment.GIT_COMMITTER_EMAIL = "alfredomtx@users.noreply.github.com";
-  if (check) {
-    run(config.node, ["--version"], { cwd: source });
-    run("gh", ["auth", "status"], { cwd: source });
-    run(
-      "git",
-      [
-        "ls-remote",
-        "--exit-code",
-        `https://github.com/${identity.sourceRepository}.git`,
-        "refs/heads/personal",
-      ],
-      { cwd: source },
-    );
-    gh("api", `repos/${identity.updateRepository}`, "--jq", ".visibility");
-    console.log(
-      JSON.stringify({
-        check: "passed",
-        source,
-        builder,
-        updateRepository: config.updateRepository,
-        appLaunched: false,
-        mutations: false,
-      }),
-    );
+  Object.assign(environment, {
+    T3CODE_PERSONAL_SIGN_IDENTITY: certificate,
+    T3CODE_DESKTOP_UPDATE_REPOSITORY: identity.updateRepository,
+    GITHUB_REPOSITORY: identity.sourceRepository,
+    CSC_IDENTITY_AUTO_DISCOVERY: "false",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_COUNT: "2",
+    GIT_CONFIG_KEY_0: "core.hooksPath",
+    GIT_CONFIG_VALUE_0: "/dev/null",
+    GIT_CONFIG_KEY_1: "credential.helper",
+    GIT_CONFIG_VALUE_1: "!gh auth git-credential",
+    GIT_TERMINAL_PROMPT: "0",
+  });
+  NodeAssert.equal(
+    git("remote", "get-url", "origin"),
+    `https://github.com/${identity.sourceRepository}.git`,
+  );
+  run("gh", ["auth", "status"]);
+  NodeAssert.equal(
+    gh("api", `repos/${identity.updateRepository}`, "--jq", ".visibility"),
+    "public",
+  );
+  run("vp", ["--version"]);
+  if (args.check) {
+    console.log("Release prerequisites passed. No app, source, or release was changed.");
     return;
   }
   NodeAssert.equal(NodeOS.platform(), "darwin");
   NodeAssert.equal(NodeOS.arch(), "arm64");
   const unlock = await acquireLock(NodePath.join(root, "nightly.lock"));
-  if (!unlock) {
-    console.log("A personal build is already running.");
-    return;
-  }
+  NodeAssert.ok(unlock, "A personal release is already running. Wait for its owner to finish.");
   let artifact;
-  let status = await readJson(stateFile);
-  const runDirectory = NodePath.join(
-    root,
-    "runs",
-    `${new Date().toISOString().replaceAll(":", "-")}-${process.pid}`,
-  );
-  await NodeFSP.mkdir(runDirectory, { recursive: true });
-  log = NodeFS.createWriteStream(NodePath.join(runDirectory, "runner.log"), {
-    mode: 0o600,
-  });
   try {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(root, "release-"));
+    const logFile = NodePath.join(directory, "runner.log");
+    log = NodeFS.createWriteStream(logFile, { mode: 0o600 });
+    console.log(`Building ${version}. Diagnostics and artifacts: ${directory}`);
     NodeAssert.equal(
-      gh("api", `repos/${identity.updateRepository}`, "--jq", ".visibility"),
-      "public",
-      "The release feed must remain public.",
+      git("branch", "--show-current"),
+      "personal",
+      "Build from the personal branch.",
     );
-    const sourceUrl = `https://github.com/${identity.sourceRepository}.git`;
-    const previousPending = publicationPending(await readJson(requestFile));
-    try {
-      await NodeFSP.access(NodePath.join(builder, ".git"));
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-      run("git", ["clone", "--filter=blob:none", "--branch", "personal", sourceUrl, builder], {
-        cwd: root,
-      });
-    }
-    NodeAssert.equal(git("remote", "get-url", "origin"), sourceUrl);
-    if (git("status", "--porcelain")) {
-      NodeAssert.ok(
-        !previousPending,
-        "A verified publication has a dirty builder. Preserve it for inspection.",
-      );
-      const failure = await readJson(NodePath.join(root, "last-failure.json"));
-      NodeAssert.ok(
-        failure && NodePath.dirname(failure.runDirectory) === NodePath.join(root, "runs"),
-        "Inspect the dirty builder without recorded failure diagnostics.",
-      );
-      await NodeFSP.rename(builder, NodePath.join(runDirectory, "failed-builder"));
-      run("git", ["clone", "--filter=blob:none", "--branch", "personal", sourceUrl, builder], {
-        cwd: root,
-      });
-    }
-    await assertBuildEnvironment(builder);
-    git("fetch", "--filter=blob:none", "origin", "personal");
-    const originCommit = fullSha(git("rev-parse", "origin/personal"));
-    const accepted = status?.sourceCommit ? fullSha(status.sourceCommit) : originCommit;
-    if (status?.sourceCommit) {
-      NodeAssert.ok(
-        originCommit === accepted ||
-          originCommit === previousPending?.sourceCommit ||
-          isAncestor(
-            (parameters) => run("git", parameters, { acceptFailure: true }),
-            accepted,
-            originCommit,
-          ),
-        "The source branch diverged from accepted history.",
-      );
-    }
-    const publishedTags = gh(
-      "api",
-      `repos/pingdotgg/t3code/releases?per_page=100`,
-      "--paginate",
-      "--jq",
-      ".[] | select(.draft == false and .prerelease == true) | .tag_name",
-    )
-      .split("\n")
-      .filter((tag) => /^v?\d+\.\d+\.\d+-nightly\.\d{8}\.\d+$/u.test(tag));
-    NodeAssert.ok(publishedTags.length, "No published official nightly exists.");
-    publishedTags.sort(compareVersions);
-    const upstreamTag =
-      previousPending && !previousPending.published
-        ? previousPending.upstreamTag
-        : publishedTags.at(-1);
-    NodeAssert.ok(
-      publishedTags.includes(upstreamTag),
-      "Pending upstream tag is no longer a published official nightly.",
-    );
-    parseNightly(upstreamTag);
-    if (!git("remote").split("\n").includes("upstream"))
-      git("remote", "add", "upstream", "https://github.com/pingdotgg/t3code.git");
     NodeAssert.equal(
-      git("remote", "get-url", "upstream"),
-      "https://github.com/pingdotgg/t3code.git",
+      git("status", "--porcelain"),
+      "",
+      "Commit or preserve source edits before building.",
     );
-    if (git("rev-parse", "--is-shallow-repository") === "true")
-      git("fetch", "--unshallow", "--filter=blob:none", "origin", "personal");
-    git(
-      "fetch",
-      "--filter=blob:none",
-      "upstream",
-      `refs/tags/${upstreamTag}:refs/tags/${upstreamTag}`,
-    );
+    const sourceCommit = fullSha(git("rev-parse", "HEAD"));
     const upstreamCommit = fullSha(git("rev-parse", `${upstreamTag}^{commit}`));
-    if (previousPending && !previousPending.published)
-      NodeAssert.equal(
+    NodeAssert.ok(
+      isAncestor(
+        (parameters) => run("git", parameters, { acceptFailure: true }),
         upstreamCommit,
-        previousPending.upstreamCommit,
-        "The pending official tag moved.",
-      );
-    const revision =
-      explicitRevision ??
-      defaultRevision({ pending: previousPending, status, upstreamCommit, originCommit });
-    const version = personalVersion(upstreamTag, revision);
-    const personalTags = gh(
+        sourceCommit,
+      ),
+      "Merge the selected upstream nightly before building.",
+    );
+    const official = JSON.parse(
+      gh(
+        "release",
+        "view",
+        upstreamTag,
+        "--repo",
+        "pingdotgg/t3code",
+        "--json",
+        "isDraft,isPrerelease",
+      ),
+    );
+    NodeAssert.ok(
+      !official.isDraft && official.isPrerelease,
+      "Select a published official nightly.",
+    );
+    const publicTags = gh(
       "api",
       `repos/${identity.updateRepository}/releases?per_page=100`,
       "--paginate",
@@ -329,94 +225,28 @@ async function main() {
       ".[] | select(.draft == false) | .tag_name",
     )
       .split("\n")
-      .filter((tag) => /^v?\d+\.\d+\.\d+-nightly\.\d{8}\.\d+$/u.test(tag))
-      .sort(compareVersions);
-    if (personalTags.length)
-      NodeAssert.ok(
-        compareVersions(version, personalTags.at(-1)) >= 0,
-        "A newer personal release already exists.",
-      );
-    if (status?.version) {
-      NodeAssert.ok(
-        compareVersions(version, status.version) >= 0,
-        "Requested version is older than the accepted release.",
-      );
-      if (
-        version === status.version &&
-        upstreamCommit === status.upstreamCommit &&
-        originCommit === status.sourceCommit
-      ) {
-        console.log(`Already published ${version}.`);
-        return;
-      }
-      NodeAssert.ok(
-        compareVersions(version, status.version) > 0,
-        "Increment --revision for another source revision of this nightly.",
-      );
-    }
-    const artifactDirectory = NodePath.join(root, "artifacts", version);
-    const verifiedCandidate = await readJson(NodePath.join(artifactDirectory, "verified.json"));
-    const reusableCandidate =
-      verifiedCandidate &&
-      verifiedCandidate.upstreamCommit === upstreamCommit &&
-      verifiedCandidate.baseSourceCommit === originCommit &&
-      run("git", ["cat-file", "-e", `${fullSha(verifiedCandidate.sourceCommit)}^{commit}`], {
-        acceptFailure: true,
-      }).status === 0;
-    if (verifiedCandidate && !previousPending && !reusableCandidate)
-      await NodeFSP.rename(artifactDirectory, NodePath.join(runDirectory, "superseded-artifacts"));
-    let pending = previousPending ?? (reusableCandidate ? verifiedCandidate : null);
-    const resume = pending?.version === version && pending.upstreamCommit === upstreamCommit;
-    if (resume) {
-      fullSha(pending.sourceCommit);
-      NodeAssert.ok(
-        isAncestor(
-          (parameters) => run("git", parameters, { acceptFailure: true }),
-          originCommit,
-          pending.sourceCommit,
-        ),
-        "Pending source no longer extends origin/personal.",
-      );
-      git("checkout", "--detach", pending.sourceCommit);
-    } else {
-      NodeAssert.ok(
-        !pending || pending.published === true,
-        "A previous draft is pending. Resume its revision before a new nightly.",
-      );
-      git("checkout", "--detach", originCommit);
-      const merge = run("git", ["merge", "--no-ff", "--no-commit", upstreamCommit], {
-        acceptFailure: true,
-      });
-      NodeAssert.equal(
-        merge.status,
-        0,
-        "The upstream merge failed. Use the T3 repair thread to review and fix the source.",
-      );
-      if (git("status", "--porcelain")) {
-        git("add", "--all");
-        git("commit", "-m", `chore(personal): integrate ${upstreamTag}`);
-      }
-      pending = {
-        version,
-        upstreamTag,
-        upstreamCommit,
-        baseSourceCommit: originCommit,
-        sourceCommit: fullSha(git("rev-parse", "HEAD")),
-        published: false,
-      };
-      await writeJson(NodePath.join(runDirectory, "candidate.json"), pending);
-    }
-    await assertBuildEnvironment(builder);
-    const publicEnvironment = publicBuildEnvironment(
-      await NodeFSP.readFile(NodePath.join(builder, ".env.example"), "utf8"),
+      .filter((tag) => /^v?\d+\.\d+\.\d+-nightly\.\d{8}\.\d+$/u.test(tag));
+    NodeAssert.ok(
+      publicTags.every((tag) => compareVersions(version, tag) > 0),
+      "Choose a version newer than every published Personal release.",
     );
-    Object.assign(environment, publicEnvironment);
+    const tag = `v${version}`;
+    let release = await releaseRecord(tag);
+    NodeAssert.ok(
+      !release || release.isDraft,
+      "Published release assets are immutable. Choose a new revision.",
+    );
+    await assertBuildEnvironment(source);
+    Object.assign(
+      environment,
+      publicBuildEnvironment(await NodeFSP.readFile(NodePath.join(source, ".env.example"), "utf8")),
+    );
     const tests = await requiredTests();
     run("vp", ["install", "--frozen-lockfile"]);
-    run(config.node, ["--test", "scripts/personal/core.test.mjs"]);
+    run(process.execPath, ["--test", "scripts/personal/core.test.mjs"]);
     run("vp", ["test", "run", ...tests]);
     run("vp", ["exec", "playwright", "install", "chromium"], {
-      cwd: NodePath.join(builder, "apps/web"),
+      cwd: NodePath.join(source, "apps/web"),
     });
     run(
       "vp",
@@ -427,9 +257,7 @@ async function main() {
         "--project",
         "browser",
       ],
-      {
-        cwd: NodePath.join(builder, "apps/web"),
-      },
+      { cwd: NodePath.join(source, "apps/web") },
     );
     const changedFiles = git("diff", "--name-only", `${upstreamCommit}...HEAD`)
       .split("\n")
@@ -444,189 +272,133 @@ async function main() {
       "t3",
     ])
       run("vp", ["exec", "--filter", workspace, "--", "tsc-rs", "--noEmit"]);
-    const directory = NodePath.join(root, "artifacts", version);
-    const verified = await readJson(NodePath.join(directory, "verified.json"));
-    const buildDirectory = verified ? directory : NodePath.join(runDirectory, "package");
-    if (!verified) {
-      await assertBuildEnvironment(builder);
-      await NodeFSP.mkdir(buildDirectory);
-      run(
-        config.node,
-        [
-          "scripts/build-desktop-artifact.ts",
-          "--platform",
-          "mac",
-          "--target",
-          "zip",
-          "--arch",
-          "arm64",
-          "--build-version",
-          version,
-          "--output-dir",
-          buildDirectory,
-        ],
-        { timeout: 60 * 60_000 },
-      );
-    } else {
-      NodeAssert.equal(verified.sourceCommit, pending.sourceCommit);
-      NodeAssert.equal(verified.version, version);
-    }
+    run(
+      process.execPath,
+      [
+        "scripts/build-desktop-artifact.ts",
+        "--platform",
+        "mac",
+        "--target",
+        "zip",
+        "--arch",
+        "arm64",
+        "--build-version",
+        version,
+        "--output-dir",
+        directory,
+      ],
+      { timeout: 60 * 60_000 },
+    );
     artifact = await verifyArtifact({
-      directory: buildDirectory,
+      directory,
       version,
-      sourceCommit: pending.sourceCommit,
-      certificate: config.signingIdentity,
-      temporaryRoot: runDirectory,
+      sourceCommit,
+      certificate,
+      temporaryRoot: directory,
     });
-    await smokeApp({ ...artifact, logFile: NodePath.join(runDirectory, "app-smoke.log") });
-    const assetNames = [artifact.zip, `${artifact.zip}.blockmap`, "nightly-mac.yml"];
+    await smokeApp({ ...artifact, logFile: NodePath.join(directory, "app-smoke.log") });
+    NodeAssert.equal(git("rev-parse", "HEAD"), sourceCommit, "Source changed during the release.");
+    NodeAssert.equal(git("status", "--porcelain"), "", "Source edits appeared during the release.");
+    const assets = [artifact.zip, `${artifact.zip}.blockmap`, "nightly-mac.yml"].map((name) =>
+      NodePath.join(directory, name),
+    );
     const provenance = {
-      ...pending,
-      sourceUrl: `https://github.com/${identity.sourceRepository}/commit/${pending.sourceCommit}`,
+      version,
+      upstreamTag,
+      upstreamCommit,
+      sourceCommit,
+      sourceUrl: `https://github.com/${identity.sourceRepository}/commit/${sourceCommit}`,
       updateRepository: identity.updateRepository,
-      certificate: config.signingIdentity,
+      certificate,
       architecture: "arm64",
-      publicBuildKeys: Object.keys(publicEnvironment),
       artifacts: [],
     };
-    for (const name of assetNames)
+    for (const file of assets)
       provenance.artifacts.push({
-        name,
-        sha512: await fileDigest(NodePath.join(buildDirectory, name)),
-        size: (await NodeFSP.stat(NodePath.join(buildDirectory, name))).size,
+        name: NodePath.basename(file),
+        sha512: await fileDigest(file),
+        size: (await NodeFSP.stat(file)).size,
       });
-    await writeJson(NodePath.join(buildDirectory, "provenance.json"), provenance);
-    await writeJson(NodePath.join(buildDirectory, "verified.json"), pending);
-    if (!verified) {
-      await NodeFSP.mkdir(NodePath.dirname(directory), { recursive: true });
-      await NodeFSP.rename(buildDirectory, directory);
-    }
-    if (!publish) {
-      console.log(
-        `Verified build ${version} at ${directory}. Source and release publication remain disabled.`,
-      );
+    await writeJson(NodePath.join(directory, "provenance.json"), provenance);
+    if (!args.publish) {
+      console.log(`Verified ${version} at ${directory}. Nothing was published.`);
       return;
     }
-    pending = { ...pending, readyForPublication: true };
-    await writeJson(requestFile, pending);
-    const tag = `v${version}`;
-    let release = await releaseRecord(tag);
-    const assets = [...assetNames, "provenance.json"].map((name) => NodePath.join(directory, name));
-    if (!release?.isDraft && release) {
-      await readBack(release, NodePath.join(runDirectory, "published-readback"), assets);
-    } else {
-      git("push", "origin", `${pending.sourceCommit}:refs/heads/personal`);
-      NodeAssert.equal(
-        run("git", ["ls-remote", "origin", "refs/heads/personal"]).output.split(/\s/u)[0],
-        pending.sourceCommit,
-      );
-      if (!release) {
-        const notes = NodePath.join(runDirectory, "release-notes.md");
-        await NodeFSP.writeFile(
-          notes,
-          `Personal native arm64 build. Local signature without Apple notarization.\n\nSource: ${provenance.sourceUrl}\nOfficial nightly: ${upstreamTag} at ${upstreamCommit}\n`,
-        );
-        gh(
-          "release",
-          "create",
-          tag,
-          "--repo",
-          identity.updateRepository,
-          "--target",
-          "main",
-          "--draft",
-          "--prerelease",
-          "--title",
-          `${identity.productName} ${version}`,
-          "--notes-file",
-          notes,
-        );
-        release = await releaseRecord(tag);
-      }
-      NodeAssert.ok(release.isDraft, "Assets can only be added to a draft.");
-      await readBack(release, NodePath.join(runDirectory, "draft-readback"), assets, true);
+    git("push", "origin", `${sourceCommit}:refs/heads/personal`);
+    NodeAssert.equal(
+      git("ls-remote", "origin", "refs/heads/personal").split(/\s/u)[0],
+      sourceCommit,
+      "Published source readback failed.",
+    );
+    const notes = NodePath.join(directory, "release-notes.md");
+    await NodeFSP.writeFile(
+      notes,
+      `Personal native arm64 build. Local signature without Apple notarization.\n\nSource: ${provenance.sourceUrl}\nOfficial nightly: ${upstreamTag} at ${upstreamCommit}\n`,
+    );
+    if (!release) {
       gh(
         "release",
-        "edit",
+        "create",
         tag,
         "--repo",
         identity.updateRepository,
-        "--draft=false",
+        "--target",
+        "main",
+        "--draft",
         "--prerelease",
+        "--title",
+        `${identity.productName} ${version}`,
+        "--notes-file",
+        notes,
       );
+    } else {
+      gh("release", "edit", tag, "--repo", identity.updateRepository, "--notes-file", notes);
     }
+    release = await releaseRecord(tag);
+    NodeAssert.ok(release?.isDraft, "Only draft assets can be changed.");
+    await readBack(
+      release,
+      NodePath.join(directory, "draft-readback"),
+      [...assets, NodePath.join(directory, "provenance.json")],
+      true,
+    );
+    gh(
+      "release",
+      "edit",
+      tag,
+      "--repo",
+      identity.updateRepository,
+      "--draft=false",
+      "--prerelease",
+    );
     release = await releaseRecord(tag);
     NodeAssert.ok(
       release && !release.isDraft && release.isPrerelease,
-      "The production prerelease is not public.",
+      "The Personal prerelease is not public.",
     );
     const feed = await fetch(
       `https://github.com/${identity.updateRepository}/releases/download/${tag}/nightly-mac.yml`,
+      { signal: AbortSignal.timeout(30_000) },
     );
     NodeAssert.ok(feed.ok, "The public update manifest is unavailable.");
-    const bytes = Buffer.from(await feed.arrayBuffer());
     NodeAssert.equal(
-      bytes.toString(),
+      await feed.text(),
       await NodeFSP.readFile(NodePath.join(directory, "nightly-mac.yml"), "utf8"),
     );
-    const sourceReadback = run("git", ["ls-remote", "origin", "refs/heads/personal"]).output.split(
-      /\s/u,
-    )[0];
-    NodeAssert.equal(sourceReadback, pending.sourceCommit, "Published source readback failed.");
-    status = {
-      ...pending,
-      published: true,
-      releaseUrl: release.url,
-      publishedAt: new Date().toISOString(),
-      runDirectory,
-    };
-    await writeJson(stateFile, status);
-    await writeJson(requestFile, { ...pending, published: true });
-    const published = gh(
-      "api",
-      `repos/${identity.updateRepository}/releases?per_page=100`,
-      "--paginate",
-      "--jq",
-      ".[] | select(.draft == false) | .tag_name",
-    ).split("\n");
-    const keep = new Set(published.slice(0, 2).map((value) => value.replace(/^v/u, "")));
-    for (const name of await NodeFSP.readdir(NodePath.join(root, "artifacts")))
-      if (!keep.has(name) && /^\d+\.\d+\.\d+-nightly\.\d{8}\.\d+$/u.test(name)) {
-        const record = await readJson(NodePath.join(root, "artifacts", name, "verified.json"));
-        if (record?.version === name && published.includes(`v${name}`))
-          await NodeFSP.rm(NodePath.join(root, "artifacts", name), { recursive: true });
-      }
     console.log(`Published ${release.url}`);
   } catch (error) {
-    const failure = {
-      error: error.message,
-      runDirectory,
-      failedAt: new Date().toISOString(),
-      acceptedRelease: status?.releaseUrl ?? null,
-    };
-    failureRecord = failure;
-    await writeJson(NodePath.join(runDirectory, "failure.json"), failure);
-    await writeJson(NodePath.join(root, "last-failure.json"), failure);
+    log?.write(`\nFAILED: ${error.stack ?? error}\n`);
     throw error;
   } finally {
-    if (artifact) await NodeFSP.rm(artifact.temporary, { recursive: true, force: true });
-    await new Promise((resolve) => log.end(resolve));
-    await unlock();
-  }
-}
-main().catch(async (error) => {
-  console.error(error);
-  process.exitCode = 1;
-  if (publish && !check) {
-    const failure = failureRecord ?? {
-      error: error.message,
-      failedAt: new Date().toISOString(),
-      runDirectory: null,
-    };
     try {
-      if (!failureRecord) await writeJson(NodePath.join(root, "last-failure.json"), failure);
-    } catch (diagnosticError) {
-      console.error(diagnosticError);
+      if (artifact) await NodeFSP.rm(artifact.temporary, { recursive: true, force: true });
+    } finally {
+      if (log) await new Promise((resolve) => log.end(resolve));
+      await unlock();
     }
   }
+}
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });
