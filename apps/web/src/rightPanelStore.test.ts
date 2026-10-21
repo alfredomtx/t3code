@@ -92,6 +92,93 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("acknowledges only the matching request without erasing a newer click or another PR", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      commitRequest: { id: "click-1", oid: "a".repeat(40) },
+    };
+    store.openPullRequest(refA, target);
+    store.openPullRequest(refB, target);
+    const surfaceId = pullRequestSurfaceId(target);
+    store.openPullRequest(refA, {
+      ...target,
+      commitRequest: { id: "click-2", oid: "b".repeat(40) },
+    });
+    store.consumePullRequestCommitRequest(refA, surfaceId, "click-1");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      commitRequest: { id: "click-2" },
+    });
+    const revision = store.getUserActionRevision(refA);
+    store.consumePullRequestCommitRequest(refA, surfaceId, "click-2");
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).not.toHaveProperty("commitRequest");
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refB),
+    ).toMatchObject({
+      commitRequest: target.commitRequest,
+    });
+    const consumed = useRightPanelStore.getState();
+    store.consumePullRequestCommitRequest(refA, surfaceId, "click-2");
+    expect(useRightPanelStore.getState()).toBe(consumed);
+  });
+
+  it("scopes page acknowledgments to the destination environment and PR", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      environmentId: "env-1",
+      projectId: "project-a",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      commitRequest: { id: "click-1", oid: "a".repeat(40) },
+    };
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, target);
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, { ...target, environmentId: "env-2" });
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, { ...target, number: 43 });
+    store.consumePullRequestCommitRequest(
+      PULL_REQUESTS_PANEL_REF,
+      pullRequestSurfaceId(target),
+      "click-1",
+    );
+    const panel = selectThreadRightPanelState(
+      useRightPanelStore.getState().byThreadKey,
+      PULL_REQUESTS_PANEL_REF,
+    );
+    expect(panel.surfaces).toHaveLength(3);
+    expect(panel.surfaces[0]).not.toHaveProperty("commitRequest");
+    expect(panel.surfaces[1]).toMatchObject({
+      environmentId: "env-2",
+      commitRequest: target.commitRequest,
+    });
+    expect(panel.surfaces[2]).toMatchObject({ number: 43, commitRequest: target.commitRequest });
+  });
+
+  it("keeps a consumed request cleared through reopening and storage reload, then accepts the same SHA again", async () => {
+    const store = useRightPanelStore.getState();
+    const target = { projectId: "project-a", repository: "pingdotgg/t3code", number: 42 };
+    const commitRequest = { id: "click-1", oid: "a".repeat(40) };
+    store.openPullRequest(refA, { ...target, commitRequest });
+    store.consumePullRequestCommitRequest(refA, pullRequestSurfaceId(target), commitRequest.id);
+    store.openPullRequest(refA, target);
+    await reloadRightPanelStore();
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).not.toHaveProperty("commitRequest");
+    store.openPullRequest(refA, { ...target, commitRequest: { ...commitRequest, id: "click-2" } });
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      commitRequest: { ...commitRequest, id: "click-2" },
+    });
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({

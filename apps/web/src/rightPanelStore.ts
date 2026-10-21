@@ -26,6 +26,11 @@ export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
 export type PullRequestDetailTab = "summary" | "guide" | "timeline" | "code";
 
+export interface PullRequestCommitRequest {
+  readonly id: string;
+  readonly oid: string;
+}
+
 export interface DeviceTabTarget {
   hostId: string;
   deviceId: string;
@@ -79,6 +84,7 @@ export type RightPanelSurface =
       number: number;
       url?: string;
       detailTab?: PullRequestDetailTab;
+      commitRequest?: PullRequestCommitRequest;
     }
   | { id: "pull-requests"; kind: "pull-requests" };
 
@@ -159,7 +165,13 @@ interface RightPanelStoreState {
       number: number;
       url?: string;
       detailTab?: PullRequestDetailTab;
+      commitRequest?: PullRequestCommitRequest;
     },
+  ) => void;
+  consumePullRequestCommitRequest: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    requestId: string,
   ) => void;
   setPullRequestDetailTab: (
     ref: ScopedThreadRef,
@@ -287,6 +299,7 @@ export function pullRequestSurface(target: {
   number: number;
   url?: string;
   detailTab?: PullRequestDetailTab;
+  commitRequest?: PullRequestCommitRequest;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -298,6 +311,7 @@ export function pullRequestSurface(target: {
     number: target.number,
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
+    ...(target.commitRequest === undefined ? {} : { commitRequest: target.commitRequest }),
   };
 }
 
@@ -711,7 +725,7 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = pullRequestSurface(target);
             const next = upsertSurface(current, surface);
-            return target.url
+            return target.url || target.commitRequest
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
@@ -723,6 +737,23 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
+      consumePullRequestCommitRequest: (ref, surfaceId, requestId) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request" || existing.commitRequest?.id !== requestId)
+            return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) => {
+              if (surface.id !== surfaceId || surface.kind !== "pull-request") return surface;
+              const { commitRequest: _commitRequest, ...rest } = surface;
+              return rest;
+            }),
+          }));
+        }),
       setPullRequestDetailTab: (ref, surfaceId, detailTab) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);

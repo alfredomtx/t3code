@@ -1472,6 +1472,24 @@ export function PullRequestsPage() {
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
               onGuideShown={onGuideShown}
+              initialTab={renderedPullRequestSurface.detailTab ?? "summary"}
+              onTabChange={(tab) => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore
+                  .getState()
+                  .setPullRequestDetailTab(rightPanelRef, renderedPullRequestSurface.id, tab);
+              }}
+              commitRequest={renderedPullRequestSurface.commitRequest}
+              onCommitRequestHandled={(requestId) => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore
+                  .getState()
+                  .consumePullRequestCommitRequest(
+                    rightPanelRef,
+                    renderedPullRequestSurface.id,
+                    requestId,
+                  );
+              }}
               onSelectPullRequest={(reference) => {
                 if (rightPanelRef === null) return;
                 useRightPanelStore.getState().openPullRequest(rightPanelRef, {

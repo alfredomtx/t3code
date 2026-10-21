@@ -147,6 +147,12 @@ export function RightPanelSurfaceContent(props: {
             repository: surface.repository,
             number: surface.number,
           }}
+          commitRequest={surface.commitRequest}
+          onCommitRequestHandled={(requestId) => {
+            useRightPanelStore
+              .getState()
+              .consumePullRequestCommitRequest(threadRef, surface.id, requestId);
+          }}
           initialTab={surface.detailTab ?? "summary"}
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);

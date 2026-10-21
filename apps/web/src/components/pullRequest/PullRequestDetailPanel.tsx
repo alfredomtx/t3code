@@ -44,7 +44,11 @@ import {
 } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { type PullRequestDetailTab, useRightPanelStore } from "~/rightPanelStore";
+import {
+  type PullRequestCommitRequest,
+  type PullRequestDetailTab,
+  useRightPanelStore,
+} from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -272,6 +276,8 @@ export function PullRequestDetailPanel({
   onGuideShown,
   initialTab = "summary",
   onTabChange,
+  commitRequest,
+  onCommitRequestHandled,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -287,6 +293,8 @@ export function PullRequestDetailPanel({
   composerDraftTarget?: ScopedThreadRef | DraftId;
   onBack?: (() => void) | undefined;
   onGuideShown?: (() => void) | undefined;
+  commitRequest?: PullRequestCommitRequest | undefined;
+  onCommitRequestHandled?: ((requestId: string) => void) | undefined;
   initialTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
 }) {
@@ -436,6 +444,20 @@ export function PullRequestDetailPanel({
     coreDetail,
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
+  const [appliedCommitRequestId, setAppliedCommitRequestId] = useState<string | null>(null);
+  const commitRequestReady = detail !== null && activity !== null;
+  if (commitRequestReady && commitRequest && commitRequest.id !== appliedCommitRequestId) {
+    setAppliedCommitRequestId(commitRequest.id);
+    selectCodeCommit(commitRequest.oid);
+    setTab("code");
+  }
+  const acknowledgeCommitRequest = useEffectEvent((requestId: string) => {
+    onTabChange?.("code");
+    onCommitRequestHandled?.(requestId);
+  });
+  useEffect(() => {
+    if (commitRequest && commitRequestReady) acknowledgeCommitRequest(commitRequest.id);
+  }, [commitRequest, commitRequestReady]);
   const handoffSummary = detail ?? sharedSummary;
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const { copyToClipboard: copyReference } = useCopyToClipboard<string>({

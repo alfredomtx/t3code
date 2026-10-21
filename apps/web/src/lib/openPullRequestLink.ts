@@ -10,13 +10,14 @@ import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
-import { useRightPanelStore } from "../rightPanelStore";
+import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProjects, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
+import { randomUUID } from "./utils";
 
 export {
   parseChangeRequestUrl,
@@ -26,6 +27,17 @@ export {
   matchesLinkedPullRequestUrl,
   changeRequestRepositoryUrl,
 } from "@t3tools/shared/changeRequestUrl";
+
+export function parsePullRequestLink(
+  targetUrl: string,
+): (ChangeRequestLink & { readonly commitOid: string | null }) | null {
+  const link = parseChangeRequestUrl(targetUrl);
+  if (link === null) return null;
+  const match = /^\/[^/]+\/[^/]+\/pull\/\d+\/(?:commits|changes)\/([a-fA-F0-9]{40})\/?$/u.exec(
+    new URL(targetUrl).pathname,
+  );
+  return { ...link, commitOid: match?.[1]?.toLowerCase() ?? null };
+}
 
 export function findProjectForChangeRequest(
   projects: ReadonlyArray<EnvironmentProject>,
@@ -127,7 +139,7 @@ export function useOpenChangeRequestLink(
     const allProjects = readProjects();
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
-    const parsed = parseChangeRequestUrl(targetUrl);
+    const parsed = parsePullRequestLink(targetUrl);
     if (parsed === null) return false;
     const reads = (environmentId: string) =>
       serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
@@ -166,21 +178,29 @@ export function useOpenChangeRequestLink(
         : (sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository);
     event.preventDefault();
     event.stopPropagation();
-    if (resolvedPanelRef) {
-      useRightPanelStore.getState().openPullRequest(resolvedPanelRef, {
+    const commitOid = parsed.commitOid;
+    if (resolvedPanelRef || commitOid !== null) {
+      const destinationPanelRef = resolvedPanelRef ?? PULL_REQUESTS_PANEL_REF;
+      useRightPanelStore.getState().openPullRequest(destinationPanelRef, {
         // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
-        ...(resolvedPanelRef.environmentId === project.environmentId
+        ...(destinationPanelRef.environmentId === project.environmentId
           ? {}
           : { environmentId: project.environmentId }),
         projectId: project.id,
-        ...(serverConfigs.get(project.environmentId)?.environment.capabilities
-          .threadPullRequests === true
+        ...((commitOid !== null && destinationPanelRef === PULL_REQUESTS_PANEL_REF) ||
+        serverConfigs.get(project.environmentId)?.environment.capabilities.threadPullRequests ===
+          true
           ? { host: parsed.authority ?? parsed.host }
           : {}),
         repository,
         url: targetUrl,
         number: parsed.number,
+        ...(commitOid === null
+          ? {}
+          : { detailTab: "code", commitRequest: { id: randomUUID(), oid: commitOid } }),
       });
+    }
+    if (resolvedPanelRef) {
       if (!resolvedThreadRef) {
         void navigate({
           to: "/pull-requests",
