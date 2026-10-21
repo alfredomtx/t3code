@@ -20,7 +20,6 @@ import {
   persistClientSettingsPatch,
   persistClientSettingsUpdate,
   prepareModelPreferencesPatch,
-  resolveEnvironmentIdentificationMode,
   refreshClientSettings,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";

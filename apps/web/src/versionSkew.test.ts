@@ -14,9 +14,7 @@ import {
   isVersionMismatchDismissed,
   manualServerUpdateCommand,
   resolveVersionMismatch,
-  serverUpdateGuidance,
   serverVersionForAppVersion,
-  supportsDesktopAppUpdate,
 } from "./versionSkew";
 
 const MISMATCH_HINT =
