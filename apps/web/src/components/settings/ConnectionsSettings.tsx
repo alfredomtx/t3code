@@ -167,6 +167,7 @@ import {
   resolveServerSelfUpdateCapability,
   supportsDesktopAppUpdate,
   supportsServerUpdateThreadContinuation,
+  serverVersionForAppVersion,
 } from "~/versionSkew";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { RemoveT3ConnectEnvironmentDialog } from "../clerk/RemoveT3ConnectEnvironmentDialog";
@@ -1722,7 +1723,7 @@ function SavedBackendListRow({
           environmentId={environmentId}
           serverLabel={`${environment.label} server`}
           fromVersion={lastDescriptor?.serverVersion}
-          targetVersion={APP_VERSION}
+          targetVersion={serverVersionForAppVersion(APP_VERSION)}
           label={serverUpdateState.status === "failed" ? "Retry update" : "Update"}
         />
       ) : null}

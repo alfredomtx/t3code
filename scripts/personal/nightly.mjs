@@ -60,6 +60,7 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/ServerUpdateAction.browser.test.tsx",
   "apps/web/src/hooks/useSettings.personal.browser.test.tsx",
   "apps/web/src/components/chat/JiraResultDisclosure.browser.test.tsx",
   "apps/web/src/components/chat/HtmlRenderFrame.browser.test.tsx",
@@ -67,6 +68,8 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/web/src/versionSkew.test.ts",
+    "apps/web/src/components/sidebar/updateEverything.logic.test.ts",
     "scripts/build-desktop-artifact.test.ts",
     "scripts/sign-personal-macos.test.ts",
     "apps/server/src/auth/EnvironmentAuth.test.ts",

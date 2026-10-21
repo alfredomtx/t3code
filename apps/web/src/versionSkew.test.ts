@@ -2,7 +2,7 @@ import { EnvironmentId } from "@t3tools/contracts";
 import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34" }));
+const branding = vi.hoisted(() => ({ APP_VERSION: "0.0.34", APP_BASE_NAME: "T3 Code" }));
 vi.mock("./branding", () => branding);
 
 import { APP_VERSION } from "./branding";
@@ -18,6 +18,7 @@ import {
   resolveServerSelfUpdateCapability,
   resolveVersionMismatch,
   serverUpdateGuidance,
+  serverVersionForAppVersion,
   supportsDesktopAppUpdate,
 } from "./versionSkew";
 
@@ -42,6 +43,7 @@ describe("versionSkew", () => {
   });
   beforeEach(() => {
     branding.APP_VERSION = "0.0.34";
+    branding.APP_BASE_NAME = "T3 Code";
   });
 
   it("dismisses only the current failed attempt without clearing its retry state", () => {
@@ -75,6 +77,32 @@ describe("versionSkew", () => {
     dismissServerUpdateFailure(running);
 
     expect(isServerUpdateFailureDismissed(running)).toBe(false);
+  });
+
+  it("keeps official app versions unchanged", () => {
+    expect(serverVersionForAppVersion("0.1.1-nightly.20261020.3438")).toBe(
+      "0.1.1-nightly.20261020.3438",
+    );
+  });
+
+  it("decodes Personal app revisions without changing stable or development versions", () => {
+    branding.APP_BASE_NAME = "T3 Code Personal";
+    for (const revision of [1, 3, 999]) {
+      expect(serverVersionForAppVersion(`0.1.1-nightly.20261020.${3438000 + revision}`)).toBe(
+        "0.1.1-nightly.20261020.3438",
+      );
+    }
+    expect(serverVersionForAppVersion("0.1.1")).toBe("0.1.1");
+    expect(serverVersionForAppVersion("dev")).toBe("dev");
+  });
+
+  it("targets the official nightly behind a Personal app version", () => {
+    branding.APP_BASE_NAME = "T3 Code Personal";
+    branding.APP_VERSION = "0.1.1-nightly.20261020.3438003";
+    expect(resolveVersionMismatch("0.1.1-nightly.20261020.3411")?.clientVersion).toBe(
+      "0.1.1-nightly.20261020.3438",
+    );
+    expect(resolveVersionMismatch("0.1.1-nightly.20261020.3438")).toBeNull();
   });
 
   it("does not warn when versions match", () => {

@@ -37,6 +37,10 @@ vi.mock(import("~/hooks/useSettings"), async (original) => ({
       continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate,
     })) as never,
 }));
+vi.mock(import("~/branding"), async (original) => ({
+  ...(await original()),
+  APP_BASE_NAME: "T3 Code Personal",
+}));
 vi.mock(import("~/state/session"), async (original) => {
   const actual = await original();
   return {
@@ -63,6 +67,7 @@ import {
   respondToConfirmDialog,
 } from "~/confirmDialog";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { serverVersionForAppVersion } from "~/versionSkew";
 import {
   ServerUpdateAction,
   ServerUpdateProgress,
@@ -241,6 +246,21 @@ describe("ServerUpdateAction", () => {
       expect(testState.updateServer).not.toHaveBeenCalled();
     },
   );
+
+  it("requests an official server version from the Personal UI", async () => {
+    using _state = setup();
+    testState.updateServer.mockResolvedValue(
+      success("boot-service", "0.1.1-nightly.20261020.3438"),
+    );
+    await using screen = await renderAction({
+      targetVersion: serverVersionForAppVersion("0.1.1-nightly.20261020.3438003"),
+    });
+    await click(screen, "Update");
+    expect(testState.updateServer).toHaveBeenCalledWith({
+      environmentId: "env-test",
+      input: { targetVersion: "0.1.1-nightly.20261020.3438" },
+    });
+  });
 
   it("reports success only after the shared update flow reconnects", async () => {
     using _state = setup();

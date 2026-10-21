@@ -8,7 +8,7 @@ import type { ServerUpdateState } from "@t3tools/client-runtime/state/server";
 import { compareSemverVersions, parseSemver } from "@t3tools/shared/semver";
 import * as Schema from "effect/Schema";
 
-import { APP_VERSION } from "./branding";
+import { APP_BASE_NAME, APP_VERSION } from "./branding";
 import { getLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 
 export interface VersionMismatch {
@@ -44,9 +44,19 @@ function versionCore(version: string): string {
   return version.replace(/[-+].*$/, "");
 }
 
+export function serverVersionForAppVersion(appVersion: string): string {
+  if (APP_BASE_NAME !== "T3 Code Personal") return appVersion;
+  const match = /^(\d+\.\d+\.\d+-nightly\.\d{8}\.)(\d+)$/u.exec(appVersion);
+  if (match === null) return appVersion;
+  const sequence = Number(match[2]);
+  if (!Number.isSafeInteger(sequence) || sequence < 1000 || sequence % 1000 === 0)
+    return appVersion;
+  return `${match[1]}${Math.floor(sequence / 1000)}`;
+}
+
 export function resolveVersionMismatch(
   serverVersion: string | null | undefined,
-  clientVersion: string = APP_VERSION,
+  clientVersion: string = serverVersionForAppVersion(APP_VERSION),
 ): VersionMismatch | null {
   const normalizedClientVersion = normalizeVersion(clientVersion);
   const normalizedServerVersion = normalizeVersion(serverVersion);
