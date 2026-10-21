@@ -92,6 +92,24 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("cancels a pending commit request when a plain PR link opens without changing the saved tab", () => {
+    const store = useRightPanelStore.getState();
+    const target = { projectId: "project-a", repository: "pingdotgg/t3code", number: 42 };
+    const url = "https://github.com/pingdotgg/t3code/pull/42";
+    store.openPullRequest(refA, {
+      ...target,
+      url: `${url}/commits/${"a".repeat(40)}`,
+      detailTab: "code",
+      commitRequest: { id: "click-1", oid: "a".repeat(40) },
+    });
+
+    store.openPullRequest(refA, { ...target, url });
+
+    const surface = selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA);
+    expect(surface).not.toHaveProperty("commitRequest");
+    expect(surface).toMatchObject({ url, detailTab: "code" });
+  });
+
   it("acknowledges only the matching request without erasing a newer click or another PR", () => {
     const store = useRightPanelStore.getState();
     const target = {
