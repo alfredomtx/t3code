@@ -728,11 +728,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             return target.url || target.commitRequest
               ? {
                   ...next,
-                  surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id && entry.kind === "pull-request"
-                      ? { ...entry, ...surface }
-                      : entry,
-                  ),
+                  surfaces: next.surfaces.map((entry) => {
+                    if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
+                    const { commitRequest: _commitRequest, ...rest } = entry;
+                    return { ...rest, ...surface };
+                  }),
                 }
               : next;
           }),

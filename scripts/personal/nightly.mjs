@@ -68,6 +68,8 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/web/src/lib/openPullRequestLink.test.ts",
+    "apps/web/src/rightPanelStore.test.ts",
     "apps/web/src/versionSkew.test.ts",
     "apps/web/src/components/sidebar/updateEverything.logic.test.ts",
     "scripts/build-desktop-artifact.test.ts",
