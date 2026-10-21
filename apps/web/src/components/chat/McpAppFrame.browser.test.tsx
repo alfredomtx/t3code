@@ -154,6 +154,8 @@ function setup() {
 }
 
 it("keeps load and idle retries inline even after the page-input cooldown", async () => {
+  // Chromium can retain activation from the test runner while the host clock advances.
+  using _activation = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(false);
   using fixture = setup();
   await using screens = new AsyncDisposableStack();
   const { renderApp, nextAnswer, retry, isFullscreen, advance } = fixture;
@@ -169,6 +171,7 @@ it("keeps load and idle retries inline even after the page-input cooldown", asyn
 });
 
 it("allows an app click immediately after loading on an idle page", async () => {
+  using activation = vi.spyOn(navigator.userActivation, "isActive", "get").mockReturnValue(false);
   using fixture = setup();
   await using screens = new AsyncDisposableStack();
   const { renderApp, nextAnswer, isFullscreen } = fixture;
@@ -177,6 +180,7 @@ it("allows an app click immediately after loading on an idle page", async () => 
       screens.use(await renderApp());
     }),
   ).toBe("load:inline");
+  activation.mockRestore();
   const appButton = page
     .frameLocator(page.getByTitle("srv app"))
     .getByRole("button", { name: "Open full screen" });

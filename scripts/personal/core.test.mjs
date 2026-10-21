@@ -183,6 +183,36 @@ NodeTest.test("smoke spawn errors reject without an unhandled event or leaked lo
   }),
 );
 
+NodeTest.test(
+  "smoke keeps the real HOME and starts Personal with the local environment disabled",
+  () =>
+    temporary(async (root) => {
+      const script = NodePath.join(root, "fake-app");
+      await NodeFSP.writeFile(
+        script,
+        `#!${process.execPath}
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+assert.equal(process.env.HOME, ${JSON.stringify(process.env.HOME)});
+const settings = JSON.parse(fs.readFileSync(path.join(process.env.T3CODE_HOME, 'userdata/desktop-settings.json')));
+assert.equal(settings.localEnvironmentEnabled, false);
+fs.mkdirSync(path.join(process.env.T3CODE_HOME, 'electron-profile'));
+console.log('desktop app control socket ready');
+console.log('bootstrap skipping local environment (disabled in settings)');
+console.log('app ready');
+setInterval(() => {}, 1000);
+`,
+        { mode: 0o755 },
+      );
+      await smokeApp({
+        executable: script,
+        temporary: root,
+        logFile: NodePath.join(root, "smoke.log"),
+      });
+    }),
+);
+
 NodeTest.test("smoke cleanup finds a backend after its launcher exits and closes its port", () =>
   temporary(async (root) => {
     const script = NodePath.join(root, "fake-app");

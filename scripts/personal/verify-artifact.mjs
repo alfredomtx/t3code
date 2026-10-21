@@ -217,7 +217,11 @@ async function portIsClosed(port) {
 
 export async function smokeApp({ executable, temporary, logFile }) {
   const home = NodePath.join(temporary, "app-home");
-  await NodeFSP.mkdir(home);
+  await NodeFSP.mkdir(NodePath.join(home, "userdata"), { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(home, "userdata/desktop-settings.json"),
+    JSON.stringify({ localEnvironmentEnabled: false }),
+  );
   const output = await NodeFSP.open(logFile, "a", 0o600);
   const reservation = NodeNet.createServer();
   let child;
@@ -313,14 +317,14 @@ export async function smokeApp({ executable, temporary, logFile }) {
         ),
         "The isolated app reported a startup error.",
       );
-      if (log.includes("desktop app control socket ready") && log.includes("app ready")) {
-        const response = await fetch(`http://127.0.0.1:${port}/.well-known/t3/environment`, {
-          signal: AbortSignal.timeout(1000),
-        }).catch(() => null);
-        if (response?.ok) {
-          ready = true;
-          break;
-        }
+      NodeAssert.ok(await portIsClosed(port), "The isolated app started an unexpected backend.");
+      if (
+        log.includes("desktop app control socket ready") &&
+        log.includes("app ready") &&
+        log.includes("bootstrap skipping local environment (disabled in settings)")
+      ) {
+        ready = true;
+        break;
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
