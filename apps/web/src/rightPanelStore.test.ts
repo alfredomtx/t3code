@@ -6,6 +6,7 @@ import { useClosedViewStore } from "./closedViewStore";
 import { reopenClosedView } from "./reopenClosedView";
 import {
   migratePersistedRightPanelState,
+  PULL_REQUESTS_PANEL_REF,
   pullRequestSurface,
   pullRequestSurfaceId,
   selectActiveRightPanel,
@@ -39,6 +40,58 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("replaces a commit request on the same PR, including the same SHA", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      projectId: "project-a",
+      repository: "pingdotgg/t3code",
+      number: 42,
+      url: "https://github.com/pingdotgg/t3code/pull/42",
+      detailTab: "code" as const,
+      commitRequest: { id: "click-1", oid: "a".repeat(40) },
+    };
+    store.openPullRequest(refA, target);
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      commitRequest: target.commitRequest,
+      detailTab: "code",
+    });
+    for (const commitRequest of [
+      { id: "click-2", oid: "b".repeat(40) },
+      { id: "click-3", oid: "b".repeat(40) },
+    ]) {
+      store.openPullRequest(refA, { ...target, commitRequest });
+      const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+      expect(panel.surfaces).toHaveLength(1);
+      expect(panel.surfaces[0]).toMatchObject({ commitRequest });
+    }
+  });
+
+  it("retains a no-thread commit request when the page opens its linked selection", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      environmentId: "env-2",
+      projectId: "project-a",
+      host: "github.com",
+      repository: "pingdotgg/t3code",
+      number: 42,
+    };
+    const commitRequest = { id: "click-1", oid: "a".repeat(40) };
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, { ...target, detailTab: "code", commitRequest });
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, target);
+    expect(
+      selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        PULL_REQUESTS_PANEL_REF,
+      ),
+    ).toMatchObject({
+      ...target,
+      detailTab: "code",
+      commitRequest,
+    });
+  });
+
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
     const pr = pullRequestSurface({
