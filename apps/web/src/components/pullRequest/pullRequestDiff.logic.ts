@@ -21,31 +21,24 @@ export function isLineInFileDiff(
 
 export type DiffFoldOverride = "expanded" | "folded" | null;
 
-/**
- * A diff arrives a slice at a time, so the reader's own choices are kept as the difference from
- * what the toolbar last said rather than as the set of folded files: a file that has not loaded
- * yet cannot be in a set, and would otherwise land expanded moments after the reader folded
- * everything.
- */
+export type FileFoldChoices = ReadonlyMap<string, boolean>;
+
+// Explicit choices survive changing viewed defaults. Bulk also applies to files not yet loaded.
 export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
+  choices: FileFoldChoices,
+  defaultCollapsed: boolean,
 ): boolean {
-  const foldedByDefault = foldOverride === "folded";
-  return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+  return (
+    choices.get(fileKey) ?? (foldOverride === null ? defaultCollapsed : foldOverride === "folded")
+  );
 }
 
-export function toggleFileDiffFoldForViewed(
+export function setFileDiffCollapsed(
   fileKey: string,
-  viewed: boolean,
-  foldOverride: DiffFoldOverride,
-  toggledFileKeys: ReadonlySet<string>,
-): ReadonlySet<string> {
-  if (isFileDiffCollapsed(fileKey, foldOverride, toggledFileKeys) === viewed)
-    return toggledFileKeys;
-  const next = new Set(toggledFileKeys);
-  if (next.has(fileKey)) next.delete(fileKey);
-  else next.add(fileKey);
-  return next;
+  collapsed: boolean,
+  choices: FileFoldChoices,
+): FileFoldChoices {
+  return choices.get(fileKey) === collapsed ? choices : new Map(choices).set(fileKey, collapsed);
 }

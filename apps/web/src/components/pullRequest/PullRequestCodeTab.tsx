@@ -98,8 +98,9 @@ import {
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  setFileDiffCollapsed,
   type DiffFoldOverride,
+  type FileFoldChoices,
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
@@ -277,11 +278,9 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [toggledFiles, setToggledFiles] = useState<ReadonlySet<string>>(() => new Set());
+  const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
-  const effectiveFoldOverride =
-    foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded");
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -318,7 +317,7 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setDraft(null);
     setSelectedLines(null);
-    setToggledFiles(new Set());
+    setFileFolds(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
@@ -639,7 +638,12 @@ function PullRequestCodeTab({
 
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(fileKey, effectiveFoldOverride, toggledFiles);
+      const collapsed = isFileDiffCollapsed(
+        fileKey,
+        foldOverride,
+        fileFolds,
+        settings.diffFilesCollapsed || (filesViewedEnabled && isFileViewed(path)),
+      );
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -671,19 +675,12 @@ function PullRequestCodeTab({
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   };
 
-  const toggleFile = (fileKey: string) =>
-    setToggledFiles((current) => {
-      const next = new Set(current);
-      if (next.has(fileKey)) next.delete(fileKey);
-      else next.add(fileKey);
-      return next;
-    });
+  const setFileFold = (fileKey: string, collapsed: boolean) =>
+    setFileFolds((current) => setFileDiffCollapsed(fileKey, collapsed, current));
 
   const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
     setViewed(path, viewed);
-    setToggledFiles((current) =>
-      toggleFileDiffFoldForViewed(fileKey, viewed, effectiveFoldOverride, current),
-    );
+    setFileFold(fileKey, viewed);
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
@@ -695,13 +692,13 @@ function PullRequestCodeTab({
   const revealFile = (path: string) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    if (item.collapsed === true) toggleFile(item.id);
+    setFileFold(item.id, false);
     requestTreeReveal(item.id);
   };
 
   const toggleAllFiles = () => {
     setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setToggledFiles(new Set());
+    setFileFolds(new Map());
   };
 
   const orderedCommits = // By instant, not by the text: GitLab keeps a commit's own UTC offset, so two commits
@@ -798,7 +795,7 @@ function PullRequestCodeTab({
         className="mr-1"
         onClick={(event) => {
           event.stopPropagation();
-          toggleFile(item.id);
+          setFileFold(item.id, !collapsed);
         }}
       >
         <MorphIcon className="size-4" icon={collapsed ? ChevronRight : ChevronDown} />
@@ -1441,7 +1438,7 @@ function PullRequestCodeTab({
                 const item = items.find(
                   (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
                 );
-                if (item !== undefined) toggleFile(item.id);
+                if (item !== undefined) setFileFold(item.id, !item.collapsed);
                 return;
               }
             }
@@ -1463,12 +1460,7 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
-              onRevealSearchMatch={(item) =>
-                setToggledFiles((current) =>
-                  toggleFileDiffFoldForViewed(item.id, false, effectiveFoldOverride, current),
-                )
-              }
+              onRevealSearchMatch={(item) => setFileFold(item.id, false)}
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>

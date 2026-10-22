@@ -4,7 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   isFileDiffCollapsed,
   isLineInFileDiff,
-  toggleFileDiffFoldForViewed,
+  setFileDiffCollapsed,
 } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
@@ -76,9 +76,30 @@ describe("isFileDiffCollapsed", () => {
   });
 });
 
-describe("toggleFileDiffFoldForViewed", () => {
-  it("moves against whatever the toolbar last asked for", () => {
-    expect([...toggleFileDiffFoldForViewed("a.ts", true, "expanded", new Set())]).toEqual(["a.ts"]);
-    expect(toggleFileDiffFoldForViewed("a.ts", false, "expanded", new Set()).size).toBe(0);
+describe("setFileDiffCollapsed", () => {
+  it("sets absolute checkbox targets against a bulk choice", () => {
+    const folded = setFileDiffCollapsed("a.ts", true, new Map());
+    expect(isFileDiffCollapsed("a.ts", "expanded", folded, false)).toBe(true);
+    const expanded = setFileDiffCollapsed("a.ts", false, folded);
+    expect(isFileDiffCollapsed("a.ts", "folded", expanded, true)).toBe(false);
+  });
+
+  it("retains an explicit reveal through late viewed data and repeated reveals", () => {
+    const choices = new Map<string, boolean>();
+    const expanded = setFileDiffCollapsed("a.ts", false, choices);
+    expect(choices.size).toBe(0);
+    expect(expanded.get("a.ts")).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, expanded, false)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, expanded, true)).toBe(false);
+    expect(setFileDiffCollapsed("a.ts", false, expanded)).toBe(expanded);
+  });
+
+  it("retains the last manual choice across changing defaults", () => {
+    const collapsed = setFileDiffCollapsed("a.ts", true, new Map());
+    const expanded = setFileDiffCollapsed("a.ts", false, collapsed);
+    for (const defaultCollapsed of [false, true]) {
+      expect(isFileDiffCollapsed("a.ts", null, collapsed, defaultCollapsed)).toBe(true);
+      expect(isFileDiffCollapsed("a.ts", null, expanded, defaultCollapsed)).toBe(false);
+    }
   });
 });
