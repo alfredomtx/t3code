@@ -1460,7 +1460,10 @@ function PullRequestCodeTab({
               renderHeaderPrefix={renderHeaderPrefix}
               renderHeaderMetadata={renderHeaderMetadata}
               renderAnnotation={renderAnnotation}
-              onRevealSearchMatch={(item) => setFileFold(item.id, false)}
+              onRevealSearchMatch={(item) => {
+                // Find can ask again before the unfolded file arrives, so this unfolds and never folds.
+                setFileFold(item.id, false);
+              }}
               unsafeCSSExtra={REPLACE_FILE_COUNTS_CSS}
             />
           </FileViewedToggleContext>
