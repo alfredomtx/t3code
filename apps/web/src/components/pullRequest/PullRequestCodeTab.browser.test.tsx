@@ -1,15 +1,18 @@
+import { RegistryContext } from "@effect/atom-react";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import {
   EnvironmentId,
   ProjectId,
   SourceControlProviderKind,
   type PullRequestDetailView,
   type PullRequestDiffResult,
+  type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
-const { diffAtom } = await vi.hoisted(async () => {
+const { diffAtom, filesViewedAtom } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const firstPage: PullRequestDiffResult = {
     patch: [
@@ -27,7 +30,12 @@ const { diffAtom } = await vi.hoisted(async () => {
   };
   // An environment query whose refetch returns equal content hands back the previous value
   // itself, so a refresh publishes a new result around the very same page.
-  return { diffAtom: Atom.make(() => AsyncResult.success(firstPage)) };
+  return {
+    diffAtom: Atom.make(() => AsyncResult.success(firstPage)),
+    filesViewedAtom: Atom.make<AsyncResult.AsyncResult<PullRequestFilesViewedResult>>(
+      AsyncResult.initial(),
+    ),
+  };
 });
 
 vi.mock(import("~/state/use-atom-command"), async (original) => ({
@@ -41,12 +49,14 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       diff: (() => diffAtom) as never,
+      filesViewed: (() => filesViewedAtom) as never,
     },
   };
 });
 
-import { render } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -83,6 +93,7 @@ const detail: PullRequestDetailView = {
   mergeCapabilities: { merge: false, squash: false, rebase: false },
   capabilities: {
     diff: true,
+    viewedFiles: "host",
     comment: false,
     search: true,
     actions: [],
@@ -100,6 +111,25 @@ const detail: PullRequestDetailView = {
   },
 };
 
+function setup(viewed: PullRequestFilesViewedResult | null = null) {
+  const stack = new DisposableStack();
+  const settings = getClientSettings();
+  __setClientSettingsForTests({ ...settings, diffFilesCollapsed: false });
+  stack.defer(() => __setClientSettingsForTests(settings));
+  const registry = stack.adopt(AtomRegistry.make(), (registry) => registry.dispose());
+  registry.set(
+    filesViewedAtom,
+    viewed === null ? AsyncResult.initial() : AsyncResult.success(viewed),
+  );
+  return {
+    registry,
+    tab: (refreshToken: number) => (
+      <RegistryContext.Provider value={registry}>{tab(refreshToken)}</RegistryContext.Provider>
+    ),
+    [Symbol.dispose]: () => stack.dispose(),
+  };
+}
+
 const tab = (refreshToken: number) => (
   <PullRequestCodeTab
     scrollerRef={() => {}}
@@ -114,15 +144,52 @@ const tab = (refreshToken: number) => (
 );
 
 it("keeps the diff after a refresh that brings back the same page", async () => {
+  using fixture = setup();
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
-  await using screen = await render(tab(0), { container });
+  await using screen = await render(fixture.tab(0), { container });
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
 
-  await screen.rerender(tab(1));
+  await screen.rerender(fixture.tab(1));
 
   await expect
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("starts a persisted viewed file checked and collapsed", async () => {
+  using fixture = setup({ files: [{ path: "a.ts", state: "viewed" }], truncated: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(fixture.tab(0), { container });
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
+});
+
+it("preserves a manual expansion when viewed data arrives late", async () => {
+  using fixture = setup();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(fixture.tab(0), { container });
+
+  await screen.getByRole("button", { name: "Collapse diff", exact: true }).click();
+  await screen.getByRole("button", { name: "Expand diff", exact: true }).click();
+  await act(() =>
+    fixture.registry.set(
+      filesViewedAtom,
+      AsyncResult.success({
+        files: [{ path: "a.ts", state: "viewed" }],
+        truncated: false,
+      }),
+    ),
+  );
+
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "true");
 });

@@ -40,11 +40,39 @@ describe("isLineInFileDiff", () => {
 });
 
 describe("isFileDiffCollapsed", () => {
-  // regression: #9174 diffs now expand by default; a reader's fold must survive new slices
   it("keeps a file the reader folded closed as the next slice arrives", () => {
-    const toggled = new Set(["b.ts"]);
-    expect(isFileDiffCollapsed("b.ts", null, toggled)).toBe(true);
-    expect(isFileDiffCollapsed("c.ts", null, toggled)).toBe(false);
+    const choices = new Map([["b.ts", true]]);
+    expect(isFileDiffCollapsed("b.ts", null, choices, false)).toBe(true);
+    expect(isFileDiffCollapsed("c.ts", null, choices, false)).toBe(false);
+  });
+
+  it("collapses an untouched file when its viewed default is collapsed", () => {
+    expect(isFileDiffCollapsed("viewed.ts", null, new Map(), true)).toBe(true);
+  });
+
+  it("follows changing defaults only for files without an explicit choice", () => {
+    for (const defaultCollapsed of [false, true]) {
+      expect(isFileDiffCollapsed("a.ts", null, new Map(), defaultCollapsed)).toBe(defaultCollapsed);
+      expect(isFileDiffCollapsed("a.ts", null, new Map([["a.ts", false]]), defaultCollapsed)).toBe(
+        false,
+      );
+      expect(isFileDiffCollapsed("a.ts", null, new Map([["a.ts", true]]), defaultCollapsed)).toBe(
+        true,
+      );
+    }
+  });
+
+  it("applies bulk choices to later pages and lets a file override bulk", () => {
+    for (const defaultCollapsed of [false, true]) {
+      expect(isFileDiffCollapsed("later.ts", "expanded", new Map(), defaultCollapsed)).toBe(false);
+      expect(isFileDiffCollapsed("later.ts", "folded", new Map(), defaultCollapsed)).toBe(true);
+      expect(
+        isFileDiffCollapsed("a.ts", "folded", new Map([["a.ts", false]]), defaultCollapsed),
+      ).toBe(false);
+      expect(
+        isFileDiffCollapsed("a.ts", "expanded", new Map([["a.ts", true]]), defaultCollapsed),
+      ).toBe(true);
+    }
   });
 });
 
