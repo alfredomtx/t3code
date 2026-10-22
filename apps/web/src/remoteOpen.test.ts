@@ -1,4 +1,5 @@
 import {
+  BearerConnectionTarget,
   PrimaryConnectionTarget,
   RelayConnectionTarget,
   SshConnectionTarget,
@@ -24,6 +25,25 @@ const TAILSCALE_TARGETS = [
 ] as const;
 
 describe("resolveRemoteOpenState", () => {
+  it.each(["http://127.0.0.1:3773", "http://localhost:3773", "http://[::1]:3773"])(
+    "opens editors locally for a saved direct loopback service at %s",
+    (httpBaseUrl) => {
+      expect(
+        resolveRemoteOpenState({
+          target: new BearerConnectionTarget({
+            environmentId,
+            label: "Mac",
+            connectionId: "saved-service",
+          }),
+          httpBaseUrl,
+          sshTarget: null,
+          remoteOpenTargets: [],
+          isDesktopRenderer: true,
+        }),
+      ).toEqual({ mode: "local-exec" });
+    },
+  );
+
   it("keeps exec behavior for a loopback primary target", () => {
     expect(
       resolveRemoteOpenState({
