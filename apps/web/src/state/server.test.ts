@@ -5,7 +5,12 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import { resolveShortcutCommand } from "../keybindings";
-import { createShortcutKeybindingsAtom } from "./server";
+import {
+  createShortcutKeybindingsAtom,
+  serverAvailableEditorsAtom,
+  serverEnvironment,
+} from "./server";
+import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 
 const PRIMARY = EnvironmentId.make("primary");
 const A = EnvironmentId.make("a");
@@ -123,4 +128,30 @@ describe("createShortcutKeybindingsAtom", () => {
     harness.registry.set(harness.primaryEnvironmentIdAtom, null);
     expect(harness.cmdN()).toBe("chat.newLocal");
   });
+});
+
+describe("selected environment editors", () => {
+  it.each([null, PRIMARY])(
+    "uses each selected service editor list with primary %s",
+    (primaryId) => {
+      const selectedConfig = { ...config([]), availableEditors: ["zed"] as const };
+      const registry = AtomRegistry.make({
+        initialValues: [
+          [primaryEnvironmentIdAtom, primaryId],
+          [serverEnvironment.configValueAtom(A), selectedConfig],
+          [serverEnvironment.configValueAtom(B), { ...config([]), availableEditors: ["cursor"] }],
+          [
+            serverEnvironment.configValueAtom(PRIMARY),
+            { ...config([]), availableEditors: ["vscode"] },
+          ],
+        ],
+      });
+      registries.push(registry);
+      expect(registry.get(serverAvailableEditorsAtom(A))).toEqual(["zed"]);
+      expect(registry.get(serverAvailableEditorsAtom(B))).toEqual(["cursor"]);
+      expect(registry.get(serverAvailableEditorsAtom(EnvironmentId.make("unconfigured")))).toEqual(
+        [],
+      );
+    },
+  );
 });

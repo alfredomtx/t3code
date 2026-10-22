@@ -1,14 +1,27 @@
 import { AuthOrchestrationOperateScope, EnvironmentId, type EditorId } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
-import { AsyncResult } from "effect/reactivity";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
+import {
+  BearerConnectionProfile,
+  BearerConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render as renderUi } from "../../../test/render";
-import type { RemoteOpenState } from "../../remoteOpen";
+import { resolveRemoteOpenState } from "../../remoteOpen";
+import { serverAvailableEditorsAtom, serverEnvironment } from "../../state/server";
+import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
+import { shellEnvironment } from "../../state/shell";
+import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
-  remote: { mode: "local-exec" } as RemoteOpenState,
+  remoteInput: { route: null, remoteOpenTargets: [], isDesktopRenderer: true } as Parameters<
+    typeof resolveRemoteOpenState
+  >[0],
+  useCommand: vi.fn(),
   clientEditors: ["vscode"] as readonly EditorId[],
   run: vi.fn(),
   openUrl: vi.fn(),
@@ -36,7 +49,10 @@ vi.mock(import("../../state/session"), async (importOriginal) => {
 });
 vi.mock(import("../../state/use-atom-command"), async (importOriginal) => ({
   ...(await importOriginal()),
-  useAtomCommand: (() => state.run) as never,
+  useAtomCommand: ((command: unknown) => {
+    state.useCommand(command);
+    return state.run;
+  }) as never,
 }));
 vi.mock(import("../../state/environments"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -56,13 +72,16 @@ vi.mock(import("../../editorPreferences"), async (importOriginal) => {
     },
   };
 });
-vi.mock(import("../../remoteOpen"), async (importOriginal) => ({
-  ...(await importOriginal()),
-  useRemoteOpenState: () => state.remote,
-  useRemoteCapableEditors: () => state.clientEditors,
-  useRemoteOpenHint: () => [false, state.markHintSeen] as const,
-  openRemoteEditorUrl: state.openUrl,
-}));
+vi.mock(import("../../remoteOpen"), async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useRemoteOpenState: () => actual.resolveRemoteOpenState(state.remoteInput),
+    useRemoteCapableEditors: () => state.clientEditors,
+    useRemoteOpenHint: () => [false, state.markHintSeen] as const,
+    openRemoteEditorUrl: state.openUrl,
+  };
+});
 
 import { OpenInPicker } from "./OpenInPicker";
 import { useOpenFavoriteEditorShortcut } from "./OpenInPickerShortcut";
@@ -73,7 +92,8 @@ const editors: readonly EditorId[] = ["vscode"];
 
 async function setup() {
   state.allowed.clear();
-  state.remote = { mode: "local-exec" };
+  state.remoteInput = { route: null, remoteOpenTargets: [], isDesktopRenderer: true };
+  state.useCommand.mockReset();
   state.clientEditors = editors;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.openUrl.mockReset().mockResolvedValue(true);
@@ -180,4 +200,84 @@ describe("host editor access", () => {
     expect(byLabel("Choose editor").disabled).toBe(true);
     expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
   });
+});
+
+describe("saved local service editor action", () => {
+  it.each([true, false])(
+    "opens Zed on the selected service only with its operate grant: %s",
+    async (allowed) => {
+      const target = new BearerConnectionTarget({
+        environmentId: selected,
+        label: "Mac service",
+        connectionId: "saved-service",
+      });
+      const route = {
+        target,
+        profile: Option.some(
+          new BearerConnectionProfile({
+            environmentId: selected,
+            label: target.label,
+            connectionId: target.connectionId,
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+          }),
+        ),
+      };
+      const registry = AtomRegistry.make({
+        initialValues: [
+          [primaryEnvironmentIdAtom, null],
+          [serverEnvironment.configValueAtom(selected), { availableEditors: ["zed"] }],
+        ],
+      });
+      using _registry = { [Symbol.dispose]: () => registry.dispose() };
+      using _config = {
+        [Symbol.dispose]: registry.mount(serverEnvironment.configValueAtom(selected)),
+      };
+      await using fixture = await setup();
+      state.remoteInput = { route, remoteOpenTargets: [], isDesktopRenderer: true };
+      state.allowed.add(allowed ? selected : primary);
+      function ParentEditorControls() {
+        const availableEditors = useAtomValue(serverAvailableEditorsAtom(selected));
+        if (
+          !shouldShowOpenInPicker({
+            activeProjectName: "Project",
+            target,
+            remoteOpenMode: resolveRemoteOpenState(state.remoteInput).mode,
+          })
+        )
+          return null;
+        return (
+          <OpenInPicker
+            environmentId={selected}
+            keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+            availableEditors={availableEditors}
+            openInCwd="/work/project"
+            compact
+          />
+        );
+      }
+      await act(async () =>
+        fixture.screen.rerender(
+          <RegistryContext.Provider value={registry}>
+            <ParentEditorControls />
+          </RegistryContext.Provider>,
+        ),
+      );
+      await expect
+        .element(fixture.screen.getByRole("button", { name: "Open file in preferred editor" }))
+        .toBeVisible();
+      expect(fixture.primaryButton().disabled).toBe(!allowed);
+      await fixture.click(fixture.primaryButton());
+      if (allowed) {
+        expect(state.useCommand).toHaveBeenCalledWith(shellEnvironment.openInEditor);
+        expect(state.run).toHaveBeenCalledExactlyOnceWith({
+          environmentId: selected,
+          input: { cwd: "/work/project", editor: "zed" },
+        });
+      } else {
+        expect(state.run).not.toHaveBeenCalled();
+      }
+      expect(state.openUrl).not.toHaveBeenCalled();
+    },
+  );
 });

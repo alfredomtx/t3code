@@ -60,6 +60,8 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
+  "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
   "apps/web/src/components/pullRequest/PullRequestCodeTab.browser.test.tsx",
   "apps/web/src/components/ServerUpdateAction.browser.test.tsx",
   "apps/web/src/hooks/useSettings.personal.browser.test.tsx",
@@ -69,6 +71,9 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/web/src/remoteOpen.test.ts",
+    "apps/web/src/components/chat/OpenInPicker.logic.test.ts",
+    "apps/web/src/state/server.test.ts",
     "apps/web/src/components/pullRequest/pullRequestDiff.logic.test.ts",
     "apps/web/src/lib/openPullRequestLink.test.ts",
     "apps/web/src/rightPanelStore.test.ts",

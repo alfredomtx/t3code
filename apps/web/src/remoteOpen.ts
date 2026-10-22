@@ -1,4 +1,11 @@
-import type { ConnectionTarget } from "@t3tools/client-runtime/connection";
+import {
+  connectionRouteId,
+  connectionRouteKind,
+  connectionRoutes,
+  type ConnectionCatalogEntry,
+  type ConnectionRoute,
+  type ConnectionTarget,
+} from "@t3tools/client-runtime/connection";
 import {
   REMOTE_CAPABLE_EDITOR_IDS,
   type EditorId,
@@ -12,9 +19,10 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useState } from "react";
 
 import { isDesktopLocalConnectionTarget } from "~/connection/desktopLocal";
-import { isLoopbackHostname } from "~/environments/primary/target";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { environmentPresentations } from "~/state/presentation";
+import { environmentSession } from "~/state/session";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 
 export interface RemoteOpenHost {
   readonly kind: "ssh-alias" | RemoteOpenTarget["kind"];
@@ -41,45 +49,50 @@ const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   isResolved: false,
 };
 
-function parseHostname(url: string): string | null {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return null;
-  }
-}
-
 export function resolveRemoteOpenState(input: {
-  readonly target: ConnectionTarget | null;
-  readonly sshTarget: { readonly alias: string; readonly username: string | null } | null;
+  readonly route: ConnectionRoute | null;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
 }): RemoteOpenState {
-  const { target } = input;
-  if (target === null) {
+  const { route } = input;
+  if (route === null) {
     return LOCAL_EXEC;
   }
+  const { target } = route;
+  const profile = Option.getOrNull(route.profile);
+  const matchingProfile =
+    profile !== null &&
+    profile.environmentId === target.environmentId &&
+    "connectionId" in target &&
+    profile.connectionId === target.connectionId
+      ? profile
+      : null;
   if (target._tag === "PrimaryConnectionTarget") {
-    // The desktop app manages its own primary backend, so it is always on this machine even
-    // when its URL is not loopback (wsl-only mode binds the WSL2 NAT address).
-    if (input.isDesktopRenderer) {
+    // The desktop app owns its primary backend, including WSL NAT addresses.
+    if (input.isDesktopRenderer || connectionRouteKind(route) === "loopback") {
       return LOCAL_EXEC;
     }
-    const hostname = parseHostname(target.httpBaseUrl);
-    if (hostname !== null && isLoopbackHostname(hostname)) {
-      return LOCAL_EXEC;
-    }
-  } else if (isDesktopLocalConnectionTarget(target)) {
+  } else if (
+    target._tag === "BearerConnectionTarget" &&
+    (isDesktopLocalConnectionTarget(target) ||
+      (matchingProfile?._tag === "BearerConnectionProfile" &&
+        matchingProfile.learned !== true &&
+        matchingProfile.authorization !== "t3-connect" &&
+        connectionRouteKind(route) === "loopback"))
+  ) {
     return LOCAL_EXEC;
   }
 
-  if (input.sshTarget !== null && input.sshTarget.alias.length > 0) {
-    const { alias } = input.sshTarget;
+  const sshTarget =
+    target._tag === "SshConnectionTarget" && matchingProfile?._tag === "SshConnectionProfile"
+      ? matchingProfile.target
+      : null;
+  if (sshTarget !== null && sshTarget.alias.length > 0) {
+    const { alias } = sshTarget;
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
     const username =
-      input.sshTarget.username?.trim() ||
-      (userSeparator === -1 ? null : alias.slice(0, userSeparator));
+      sshTarget.username?.trim() || (userSeparator === -1 ? null : alias.slice(0, userSeparator));
     return {
       mode: "remote-links",
       host: {
@@ -106,6 +119,21 @@ function remoteOpenStatesEqual(previous: RemoteOpenState, next: RemoteOpenState)
   );
 }
 
+export function resolveRemoteOpenRoute(
+  entry: ConnectionCatalogEntry,
+  activeTarget: ConnectionTarget | null,
+): ConnectionRoute {
+  if (activeTarget === null) return entry;
+  return (
+    connectionRoutes(entry).find(
+      (route) =>
+        route.target.environmentId === activeTarget.environmentId &&
+        route.target._tag === activeTarget._tag &&
+        connectionRouteId(route.target) === connectionRouteId(activeTarget),
+    ) ?? { target: activeTarget, profile: Option.none() }
+  );
+}
+
 // The presentation changes with every server config push and reconnect. This
 // keeps the previous resolution while it is equal, so subscribers re-render only
 // when where files open actually changes.
@@ -116,12 +144,12 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     if (entry === null) {
       return UNRESOLVED_REMOTE_OPEN;
     }
-    const profile = Option.getOrNull(entry.profile);
+    const prepared = Option.getOrNull(
+      get(environmentSession.preparedConnectionValueAtom(environmentId)),
+    );
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
-        target: entry.target,
-        sshTarget:
-          profile !== null && profile._tag === "SshConnectionProfile" ? profile.target : null,
+        route: resolveRemoteOpenRoute(entry, prepared?.target ?? null),
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
       }),
@@ -142,6 +170,10 @@ export function useRemoteOpenResolution(environmentId: EnvironmentId | null): Re
   return useAtomValue(
     environmentId === null ? UNRESOLVED_REMOTE_OPEN_ATOM : remoteOpenResolutionAtom(environmentId),
   );
+}
+
+export function readRemoteOpenResolution(environmentId: EnvironmentId): RemoteOpenResolution {
+  return appAtomRegistry.get(remoteOpenResolutionAtom(environmentId));
 }
 
 export function useRemoteOpenState(environmentId: EnvironmentId | null): RemoteOpenState {
