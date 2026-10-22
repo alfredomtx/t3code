@@ -32,7 +32,7 @@ import {
 } from "@t3tools/shared/imageDimensions";
 import {
   githubMediaFetchUrl,
-  githubMediaRepositoryContext,
+  githubMarkdownRepository,
   githubMediaFileName,
 } from "@t3tools/shared/githubMedia";
 import { MCP_APP_MAX_HTML_BYTES } from "@t3tools/shared/mcpApp";
@@ -814,7 +814,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       if (
         fetchUrl === null ||
         (input.resource.repositoryUrl !== undefined &&
-          githubMediaRepositoryContext(input.resource.repositoryUrl) === null)
+          githubMarkdownRepository(input.resource.repositoryUrl) === null)
       ) {
         return yield* new AssetGitHubMediaUrlValidationError({});
       }

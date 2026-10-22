@@ -75,6 +75,8 @@ async function requiredTests() {
     "scripts/build-desktop-artifact.test.ts",
     "scripts/sign-personal-macos.test.ts",
     "apps/server/src/auth/EnvironmentAuth.test.ts",
+    "apps/server/src/assets/AssetAccess.test.ts",
+    "apps/mobile/src/features/pull-requests/pullRequestMediaSource.test.ts",
     "apps/server/src/serverSettings.test.ts",
     "apps/desktop/src/app/DesktopCliCommand.test.ts",
     "apps/desktop/src/app/DesktopCliShim.test.ts",

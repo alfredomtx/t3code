@@ -2,7 +2,7 @@ import * as Mime from "effect/http/Mime";
 import {
   githubMediaFileName,
   githubMediaFetchUrl,
-  githubMediaRepositoryContext,
+  githubMarkdownRepository,
 } from "@t3tools/shared/githubMedia";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
@@ -162,7 +162,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   }
   let fetched = yield* fetchFollowingRedirects(asset.url, forwarded, token);
   const context =
-    asset.repositoryUrl === undefined ? null : githubMediaRepositoryContext(asset.repositoryUrl);
+    asset.repositoryUrl === undefined ? null : githubMarkdownRepository(asset.repositoryUrl);
   const canonical = githubMediaFetchUrl(asset.url);
   const attachment = canonical !== null && new URL(canonical).hostname === "github.com";
   if (

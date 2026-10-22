@@ -1,6 +1,6 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { githubMediaFetchUrl, githubMarkdownRepository } from "@t3tools/shared/githubMedia";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
@@ -69,6 +69,8 @@ export function PullRequestMarkdown({
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
+  const mediaRepositoryUrl =
+    repositoryUrl && githubMarkdownRepository(repositoryUrl) !== null ? repositoryUrl : undefined;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = repositoryUrl
     ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
@@ -93,7 +95,7 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
-              githubMediaRepositoryUrl={repositoryUrl ?? undefined}
+              githubMediaRepositoryUrl={mediaRepositoryUrl}
             />
           );
         }
@@ -106,7 +108,7 @@ export function PullRequestMarkdown({
               cwd={cwd}
               url={segment.url}
               fetchUrl={githubMediaUrl}
-              repositoryUrl={repositoryUrl}
+              repositoryUrl={mediaRepositoryUrl}
             />
           );
         }
