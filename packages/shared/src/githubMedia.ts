@@ -49,3 +49,9 @@ export function githubMediaFileName(fetchUrl: string): string {
   const name = decoded.replace(/[\p{Cc}\\/]/gu, "");
   return name.length > 0 ? name : "github-media";
 }
+
+/** The displayed repository supplies Markdown context, independently of the checkout. */
+export function githubMediaRepositoryContext(repositoryUrl: string): string | null {
+  const match = /^https:\/\/github\.com\/([\w-]+)\/([\w.-]+)\/?$/u.exec(repositoryUrl);
+  return match && match[2] !== "." && match[2] !== ".." ? `${match[1]}/${match[2]}` : null;
+}

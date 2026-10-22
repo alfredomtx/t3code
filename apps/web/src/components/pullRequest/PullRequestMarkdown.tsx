@@ -23,13 +23,20 @@ function PullRequestGitHubVideo({
   cwd,
   url,
   fetchUrl,
+  repositoryUrl,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
+  repositoryUrl: string | null | undefined;
 }) {
-  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: "github-media",
+    cwd,
+    url: fetchUrl,
+    ...(repositoryUrl ? { repositoryUrl } : {}),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -86,6 +93,7 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+              githubMediaRepositoryUrl={repositoryUrl ?? undefined}
             />
           );
         }
@@ -98,6 +106,7 @@ export function PullRequestMarkdown({
               cwd={cwd}
               url={segment.url}
               fetchUrl={githubMediaUrl}
+              repositoryUrl={repositoryUrl}
             />
           );
         }
