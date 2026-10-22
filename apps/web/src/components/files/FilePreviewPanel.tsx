@@ -1254,7 +1254,7 @@ export default function FilePreviewPanel({
           </ScrollArea>
           {absolutePath &&
           shouldShowOpenInPicker({
-            activeProjectName: absolutePath,
+            hasOpenTarget: Boolean(absolutePath),
             target: environmentPresentation?.entry.target ?? null,
             remoteOpenMode: remoteOpenState.mode,
           }) ? (

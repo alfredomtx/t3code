@@ -19,7 +19,7 @@ describe("parent editor picker visibility", () => {
   it("shows a selected saved local service without a primary backend", () => {
     expect(
       shouldShowOpenInPicker({
-        activeProjectName: "Project",
+        hasOpenTarget: true,
         target,
         remoteOpenMode: "local-exec",
       }),
@@ -29,7 +29,7 @@ describe("parent editor picker visibility", () => {
   it("preserves desktop-managed secondary suppression", () => {
     expect(
       shouldShowOpenInPicker({
-        activeProjectName: "Project",
+        hasOpenTarget: true,
         target: new BearerConnectionTarget({ ...target, connectionId: "local:wsl:Ubuntu" }),
         remoteOpenMode: "local-exec",
       }),
@@ -39,7 +39,7 @@ describe("parent editor picker visibility", () => {
   it("keeps primary, remote and unavailable pickers visible", () => {
     expect(
       shouldShowOpenInPicker({
-        activeProjectName: "Project",
+        hasOpenTarget: true,
         target: new PrimaryConnectionTarget({
           environmentId,
           label: "Mac",
@@ -52,7 +52,7 @@ describe("parent editor picker visibility", () => {
     for (const remoteOpenMode of ["remote-links", "remote-unavailable"] as const) {
       expect(
         shouldShowOpenInPicker({
-          activeProjectName: "Project",
+          hasOpenTarget: true,
           target: new RelayConnectionTarget({ environmentId, label: "Remote" }),
           remoteOpenMode,
         }),
@@ -60,10 +60,20 @@ describe("parent editor picker visibility", () => {
     }
   });
 
+  it("hides the picker while its selected environment is unresolved", () => {
+    expect(
+      shouldShowOpenInPicker({
+        hasOpenTarget: true,
+        target: null,
+        remoteOpenMode: "local-exec",
+      }),
+    ).toBe(false);
+  });
+
   it("hides the picker without a project or file path", () => {
     expect(
       shouldShowOpenInPicker({
-        activeProjectName: undefined,
+        hasOpenTarget: false,
         target,
         remoteOpenMode: "local-exec",
       }),

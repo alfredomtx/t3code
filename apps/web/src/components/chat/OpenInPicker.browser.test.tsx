@@ -240,7 +240,7 @@ describe("saved local service editor action", () => {
         const availableEditors = useAtomValue(serverAvailableEditorsAtom(selected));
         if (
           !shouldShowOpenInPicker({
-            activeProjectName: "Project",
+            hasOpenTarget: true,
             target,
             remoteOpenMode: resolveRemoteOpenState(state.remoteInput).mode,
           })
