@@ -5,6 +5,7 @@ import {
   msUntilRelativeTimeChange,
   relativeTimeElapsedMs,
   type RelativeTimeState,
+  type RelativeTimePrecision,
 } from "../timestampFormat";
 
 /**
@@ -12,12 +13,15 @@ import {
  * the elapsed time floored to the label's precision, and one timer fires at the
  * next boundary instead of polling every second.
  */
-export function useRelativeTimeState(isoDate: string | null): RelativeTimeState {
+export function useRelativeTimeState(
+  isoDate: string | null,
+  precision: RelativeTimePrecision = "minutes",
+): RelativeTimeState {
   const subscribe = (onChange: () => void) => {
     if (isoDate === null) return () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
-      const delayMs = msUntilRelativeTimeChange(isoDate);
+      const delayMs = msUntilRelativeTimeChange(isoDate, Date.now(), precision);
       if (delayMs === null) return;
       timer = setTimeout(() => {
         onChange();
@@ -27,10 +31,11 @@ export function useRelativeTimeState(isoDate: string | null): RelativeTimeState 
     schedule();
     return () => clearTimeout(timer);
   };
-  const getSnapshot = () => (isoDate === null ? null : relativeTimeElapsedMs(isoDate));
+  const getSnapshot = () =>
+    isoDate === null ? null : relativeTimeElapsedMs(isoDate, Date.now(), precision);
   const elapsedMs = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
   if (isoDate === null) return { status: "missing" };
   if (elapsedMs === null) return { status: "invalid" };
-  return { status: "relative", ...formatRelativeElapsed(elapsedMs) };
+  return { status: "relative", ...formatRelativeElapsed(elapsedMs, precision) };
 }

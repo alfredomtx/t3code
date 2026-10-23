@@ -19,10 +19,13 @@ import { resolveAssistantMessageCopyState } from "./MessagesTimeline.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { useV2ItemSupport } from "../../state/v2ItemSupport";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
-import { MESSAGE_HEADING_LEVEL, MessageAuthorHeading } from "./TimelineRowParts";
+import {
+  MESSAGE_HEADING_LEVEL,
+  MessageAuthorHeading,
+  MessageFooterTimestamp,
+} from "./TimelineRowParts";
 
 export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
@@ -133,7 +136,6 @@ export function AssistantMetaTimelineRow({
         message={row.message}
         showCopyButton={row.showAssistantCopyButton}
         copyStreaming={row.assistantCopyStreaming}
-        alwaysVisible
       />
     </div>
   );
@@ -145,24 +147,19 @@ function AssistantMessageMeta({
   message,
   showCopyButton,
   copyStreaming,
-  alwaysVisible = false,
 }: {
   className?: string;
   projectedItem?: Extract<TimelineRow, { kind: "message" }>["projectedItem"];
   message: ChatMessage;
   showCopyButton: boolean;
   copyStreaming: boolean;
-  alwaysVisible?: boolean;
 }) {
   const ctx = use(TimelineRowCtx);
 
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-xs tabular-nums transition-opacity duration-200",
-        alwaysVisible
-          ? "opacity-100"
-          : "opacity-0 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover/assistant:opacity-100",
+        "flex flex-wrap items-center gap-2 text-xs text-muted-foreground tabular-nums",
         className,
       )}
     >
@@ -180,14 +177,10 @@ function AssistantMessageMeta({
         <AssistantForkButton projectedItem={projectedItem} />
       ) : null}
       {!message.streaming && (
-        <Tooltip>
-          <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-            {formatDayAwareTimestamp(message.updatedAt, ctx.timestampFormat)}
-          </TooltipTrigger>
-          <TooltipPopup>
-            {formatChatTimestampTooltip(message.updatedAt, ctx.timestampFormat)}
-          </TooltipPopup>
-        </Tooltip>
+        <MessageFooterTimestamp
+          timestamp={message.updatedAt}
+          timestampFormat={ctx.timestampFormat}
+        />
       )}
     </div>
   );
@@ -212,7 +205,7 @@ function AssistantCopyButton({
     return null;
   }
 
-  return <MessageCopyButton text={assistantCopyState.text ?? ""} variant="ghost" />;
+  return <MessageCopyButton primaryMessage text={assistantCopyState.text ?? ""} variant="ghost" />;
 }
 
 export function ProposedPlanTimelineRow({

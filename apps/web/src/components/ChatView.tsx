@@ -2700,6 +2700,10 @@ export default function ChatView(props: ChatViewProps) {
   const closeThreadFind = () => threadFindControlsRef.current?.close();
 
   useChatShortcuts({
+    getTimelineScrollableNode: () =>
+      paintOnlyDisplayedTimeline || displayedTimelineKey !== activeThreadKey
+        ? null
+        : getTimelineScrollableNodeStable(),
     enabled: activeThreadId !== null,
     keybindings,
     scriptKeybindings,

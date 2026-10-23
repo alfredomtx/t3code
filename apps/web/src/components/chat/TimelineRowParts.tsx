@@ -4,6 +4,8 @@ import { cn } from "~/lib/utils";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
 import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 
+import { RelativeTime } from "../RelativeTime";
+
 export const MESSAGE_HEADING_LEVEL = 3;
 
 export function MessageAuthorHeading({ children }: { children: string }) {
@@ -51,5 +53,32 @@ export function ActivityShimmerOverlay({ children }: { children: ReactNode }) {
         <span className="live-activity-focus-aligned block text-foreground">{children}</span>
       </span>
     </span>
+  );
+}
+
+export function MessageFooterTimestamp({
+  timestamp,
+  timestampFormat,
+}: {
+  timestamp: string;
+  timestampFormat: TimestampFormat;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <time
+            dateTime={timestamp}
+            className="whitespace-nowrap text-muted-foreground text-xs tabular-nums"
+          />
+        }
+      >
+        {formatDayAwareTimestamp(timestamp, timestampFormat)} ·{" "}
+        <RelativeTime timestamp={timestamp} precision="seconds" />
+      </TooltipTrigger>
+      <TooltipPopup>
+        {formatChatTimestampTooltip(timestamp, timestampFormat)} · {timestamp}
+      </TooltipPopup>
+    </Tooltip>
   );
 }

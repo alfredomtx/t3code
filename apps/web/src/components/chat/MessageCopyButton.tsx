@@ -13,6 +13,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const MessageCopyButton = memo(function MessageCopyButton({
   text,
+  primaryMessage = false,
   label = "Copy message",
   icon = Copy,
   extraFlavors,
@@ -21,6 +22,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
   className,
 }: {
   text: string;
+  primaryMessage?: boolean;
   label?: string;
   icon?: typeof Copy;
   extraFlavors?: Readonly<Record<string, string>>;
@@ -41,6 +43,7 @@ export const MessageCopyButton = memo(function MessageCopyButton({
       <TooltipTrigger
         render={
           <Button
+            data-message-primary-copy={primaryMessage || undefined}
             aria-label={label}
             disabled={isCopied}
             onClick={() => copyToClipboard(text)}

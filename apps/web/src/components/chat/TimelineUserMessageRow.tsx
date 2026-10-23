@@ -61,13 +61,12 @@ import {
 import { chatMarkdownClipboardPayload } from "../../markdown-clipboard";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { cn } from "~/lib/utils";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
 import { WorkflowOpeningBlock } from "./WorkflowOpeningBlock";
 import { TimelineRowCtx, TimelineRowActivityCtx, type TimelineRow } from "./timelineRowContext";
 import {
   MESSAGE_HEADING_LEVEL,
   MessageAuthorHeading,
-  TimelineRowTimestamp,
+  MessageFooterTimestamp,
 } from "./TimelineRowParts";
 import { UserMessageContextReferenceChip } from "./UserMessageContextChips";
 import { resolvePreviewAnnotationImage } from "./TimelineUserMessageRow.logic";
@@ -186,8 +185,8 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
       </div>
       <UserMessageProjectedStatus row={row} />
       {expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {scheduledTaskId ? (
               <Link
                 to="/settings/scheduled-tasks"
@@ -197,16 +196,15 @@ function AutomationMessageRow({ row }: { row: Extract<TimelineRow, { kind: "mess
                 Open automation
               </Link>
             ) : null}
-            <TimelineRowTimestamp
-              createdAt={row.message.createdAt}
+            <MessageFooterTimestamp
+              timestamp={row.message.createdAt}
               timestampFormat={ctx.timestampFormat}
-              alwaysVisible
             />
             <div className="flex items-center gap-0.5">
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
-              <MessageCopyButton text={text} variant="ghost" />
+              <MessageCopyButton primaryMessage text={text} variant="ghost" />
               {promptLink !== null && (
                 <MessageCopyButton
                   text={promptLink}
@@ -581,27 +579,24 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </div>
       <UserMessageProjectedStatus row={row} />
       {!folded || expanded ? (
-        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums opacity-0 transition-opacity duration-200 pointer-coarse:opacity-100 focus-within:opacity-100 group-hover:opacity-100">
-          <div className="flex shrink-0 items-center gap-2">
+        <div className="flex w-full max-w-[80%] items-center justify-end pe-1 text-xs tabular-nums text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {folded && senderThreadId ? (
               <InlineButton onClick={() => ctx.onOpenThread(senderThreadId)} tone="muted">
                 Open thread
               </InlineButton>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
-                {formatDayAwareTimestamp(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipTrigger>
-              <TooltipPopup>
-                {formatChatTimestampTooltip(row.message.createdAt, ctx.timestampFormat)}
-              </TooltipPopup>
-            </Tooltip>
+            <MessageFooterTimestamp
+              timestamp={row.message.createdAt}
+              timestampFormat={ctx.timestampFormat}
+            />
             <div className="flex items-center gap-0.5">
               {typeof revertTurnCount === "number" && (
                 <RevertUserMessageButton turnCount={revertTurnCount} messageId={row.message.id} />
               )}
               {resolvedContext.text && (
                 <MessageCopyButton
+                  primaryMessage
                   text={contextClipboardFragment ? resolvedContext.text : plainText}
                   {...(contextClipboardFragment
                     ? {
