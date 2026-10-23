@@ -80,10 +80,16 @@ function resolveHoveredPrimaryCopy(
 ): HTMLButtonElement | null {
   if (!isRendered(root)) return null;
   const hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
-  if (!hit || !root.contains(hit) || hit.closest(PROTECTED_COPY_OWNER_SELECTOR)) return null;
+  if (
+    !hit ||
+    !root.contains(hit) ||
+    hit.closest('[role="dialog"], [role="application"], iframe, [inert]')
+  )
+    return null;
   const row = hit.closest(MESSAGE_ROW_SELECTOR);
   const messageId = row?.getAttribute("data-message-id");
-  if (!row || !root.contains(row) || !messageId) return null;
+  if (!(row instanceof HTMLElement) || !root.contains(row) || !messageId || !isRendered(row))
+    return null;
   const buttons = Array.from(root.querySelectorAll("[data-message-primary-copy]")).filter(
     (button) => {
       const owner = button.closest(MESSAGE_ROW_SELECTOR);
@@ -96,7 +102,6 @@ function resolveHoveredPrimaryCopy(
   const button = buttons.length === 1 ? buttons[0] : null;
   if (
     !(button instanceof HTMLButtonElement) ||
-    button.disabled ||
     button.matches(":disabled") ||
     button.getAttribute("aria-disabled") === "true" ||
     !isRendered(button)

@@ -234,6 +234,51 @@ it("yields to a configured command even when its handler declines", async () => 
   expect(write).not.toHaveBeenCalled();
 });
 
+it.each(["svg", "svg path"])(
+  "copies once when the pointer hits the primary Copy %s",
+  async (selector) => {
+    await using screen = await render(<HoverChat />, options);
+    using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    using _toast = vi.spyOn(anchoredToastManager, "add").mockReturnValue("copy-test");
+    const icon = screen.container.querySelector(`[data-message-primary-copy] ${selector}`);
+    if (!icon) throw new Error("Copy icon is missing");
+    expect(icon.closest("svg")?.getAttribute("aria-hidden")).toBe("true");
+    using _hit = vi.spyOn(document, "elementFromPoint").mockReturnValue(icon);
+    pointAt(icon);
+    await act(() => {
+      expect(pressCopy(screen.getByLabelText("Composer").element())).toBe(true);
+    });
+    await vi.waitFor(() => expect(write).toHaveBeenCalledExactlyOnceWith("Message A payload"));
+    expect(pressCopy(screen.getByLabelText("Composer").element())).toBe(false);
+    expect(write).toHaveBeenCalledTimes(1);
+  },
+);
+
+it.each([
+  { owner: "row", attribute: "aria-hidden" },
+  { owner: "row", attribute: "inert" },
+  { owner: "root", attribute: "aria-hidden" },
+  { owner: "root", attribute: "inert" },
+  { owner: "button", attribute: "aria-hidden" },
+  { owner: "button", attribute: "inert" },
+] as const)("rejects a protected Copy owner %j", async ({ owner, attribute }) => {
+  await using screen = await render(<HoverChat detached />, options);
+  using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+  const body = screen.getByTestId("body-a").element();
+  const row = body.closest("[data-timeline-row-kind]");
+  const protectedOwner = {
+    row,
+    root: row?.parentElement,
+    button: screen.container.querySelector('[data-timeline-row-kind="assistant-meta"] button'),
+  }[owner];
+  if (!protectedOwner) throw new Error("Copy owner is missing");
+  protectedOwner.setAttribute(attribute, "true");
+  using _hit = vi.spyOn(document, "elementFromPoint").mockReturnValue(body);
+  pointAt(body);
+  expect(pressCopy(screen.getByLabelText("Composer").element())).toBe(false);
+  expect(write).not.toHaveBeenCalled();
+});
+
 it("does not intercept unavailable, covered, or unrelated editable targets", async () => {
   await using screen = await render(<HoverChat available={false} />, options);
   using write = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
