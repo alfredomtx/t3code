@@ -52,6 +52,14 @@ void request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: 
 });
 </script>`;
 
+vi.mock(import("../../assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: `data:text/html,${encodeURIComponent(APP_HTML)}`,
+    expiresAt: Date.now() + 60 * 60_000,
+  }),
+}));
+
 vi.mock(import("../../assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlState: (() => ({
@@ -79,10 +87,11 @@ import { McpAppFrame } from "./McpAppFrame";
 import { JiraResultDisclosure } from "./JiraResultDisclosure";
 
 function setup() {
-  let skew = 0;
-  // Advance the host cooldown without manufacturing browser user activation.
-  const now = performance.now.bind(performance);
-  const clock = vi.spyOn(performance, "now").mockImplementation(() => now() + skew);
+  let now = 0;
+  const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+  // Reset page input in the controlled clock, then start with an idle host.
+  window.dispatchEvent(new Event("pointerdown"));
+  now = 5_000;
   const answers: string[] = [];
   let answered: (() => void) | undefined;
   const onProbe = (event: MessageEvent) => {
@@ -144,7 +153,7 @@ function setup() {
     isFullscreen,
     answers,
     advance: (ms: number) => {
-      skew += ms;
+      now += ms;
     },
     [Symbol.dispose]() {
       window.removeEventListener("message", onProbe);

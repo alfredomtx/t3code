@@ -62,7 +62,7 @@ vi.mock(import("./ui/toast"), async (original) => {
 
 import {
   readConfirmDialogState,
-  registerConfirmDialogHost,
+  subscribeConfirmDialogHost,
   resetConfirmDialogForTests,
   respondToConfirmDialog,
 } from "~/confirmDialog";
@@ -311,7 +311,7 @@ describe("ServerUpdateAction", () => {
 
   it("updates remote desktop apps through the shared update flow after confirmation", async () => {
     using _state = setup();
-    registerConfirmDialogHost();
+    using _host = { [Symbol.dispose]: subscribeConfirmDialogHost(() => {}) };
     testState.updateServer.mockResolvedValue(success("desktop-app", "0.0.34"));
 
     await using screen = await renderAction({

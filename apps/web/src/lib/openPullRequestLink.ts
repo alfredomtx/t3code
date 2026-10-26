@@ -1,85 +1,40 @@
-import type { EnvironmentId, PullRequestRef, ScopedThreadRef } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
 import { type MouseEvent } from "react";
 
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parseChangeRequestUrl, type ChangeRequestLink } from "@t3tools/shared/changeRequestUrl";
-import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
+import {
+  resolveChangeRequestLinkTarget,
+  resolvePullRequestPreviewTarget,
+} from "@t3tools/client-runtime/change-request-links";
 
 import { useOpenLink } from "../browser/useOpenLink";
 import { useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
-import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { readProjects, useProjects } from "../state/entities";
 import { environmentServerConfigsAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironmentId } from "../state/environments";
-import { randomUUID } from "./utils";
 
-export {
-  parseChangeRequestUrl,
+import { randomUUID } from "./utils";
+import {
+  sourceControlClients,
   type ChangeRequestLink,
-  gitHubPullRequestBrowserUrl,
-  pullRequestCandidateUrlFromReferenceAutolink,
-  matchesLinkedPullRequestUrl,
-  changeRequestRepositoryUrl,
-} from "@t3tools/shared/changeRequestUrl";
+} from "@t3tools/client-runtime/source-control-clients";
 
 export function parsePullRequestLink(
   targetUrl: string,
 ): (ChangeRequestLink & { readonly commitOid: string | null }) | null {
-  const link = parseChangeRequestUrl(targetUrl);
-  if (link === null) return null;
+  const link = sourceControlClients.parseChangeRequestUrl(targetUrl)?.link;
+  if (link === undefined) return null;
   const match = /^\/[^/]+\/[^/]+\/pull\/\d+\/(?:commits|changes)\/([a-fA-F0-9]{40})\/?$/u.exec(
-    new URL(targetUrl).pathname,
+    sourceControlClients.parseChangeRequestUrl(targetUrl)?.definition.kind === "github"
+      ? new URL(targetUrl).pathname
+      : "",
   );
   return { ...link, commitOid: match?.[1]?.toLowerCase() ?? null };
-}
-
-export function findProjectForChangeRequest(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: ChangeRequestLink,
-): EnvironmentProject | undefined {
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    return (
-      identity?.provider !== undefined &&
-      sourceControlClients.get(identity.provider).isChangeRequestInRepository(identity, link)
-    );
-  });
-}
-
-export function resolvePullRequestPreviewTarget({
-  environmentId,
-  projects,
-  pullRequestsEnabled,
-  url,
-}: {
-  environmentId: EnvironmentId | null;
-  projects: ReadonlyArray<EnvironmentProject>;
-  pullRequestsEnabled: boolean;
-  url: string;
-}): { environmentId: EnvironmentId; input: PullRequestRef } | null {
-  if (!pullRequestsEnabled || environmentId === null) return null;
-  const parsed = parseChangeRequestUrl(url);
-  if (parsed === null) return null;
-  const project = findProjectForChangeRequest(
-    projects.filter((candidate) => candidate.environmentId === environmentId),
-    parsed,
-  );
-  if (project === undefined) return null;
-  return {
-    environmentId,
-    input: {
-      projectId: project.id,
-      host: parsed.authority ?? parsed.host,
-      repository: sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository,
-      number: parsed.number,
-    },
-  };
 }
 
 export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
@@ -90,21 +45,6 @@ export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null,
     projects,
     pullRequestsEnabled: serverConfig?.environment.capabilities.pullRequests === true,
     url,
-  });
-}
-
-export function findProjectOnChangeRequestHost(
-  projects: ReadonlyArray<EnvironmentProject>,
-  link: ChangeRequestLink,
-): EnvironmentProject | undefined {
-  const own = findProjectForChangeRequest(projects, link);
-  if (own !== undefined) return own;
-  return projects.find((project) => {
-    const identity = project.repositoryIdentity;
-    return (
-      identity?.provider !== undefined &&
-      sourceControlClients.get(identity.provider).canReadChangeRequestOnHost(identity, link)
-    );
   });
 }
 
@@ -136,49 +76,28 @@ export function useOpenChangeRequestLink(
     // subscribing would hand every rendered link a new handler. Projects likewise, so a
     // link can resolve against a snapshot that arrived after this handler was built.
     const serverConfigs = appAtomRegistry.get(environmentServerConfigsAtom);
-    const allProjects = readProjects();
     const resolvedThreadRef = targetThreadRef ?? threadRef;
     const resolvedPanelRef = panelRef ?? resolvedThreadRef;
-    const parsed = parsePullRequestLink(targetUrl);
-    if (parsed === null) return false;
-    const reads = (environmentId: string) =>
-      serverConfigs.get(environmentId as EnvironmentId)?.environment.capabilities.pullRequests ===
-      true;
-    // Beside a thread the panel reads on that thread's environment, so a project from another
-    // one could not be read there whatever its remote says: two environments can hold the same
-    // repository, and handing the panel the wrong one's id opens a surface that never loads.
-    const projects = resolvedThreadRef
-      ? allProjects.filter((project) => project.environmentId === resolvedThreadRef.environmentId)
-      : targetEnvironmentId
-        ? allProjects.filter((project) => project.environmentId === targetEnvironmentId)
-        : allProjects
-            .filter((project) => reads(project.environmentId))
-            .toSorted(
-              (left, right) =>
-                Number(right.environmentId === primaryEnvironmentId) -
-                Number(left.environmentId === primaryEnvironmentId),
-            );
-    const exactProject = findProjectForChangeRequest(projects, parsed);
-    const project =
-      exactProject ??
-      (resolvedPanelRef
-        ? findProjectOnChangeRequestHost(
-            projects.filter(
-              (candidate) =>
-                serverConfigs.get(candidate.environmentId)?.environment.capabilities
-                  .threadPullRequests === true,
-            ),
-            parsed,
-          )
-        : undefined);
-    if (project === undefined || !reads(project.environmentId)) return false;
-    const repository =
-      serverConfigs.get(project.environmentId)?.environment.capabilities.threadPullRequests === true
-        ? parsed.repository
-        : (sourceControlRepositorySelector(project.repositoryIdentity) ?? parsed.repository);
+    const target = resolveChangeRequestLinkTarget({
+      url: targetUrl,
+      projects: readProjects(),
+      capabilities: (environmentId) => serverConfigs.get(environmentId)?.environment.capabilities,
+      environmentId: resolvedThreadRef?.environmentId ?? targetEnvironmentId,
+      primaryEnvironmentId,
+      lendHostProject: resolvedPanelRef !== undefined,
+    });
+    if (target === null) return false;
+    const commitOid = parsePullRequestLink(targetUrl)?.commitOid ?? null;
+    const { project, repository, number, host } = target;
     event.preventDefault();
     event.stopPropagation();
-    const commitOid = parsed.commitOid;
+    const pullRequestsSearch = {
+      repository,
+      number,
+      ...(host === undefined ? {} : { selectedHost: host }),
+      selectedProjectId: project.id,
+      selectedEnvironmentId: project.environmentId,
+    };
     if (resolvedPanelRef || commitOid !== null) {
       const destinationPanelRef = resolvedPanelRef ?? PULL_REQUESTS_PANEL_REF;
       useRightPanelStore.getState().openPullRequest(destinationPanelRef, {
@@ -187,20 +106,14 @@ export function useOpenChangeRequestLink(
           ? {}
           : { environmentId: project.environmentId }),
         projectId: project.id,
-        ...((commitOid !== null && destinationPanelRef === PULL_REQUESTS_PANEL_REF) ||
-        serverConfigs.get(project.environmentId)?.environment.capabilities.threadPullRequests ===
-          true
-          ? { host: parsed.authority ?? parsed.host }
-          : {}),
+        ...(host === undefined ? {} : { host }),
         repository,
         url: targetUrl,
-        number: parsed.number,
+        number,
         ...(commitOid === null
           ? {}
           : { detailTab: "code", commitRequest: { id: randomUUID(), oid: commitOid } }),
       });
-    }
-    if (resolvedPanelRef) {
       if (!resolvedThreadRef) {
         void navigate({
           to: "/pull-requests",
@@ -208,11 +121,7 @@ export function useOpenChangeRequestLink(
             ...previous,
             involvement: previous.involvement ?? "all",
             state: previous.state ?? "all",
-            repository,
-            number: parsed.number,
-            selectedHost: parsed.authority ?? parsed.host,
-            selectedProjectId: project.id,
-            selectedEnvironmentId: project.environmentId,
+            ...pullRequestsSearch,
           }),
           replace: true,
         });
@@ -221,15 +130,7 @@ export function useOpenChangeRequestLink(
     }
     void navigate({
       to: "/pull-requests",
-      search: {
-        involvement: "all",
-        state: "all",
-        repository,
-        number: parsed.number,
-        selectedHost: parsed.authority ?? parsed.host,
-        selectedProjectId: project.id,
-        selectedEnvironmentId: project.environmentId,
-      },
+      search: { involvement: "all", state: "all", ...pullRequestsSearch },
     });
     return true;
   };
@@ -244,9 +145,7 @@ export function useOpenPrLink(threadRef?: ScopedThreadRef) {
     const openInBrowser = shouldOpenPullRequestExternally(event);
     const isAnchor =
       event.currentTarget instanceof HTMLAnchorElement && event.currentTarget.href.length > 0;
-    // A real link already knows how to cmd/ctrl/middle-click. Leave its default
-    // action alone so the browser (or Electron's window-open handler) opens
-    // the host. Buttons have no href, so they still go through openExternal.
+    // Native links handle modified clicks; buttons still need openExternal.
     if (openInBrowser && isAnchor) return false;
 
     event.preventDefault();

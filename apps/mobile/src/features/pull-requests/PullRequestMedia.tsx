@@ -5,8 +5,8 @@ import {
   type PullRequestMediaLocation,
 } from "./pullRequestMediaSource";
 import { useFilePreviewGallery } from "../../components/FilePreviewGallery";
-import type { AssetResource } from "@t3tools/contracts";
-import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { SOURCE_CONTROL_MEDIA_ASSET, type AssetResource } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import { Pressable, View } from "react-native";
 import { Image } from "expo-image";
@@ -22,16 +22,17 @@ import {
   type FilePreviewItem,
 } from "../../components/FilePreviewModal";
 
+export const PullRequestMediaVisibleContext = createContext(true);
 export const PullRequestMediaContext = createContext<PullRequestMediaLocation | null>(null);
 
 export function usePullRequestMediaUrl(url: string) {
   const context = useContext(PullRequestMediaContext);
-  const fetchUrl = githubMediaFetchUrl(url);
+  const fetchUrl = sourceControlClients.mediaUrl(url)?.fetchUrl;
   const resource = useMemo<AssetResource | null>(
     () =>
       context && fetchUrl
         ? {
-            _tag: "github-media",
+            _tag: SOURCE_CONTROL_MEDIA_ASSET,
             cwd: context.cwd,
             url: fetchUrl,
             ...(context.repositoryUrl === undefined
@@ -58,6 +59,7 @@ export function PullRequestMedia(props: {
   readonly compact?: boolean;
 }) {
   const media = usePullRequestMediaUrl(props.url);
+  const visible = useContext(PullRequestMediaVisibleContext);
   const context = useContext(PullRequestMediaContext);
   const withGallery = useFilePreviewGallery();
   const [image, setImage] = useState<FilePreviewSource | null>(null);
@@ -90,7 +92,7 @@ export function PullRequestMedia(props: {
         <VideoAttachmentTile
           name={name}
           sourceIdentifier={props.url}
-          thumbnailSource={media.uri}
+          thumbnailSource={visible ? media.uri : null}
           style={{ width: 176, height: 112, borderRadius: 16 }}
           onPress={() =>
             setVideo({
@@ -109,6 +111,8 @@ export function PullRequestMedia(props: {
           unavailable={media.unavailable}
           name={name}
           thumbnailKey={props.url}
+          thumbnailVisible={visible}
+          visible={visible}
           resolvePlaybackUri={media.resolvePlaybackUri}
         />
       )}

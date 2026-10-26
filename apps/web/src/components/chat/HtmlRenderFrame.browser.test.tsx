@@ -1,4 +1,5 @@
-import { expect, it, vi } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
 import { EnvironmentId } from "@t3tools/contracts";
 import {
   htmlRenderTheme,
@@ -13,6 +14,13 @@ import { render as renderUi } from "../../../test/render";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 
 const page = vi.hoisted(() => ({ url: "" }));
+vi.mock(import("~/assets/longLivedAssetUrls"), () => ({
+  useLongLivedAssetUrl: () => ({
+    _tag: "Success",
+    url: page.url || "about:blank",
+    expiresAt: Date.now() + 60 * 60_000,
+  }),
+}));
 vi.mock(import("~/assets/assetUrls"), async (original) => ({
   ...(await original()),
   useAssetUrlState: () => ({
@@ -52,4 +60,26 @@ it("grows past the agent's height to fit the page the client lays out", async ()
   const box = container.firstElementChild as HTMLElement;
   await expect.poll(() => box.style.height).toBe("2345px");
   expect(box.querySelector("iframe")?.clientHeight).toBe(2345);
+});
+
+describe("HtmlRenderFrame", () => {
+  it("reports leaving full screen when it unmounts while expanded", async () => {
+    setup();
+    const onFullscreenChange = vi.fn();
+    await using screen = await renderUi(
+      <HtmlRenderFrame
+        environmentId={EnvironmentId.make("environment")}
+        htmlRender={{ attachmentId: "attachment", title: "Report", height: 200 }}
+        threadRef={undefined}
+        onFullscreenChange={onFullscreenChange}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Open full screen" }));
+    await expect.element(screen.getByRole("dialog")).toBeVisible();
+    expect(onFullscreenChange).toHaveBeenLastCalledWith(true);
+
+    await screen.unmount();
+    expect(onFullscreenChange).toHaveBeenLastCalledWith(false);
+  });
 });

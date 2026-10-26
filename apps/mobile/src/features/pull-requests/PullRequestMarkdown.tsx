@@ -1,3 +1,5 @@
+import { githubMarkdownRepository } from "@t3tools/shared/githubMediaRepository";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -10,9 +12,9 @@ import {
 } from "./PullRequestMedia";
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useCallback, useMemo, useState } from "react";
-import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
-import { changeRequestRepositoryUrl } from "@t3tools/shared/changeRequestUrl";
-import { githubMarkdownRepository } from "@t3tools/shared/githubMedia";
+import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
+import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
+import { linkReferenceAutolinks } from "./pullRequestAutolinks";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -28,21 +30,33 @@ import {
 import { ThreadMarkdownImageView } from "../threads/ThreadMarkdownImage";
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 
-const RepositoryContext = createContext<string | null>(null);
+const AutolinksContext = createContext<((text: string) => ReadonlyArray<ReferenceAutolink>) | null>(
+  null,
+);
 
 export function PullRequestMarkdownRepository(props: {
-  readonly value: string | null;
+  /** The change request the markdown belongs to, whose host decides what its text links. */
+  readonly changeRequest: { readonly provider: string; readonly url: string } | null | undefined;
   readonly params: PullRequestParams;
   readonly children: ReactNode;
 }) {
+  const provider = props.changeRequest?.provider;
+  const url = props.changeRequest?.url;
+  const autolinks = useMemo(
+    () =>
+      provider === undefined || url === undefined
+        ? null
+        : changeRequestReferenceAutolinker({ provider, url }),
+    [provider, url],
+  );
   const target = pullRequestTarget(props.params);
   const project = useProject({
     environmentId: target.environmentId,
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
-  const candidateRepositoryUrl = props.value
-    ? (changeRequestRepositoryUrl(props.value) ?? props.value)
+  const candidateRepositoryUrl = url
+    ? sourceControlClients.parseChangeRequestUrl(url)?.link.repositoryUrl
     : null;
   const repositoryUrl =
     candidateRepositoryUrl && githubMarkdownRepository(candidateRepositoryUrl) !== null
@@ -60,9 +74,9 @@ export function PullRequestMarkdownRepository(props: {
     [target.environmentId, cwd, repositoryUrl],
   );
   return (
-    <RepositoryContext value={props.value}>
+    <AutolinksContext value={autolinks}>
       <PullRequestMediaContext value={media}>{props.children}</PullRequestMediaContext>
-    </RepositoryContext>
+    </AutolinksContext>
   );
 }
 
@@ -119,11 +133,11 @@ function PullRequestMarkdownContent(props: {
   readonly markdown: string;
   readonly imageGroupMarkdown?: string;
 }) {
-  const repositoryUrl = useContext(RepositoryContext);
+  const autolinks = useContext(AutolinksContext);
   const mediaContext = useContext(PullRequestMediaContext);
   const markdown = useMemo(
-    () => githubMarkdownLinks(props.markdown, repositoryUrl),
-    [props.markdown, repositoryUrl],
+    () => linkReferenceAutolinks(props.markdown, autolinks),
+    [props.markdown, autolinks],
   );
   const openPullRequest = useOpenPullRequest();
   const openLink = useCallback(

@@ -176,6 +176,7 @@ describe("resolveRemoteOpenState", () => {
   });
 
   it("keeps exec behavior for the desktop app's own primary even on a NAT URL", () => {
+    // wsl-only binds the desktop-owned primary to its WSL2 NAT address.
     expect(
       resolveRemoteOpenState({
         route: primaryRoute("http://172.29.112.1:14369"),

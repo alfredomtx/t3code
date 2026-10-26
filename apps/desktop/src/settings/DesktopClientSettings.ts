@@ -266,8 +266,8 @@ export const make = Effect.gen(function* () {
   return DesktopClientSettings.of({
     get: readSettings.pipe(Effect.withSpan("desktop.clientSettings.get")),
     sharedPreferences,
-    set: (settings) =>
-      crypto.randomUUIDv4().pipe(
+    set: Effect.fn("desktop.clientSettings.set")(function (settings) {
+      return crypto.randomUUIDv4().pipe(
         Effect.map((uuid) => uuid.replace(/-/g, "")),
         Effect.mapError(
           (cause) =>
@@ -287,8 +287,8 @@ export const make = Effect.gen(function* () {
             personalOnly: followsMain,
           }),
         ),
-        Effect.withSpan("desktop.clientSettings.set"),
-      ),
+      );
+    }),
   });
 });
 
@@ -302,7 +302,9 @@ export const layerTest = (initialSettings: Option.Option<ClientSettings> = Optio
       return DesktopClientSettings.of({
         sharedPreferences: Effect.succeed(null),
         get: Ref.get(settingsRef),
-        set: (settings) => Ref.set(settingsRef, Option.some(settings)),
+        set: Effect.fn("DesktopClientSettings.set")(function (settings) {
+          return Ref.set(settingsRef, Option.some(settings));
+        }),
       });
     }),
   );
