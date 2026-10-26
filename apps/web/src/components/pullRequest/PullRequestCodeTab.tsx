@@ -29,8 +29,9 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown } from "lucide";
-import { useAtomRefresh } from "@effect/atom-react";
+import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
 import {
   createContext,
   use,
@@ -41,6 +42,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useClientSettings, updateClientSettings } from "~/hooks/useSettings";
 import { useRenderedAppearance } from "~/hooks/useTheme";
@@ -113,6 +115,15 @@ import {
 } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
+import {
+  MarkdownReviewDefault,
+  MarkdownAutoViewedOptOuts,
+  MARKDOWN_REVIEW_DEFAULT_KEY,
+  autoViewedOptOutStorageKey,
+  isMarkdownPath,
+  selectTestPaths,
+  resolveDefaultCollapsed,
+} from "./pullRequestReviewDefaults";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
@@ -131,10 +142,12 @@ interface ReviewAnnotationGroup {
 type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 const COMMIT_PAGE_SIZE = 10;
+const isMarkdownReviewDefault = Schema.is(MarkdownReviewDefault);
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
 interface DiffSlice {
+  readonly inventoryFresh: boolean;
   readonly source: PullRequestDiffResult;
   readonly cursor: string | null;
   readonly patch: string;
@@ -173,6 +186,7 @@ function parseSlice(slice: DiffSlice, cacheKey: string, ignoreWhitespace: boolea
 
 interface FileViewedToggleState {
   readonly enabled: boolean;
+  readonly canWrite: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
   readonly setFileViewed: (fileKey: string, path: string, viewed: boolean) => void;
@@ -203,6 +217,7 @@ function FileViewedToggle({
         onClick={(event) => event.stopPropagation()}
       >
         <Checkbox
+          disabled={!viewedFiles.canWrite}
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
           onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
@@ -286,6 +301,16 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
+  const [markdownDefault, setMarkdownDefault] = useLocalStorage<
+    MarkdownReviewDefault,
+    MarkdownReviewDefault
+  >(MARKDOWN_REVIEW_DEFAULT_KEY, "collapsed", MarkdownReviewDefault);
+  const [markdownOptOuts, setMarkdownOptOuts] = useLocalStorage(
+    autoViewedOptOutStorageKey(environmentId, reference),
+    [],
+    MarkdownAutoViewedOptOuts,
+  );
+  const [findTests, setFindTests] = useState(false);
   const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
@@ -316,14 +341,22 @@ function PullRequestCodeTab({
 
   const referenceKey = pullRequestReviewKey(reference);
   const commit = selectedCommitOid;
-  const scopeKey = JSON.stringify([environmentId, referenceKey, commit]);
+  const scopeKey = JSON.stringify([
+    environmentId,
+    referenceKey,
+    commit,
+    detail.headSha ?? detail.updatedAt,
+  ]);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
+  const [actionGeneration, setActionGeneration] = useState(0);
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
+    setActionGeneration((generation) => generation + 1);
     setDraft(null);
     setSelectedLines(null);
+    setFindTests(false);
     setFileFolds(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
@@ -333,18 +366,40 @@ function PullRequestCodeTab({
 
   const loadedSlices = sliceState.key === scopeKey ? sliceState.slices : NO_SLICES;
   const cursor = sliceState.key === scopeKey ? sliceState.cursor : null;
-  const diffQuery = useEnvironmentQuery(
-    pullRequestEnvironment.diff({
-      environmentId,
-      input: {
-        ...reference,
-        ...(cursor === null ? {} : { cursor }),
-        ...(commit === null ? {} : { commit }),
-      },
-    }),
-  );
+  const diffAtom = pullRequestEnvironment.diff({
+    environmentId,
+    input: {
+      ...reference,
+      ...(cursor === null ? {} : { cursor }),
+      ...(commit === null ? {} : { commit }),
+    },
+  });
+  const diffQuery = useEnvironmentQuery(diffAtom);
+  const diffRead = useAtomValue(diffAtom);
+  const [pageRead, setPageRead] = useState({
+    scopeKey,
+    cursor,
+    before: diffRead,
+    requested: !AsyncResult.isSuccess(diffRead),
+  });
+  if (pageRead.scopeKey !== scopeKey || pageRead.cursor !== cursor) {
+    setPageRead({
+      scopeKey,
+      cursor,
+      before: diffRead,
+      requested: pageRead.scopeKey === scopeKey && !AsyncResult.isSuccess(diffRead),
+    });
+  }
+  const inventoryFresh =
+    pageRead.scopeKey === scopeKey &&
+    pageRead.cursor === cursor &&
+    pageRead.requested &&
+    diffRead !== pageRead.before &&
+    AsyncResult.isSuccess(diffRead) &&
+    !diffRead.waiting;
   const [appliedPage, setAppliedPage] = useState<{
     readonly data: typeof diffQuery.data;
+    readonly inventoryFresh: boolean;
     readonly cursor: string | null;
     readonly scopeKey: string;
   } | null>(null);
@@ -353,12 +408,14 @@ function PullRequestCodeTab({
     data !== null &&
     (appliedPage?.data !== data ||
       appliedPage.cursor !== cursor ||
-      appliedPage.scopeKey !== scopeKey)
+      appliedPage.scopeKey !== scopeKey ||
+      appliedPage.inventoryFresh !== inventoryFresh)
   ) {
-    setAppliedPage({ data, cursor, scopeKey });
+    setAppliedPage({ data, cursor, scopeKey, inventoryFresh });
     setSliceState((previous) => {
       const slices = previous.key === scopeKey ? previous.slices : NO_SLICES;
       const next = {
+        inventoryFresh,
         source: data,
         cursor,
         patch: data.patch,
@@ -387,7 +444,13 @@ function PullRequestCodeTab({
           );
         })
       ) {
-        return previous;
+        if (existing.inventoryFresh === inventoryFresh) return previous;
+        return {
+          ...previous,
+          slices: slices.map((slice, position) =>
+            position === index ? { ...slice, inventoryFresh } : slice,
+          ),
+        };
       }
       // Drop later slices when replacing a changed page; their cursors target the old diff.
       return { key: scopeKey, cursor, slices: [...slices.slice(0, index), next] };
@@ -422,6 +485,21 @@ function PullRequestCodeTab({
     environmentId,
     reference,
     enabled: viewedFilesStore !== undefined,
+    automaticScopeKey: scopeKey,
+    isAutomaticEligible: () =>
+      markdownDefault === "autoViewed" && commit === null && inventoryReady,
+    onManualChanges: (changes) => {
+      if (!changes.some((change) => isMarkdownPath(change.path))) return;
+      setMarkdownOptOuts((paths) => {
+        const next = new Set(paths);
+        for (const { path, viewed } of changes) {
+          if (!isMarkdownPath(path)) continue;
+          if (viewed) next.delete(path);
+          else next.add(path);
+        }
+        return [...next];
+      });
+    },
   });
   const {
     setViewed,
@@ -640,7 +718,13 @@ function PullRequestCodeTab({
         fileKey,
         foldOverride,
         fileFolds,
-        settings.diffFilesCollapsed || (filesViewedEnabled && isFileViewed(path)),
+        resolveDefaultCollapsed({
+          path,
+          markdownDefault,
+          globalCollapsed: settings.diffFilesCollapsed,
+          viewedEnabled: filesViewedEnabled,
+          viewed: isFileViewed(path),
+        }),
       );
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
@@ -663,13 +747,125 @@ function PullRequestCodeTab({
 
   // Do not re-arm the visible sentinel after failure; it would retry indefinitely.
   const canLoadNextSlice =
+    loadedSlices.at(-1)?.inventoryFresh === true &&
     nextCursor !== null &&
     nextCursor !== cursor &&
+    !loadedSlices.some((slice) => slice.cursor === nextCursor) &&
     !diffQuery.isPending &&
     diffQuery.error === null;
   const loadNextSlice = () => {
     if (nextCursor === null) return;
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
+  };
+
+  const inventoryPaths = new Set([...filePaths, ...omittedFileStats.keys()]);
+  const inventoryReady =
+    loadedSlices.length > 0 &&
+    loadedSlices[0]?.cursor === null &&
+    nextCursor === null &&
+    !diffQuery.isPending &&
+    diffQuery.error === null &&
+    loadedSlices.every(
+      (slice, index) =>
+        slice.inventoryFresh &&
+        (index === 0 || loadedSlices[index - 1]?.nextCursor === slice.cursor) &&
+        (commit === null || !slice.truncated) &&
+        parsedSlices[index]?.kind !== "raw",
+    ) &&
+    (commit !== null || inventoryPaths.size === detail.changedFiles);
+  const inventoryUnavailable =
+    !diffQuery.isPending &&
+    (diffQuery.error !== null ||
+      (loadedSlices.length > 0 &&
+        loadedSlices.every((slice) => slice.inventoryFresh) &&
+        ((nextCursor === null && !inventoryReady) ||
+          (nextCursor !== null && loadedSlices.some((slice) => slice.cursor === nextCursor)))));
+  const testPaths = inventoryReady ? selectTestPaths(inventoryPaths) : [];
+  const synchronizeReview = useEffectEvent(
+    (request: {
+      scopeKey: string;
+      cursor: string | null;
+      next: boolean;
+      refresh: boolean;
+      automaticPaths: ReadonlyArray<string> | null;
+      cancelAutomatic: boolean;
+    }) => {
+      if (request.scopeKey !== scopeKey || request.cursor !== cursor) return;
+      if (request.cancelAutomatic) filesViewed.cancelAutomatic();
+      if (request.refresh && !pageRead.requested) {
+        setPageRead({ ...pageRead, requested: true });
+        diffQuery.refresh();
+      }
+      if (request.next) loadNextSlice();
+      if (request.automaticPaths !== null)
+        filesViewed.setAutomaticallyViewed(request.automaticPaths);
+    },
+  );
+  const automaticPaths = [...inventoryPaths].filter(
+    (path) => isMarkdownPath(path) && !markdownOptOuts.includes(path),
+  );
+  // oxlint-disable-next-line t3code/react-effect-budget -- Complete external diff reads before review writes.
+  useEffect(() => {
+    const automatic = markdownDefault === "autoViewed" && commit === null;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      synchronizeReview({
+        scopeKey,
+        cursor,
+        refresh: !pageRead.requested,
+        next: (findTests || automatic) && canLoadNextSlice,
+        automaticPaths: automatic && inventoryReady && filesViewed.ready ? automaticPaths : null,
+        cancelAutomatic: !automatic,
+      });
+    });
+    return () => {
+      active = false;
+    };
+  }, [
+    findTests,
+    markdownDefault,
+    commit,
+    scopeKey,
+    cursor,
+    pageRead.requested,
+    canLoadNextSlice,
+    inventoryReady,
+    automaticPaths,
+    filesViewed.ready,
+  ]);
+  const isCurrentScope = useStableCallback(
+    (key: string, generation: number) => key === scopeKey && generation === actionGeneration,
+  );
+  const reportViewedResult = (
+    result: Awaited<ReturnType<typeof filesViewed.setManyViewed>>,
+    undo = false,
+  ) => {
+    const receipt = result.undo;
+    toastManager.add({
+      type: result.failed || result.uncertain ? "error" : "success",
+      title: `${result.confirmed} files ${undo ? "restored" : "updated"}`,
+      description: `${result.failed} failed, ${result.uncertain} uncertain, ${result.superseded} unchanged or superseded. Viewed marks apply to the whole PR.${undo ? " Undo restores the Viewed boolean. It cannot restore an earlier Changed baseline." : ""}`,
+      ...(receipt
+        ? {
+            actionProps: {
+              children: "Undo",
+              onClick: () => {
+                if (!isCurrentScope(scopeKey, actionGeneration)) return;
+                void filesViewed.undo(receipt).then((restored) => {
+                  if (isCurrentScope(scopeKey, actionGeneration))
+                    reportViewedResult(restored, true);
+                });
+              },
+            },
+          }
+        : {}),
+    });
+  };
+  const setTestsViewed = async (viewed: boolean) => {
+    if (!inventoryReady || !filesViewed.ready) return;
+    const result = await filesViewed.setManyViewed(testPaths.map((path) => ({ path, viewed })));
+    if (isCurrentScope(scopeKey, actionGeneration)) reportViewedResult(result);
   };
 
   const setFileFold = (fileKey: string, collapsed: boolean) =>
@@ -681,6 +877,7 @@ function PullRequestCodeTab({
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
+    canWrite: filesViewed.canWrite,
     isViewed: isFileViewed,
     isStale: isFileViewedStale,
     setFileViewed,
@@ -1113,6 +1310,74 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex shrink-0 items-center gap-1">
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={<Button size="sm" variant="ghost" />}
+            aria-label="Markdown review default"
+          >
+            Markdown
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuRadioGroup
+              value={markdownDefault}
+              onValueChange={(value) => {
+                if (isMarkdownReviewDefault(value)) {
+                  filesViewed.resetAutomaticAttempts();
+                  setMarkdownDefault(value);
+                }
+              }}
+            >
+              <DropdownMenuRadioItem value="collapsed" closeOnClick>
+                Start collapsed
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="autoViewed" disabled={!filesViewed.ready} closeOnClick>
+                Mark viewed automatically
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="off" closeOnClick>
+                No special default
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+            {markdownDefault === "autoViewed" && commit !== null ? (
+              <DropdownMenuItem disabled>Auto Viewed requires All commits</DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu
+          onOpenChange={(open) => {
+            if (open) setFindTests(true);
+          }}
+        >
+          <DropdownMenuTrigger
+            render={<Button size="sm" variant="ghost" />}
+            aria-label="Test file actions"
+          >
+            {inventoryReady
+              ? `Tests (${testPaths.length})`
+              : findTests && !inventoryUnavailable
+                ? "Finding test files..."
+                : "Find all tests"}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              disabled={!inventoryReady || !filesViewed.ready || testPaths.length === 0}
+              onClick={() => void setTestsViewed(true)}
+            >
+              Mark all tests viewed
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!inventoryReady || !filesViewed.ready || testPaths.length === 0}
+              onClick={() => void setTestsViewed(false)}
+            >
+              Unmark all tests
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled>Viewed marks apply to the whole PR</DropdownMenuItem>
+            {inventoryUnavailable ? (
+              <DropdownMenuItem onClick={() => diffQuery.refresh()}>
+                Inventory unavailable. Retry
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger

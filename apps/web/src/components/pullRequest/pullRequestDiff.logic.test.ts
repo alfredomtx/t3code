@@ -103,3 +103,28 @@ describe("setFileDiffCollapsed", () => {
     }
   });
 });
+
+it("collapses Markdown without marking it viewed and preserves explicit folds", async () => {
+  const { resolveDefaultCollapsed } = await import("./pullRequestReviewDefaults");
+  for (const path of ["README.md", "docs/guide.MDX"]) {
+    const defaults = resolveDefaultCollapsed({
+      path,
+      markdownDefault: "collapsed",
+      globalCollapsed: false,
+      viewed: false,
+      viewedEnabled: true,
+    });
+    expect(defaults).toBe(true);
+    expect(isFileDiffCollapsed(path, null, new Map([[path, false]]), defaults)).toBe(false);
+    expect(isFileDiffCollapsed(path, "expanded", new Map(), defaults)).toBe(false);
+    expect(
+      resolveDefaultCollapsed({
+        path,
+        markdownDefault: "off",
+        globalCollapsed: false,
+        viewed: false,
+        viewedEnabled: true,
+      }),
+    ).toBe(false);
+  }
+});
