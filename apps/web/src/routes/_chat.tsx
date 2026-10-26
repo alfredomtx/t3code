@@ -1,5 +1,5 @@
 import { AuthPreviewOperateScope } from "@t3tools/contracts";
-import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useEffectEvent, useState } from "react";
@@ -45,8 +45,19 @@ import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 function ChatRouteGlobalShortcuts() {
   const clearSelection = useThreadSelectionStore((state) => state.clearSelection);
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
-  const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
-    useHandleNewThread();
+  const {
+    activeDraftThread,
+    activeThread,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef: serverThreadRef,
+  } = useHandleNewThread();
+  const routeThreadRef =
+    serverThreadRef ??
+    (activeDraftThread
+      ? (activeDraftThread.promotedTo ??
+        scopeThreadRef(activeDraftThread.environmentId, activeDraftThread.threadId))
+      : null);
   const canOperatePreview = useEnvironmentScope(
     routeThreadRef?.environmentId ?? null,
     AuthPreviewOperateScope,
