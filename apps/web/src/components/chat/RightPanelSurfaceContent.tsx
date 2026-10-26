@@ -145,6 +145,12 @@ export function RightPanelSurfaceContent(props: {
             repository: surface.repository,
             number: surface.number,
           }}
+          commentRequest={surface.commentRequest}
+          onCommentRequestHandled={(requestId) => {
+            useRightPanelStore
+              .getState()
+              .consumePullRequestCommentRequest(threadRef, surface.id, requestId);
+          }}
           commitRequest={surface.commitRequest}
           onCommitRequestHandled={(requestId) => {
             useRightPanelStore

@@ -1,4 +1,9 @@
 import {
+  isPullRequestCommentTarget,
+  type PullRequestCommentRequest,
+} from "~/lib/pullRequestCommentLink";
+import { usePullRequestCommentTarget } from "./usePullRequestCommentTarget";
+import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
@@ -58,6 +63,8 @@ import {
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 interface ReactionSurface {
+  readonly commentRequest: PullRequestCommentRequest | undefined;
+  readonly onCommentRequestHandled: ((requestId: string) => void) | undefined;
   readonly canReact: boolean;
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef | null;
@@ -194,6 +201,11 @@ function ConversationCard({
   reactions: ReactionSurface;
   showPath?: boolean;
 }) {
+  const targetRef = usePullRequestCommentTarget(
+    event.url,
+    reactions.commentRequest,
+    reactions.onCommentRequestHandled,
+  );
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -217,7 +229,11 @@ function ConversationCard({
   };
 
   return (
-    <article className="group py-2">
+    <article
+      ref={targetRef}
+      tabIndex={-1}
+      className="group rounded-sm py-2 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring"
+    >
       <div className="px-2">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="min-w-0 flex-1">
@@ -306,6 +322,16 @@ function ConversationGroup({
   reactions: ReactionSurface;
 }) {
   const [open, setOpen] = useState(false);
+  const [revealedRequestId, setRevealedRequestId] = useState<string | null>(null);
+  const request = reactions.commentRequest;
+  if (
+    request &&
+    request.id !== revealedRequestId &&
+    events.some((event) => isPullRequestCommentTarget(event.url, request))
+  ) {
+    setRevealedRequestId(request.id);
+    setOpen(true);
+  }
   const actors = uniqueConversationActors(events);
   const first = events[0];
   if (first === undefined) return null;
@@ -383,6 +409,16 @@ function ReviewThreadEvent({
 }) {
   const dismissed = pullRequestReviewOutcome(event.reviewState) === "dismissed";
   const [expanded, setExpanded] = useState(!thread.isResolved && !dismissed);
+  const [revealedRequestId, setRevealedRequestId] = useState<string | null>(null);
+  const request = reactions.commentRequest;
+  if (
+    request &&
+    request.id !== revealedRequestId &&
+    [event, ...thread.replies].some((comment) => isPullRequestCommentTarget(comment.url, request))
+  ) {
+    setRevealedRequestId(request.id);
+    setExpanded(true);
+  }
   const replyCount = thread.replies.length + thread.moreReplies;
 
   return (
@@ -554,8 +590,17 @@ function ReviewVerdictEvent({
   onOpen: (url: string) => void;
   reactions: ReactionSurface;
 }) {
+  const targetRef = usePullRequestCommentTarget<HTMLDivElement>(
+    event.url,
+    reactions.commentRequest,
+    reactions.onCommentRequestHandled,
+  );
   return (
-    <div className="group relative mb-5 pl-12 [contain-intrinsic-block-size:48px] [content-visibility:auto]">
+    <div
+      ref={targetRef}
+      tabIndex={-1}
+      className="group relative mb-5 rounded-sm pl-12 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring [contain-intrinsic-block-size:48px] [content-visibility:auto]"
+    >
       <ActorTimelineMarker
         actors={event.actor ? [event.actor] : []}
         className="top-6"
@@ -626,6 +671,8 @@ function ReviewVerdictEvent({
 
 export function PullRequestTimelineTab({
   scrollerRef,
+  commentRequest,
+  onCommentRequestHandled,
   detail,
   environmentId,
   threadRef = null,
@@ -635,6 +682,8 @@ export function PullRequestTimelineTab({
   onRefresh,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
+  commentRequest?: PullRequestCommentRequest | undefined;
+  onCommentRequestHandled?: ((requestId: string) => void) | undefined;
   detail: PullRequestDetailView;
   environmentId: EnvironmentId;
   threadRef?: ScopedThreadRef | null;
@@ -647,6 +696,8 @@ export function PullRequestTimelineTab({
   const term = sourceControlClients.get(detail.provider).changeRequest.singular;
   const newestCommitAt = newestPullRequestCommitAt(detail.commits);
   const reactions: ReactionSurface = {
+    commentRequest,
+    onCommentRequestHandled,
     canReact: detail.capabilities.reactions === true,
     environmentId,
     threadRef,
@@ -662,6 +713,13 @@ export function PullRequestTimelineTab({
   );
   const orderedEvents = order === "newest" ? events : events.toReversed();
   const rows = groupPullRequestTimelineConversations(orderedEvents);
+  const targetMissing =
+    commentRequest !== undefined &&
+    !events.some((event) =>
+      [event, ...(event.thread?.replies ?? [])].some((comment) =>
+        isPullRequestCommentTarget(comment.url, commentRequest),
+      ),
+    );
   const openOnHost = (url: string) => {
     void readLocalApi()?.shell.openExternal(url);
   };
@@ -669,6 +727,21 @@ export function PullRequestTimelineTab({
   return (
     <div ref={scrollerRef} className="scrollbar-gutter-both h-full overflow-y-auto px-4 py-5">
       <div className="mx-auto max-w-3xl">
+        {targetMissing ? (
+          <div role="status" className="mb-4 text-xs text-muted-foreground">
+            <p>
+              The linked comment is not in the loaded activity. It may be unavailable or in replies
+              that have not loaded.
+            </p>
+            <Button
+              variant="link"
+              size="sm"
+              onClick={() => openOnHost(`${detail.url.split("#")[0]}${commentRequest.anchor}`)}
+            >
+              Open comment on GitHub
+            </Button>
+          </div>
+        ) : null}
         <div className="relative">
           <span aria-hidden className="absolute bottom-5 left-[15px] top-1 w-px bg-border/45" />
           {rows.map((row) => {

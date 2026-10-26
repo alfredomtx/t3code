@@ -1522,6 +1522,17 @@ export function PullRequestsPage() {
                   .getState()
                   .setPullRequestDetailTab(rightPanelRef, renderedPullRequestSurface.id, tab);
               }}
+              commentRequest={renderedPullRequestSurface.commentRequest}
+              onCommentRequestHandled={(requestId) => {
+                if (rightPanelRef === null) return;
+                useRightPanelStore
+                  .getState()
+                  .consumePullRequestCommentRequest(
+                    rightPanelRef,
+                    renderedPullRequestSurface.id,
+                    requestId,
+                  );
+              }}
               commitRequest={renderedPullRequestSurface.commitRequest}
               onCommitRequestHandled={(requestId) => {
                 if (rightPanelRef === null) return;

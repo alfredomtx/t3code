@@ -40,6 +40,84 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("replaces and acknowledges repeated comment links without duplicating the PR tab", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      projectId: "project-a",
+      repository: "acme/repo",
+      number: 42,
+      url: "https://github.com/acme/repo/pull/42#discussion_r123",
+      detailTab: "timeline" as const,
+    };
+    store.openPullRequest(refA, {
+      ...target,
+      commentRequest: { id: "first", anchor: "#discussion_r123" },
+    });
+    store.openPullRequest(refA, {
+      ...target,
+      commentRequest: { id: "second", anchor: "#discussion_r123" },
+    });
+    const surfaceId = pullRequestSurfaceId(target);
+    store.consumePullRequestCommentRequest(refA, surfaceId, "first");
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(panel.surfaces).toHaveLength(1);
+    expect(panel.surfaces[0]).toMatchObject({
+      detailTab: "timeline",
+      commentRequest: { id: "second" },
+    });
+    store.consumePullRequestCommentRequest(refA, surfaceId, "second");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces[0],
+    ).not.toHaveProperty("commentRequest");
+  });
+
+  it("retains a standalone comment request through page selection and cancels it for a plain link", () => {
+    const store = useRightPanelStore.getState();
+    const target = {
+      environmentId: "env-2",
+      projectId: "project-a",
+      repository: "acme/repo",
+      number: 42,
+    };
+    const commentRequest = { id: "first", anchor: "#discussion_r123" };
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, {
+      ...target,
+      detailTab: "timeline",
+      commentRequest,
+    });
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, target);
+    expect(
+      selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        PULL_REQUESTS_PANEL_REF,
+      ),
+    ).toMatchObject({ commentRequest, detailTab: "timeline" });
+    store.openPullRequest(PULL_REQUESTS_PANEL_REF, {
+      ...target,
+      url: "https://github.com/acme/repo/pull/42",
+    });
+    expect(
+      selectActiveRightPanelSurface(
+        useRightPanelStore.getState().byThreadKey,
+        PULL_REQUESTS_PANEL_REF,
+      ),
+    ).not.toHaveProperty("commentRequest");
+  });
+
+  it("does not replay comment navigation after storage reload", async () => {
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, {
+      projectId: "project-a",
+      repository: "acme/repo",
+      number: 42,
+      commentRequest: { id: "first", anchor: "#discussion_r123" },
+    });
+    await reloadRightPanelStore();
+    expect(
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).not.toHaveProperty("commentRequest");
+  });
+
   it("replaces a commit request on the same PR, including the same SHA", () => {
     const store = useRightPanelStore.getState();
     const target = {

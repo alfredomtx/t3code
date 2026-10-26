@@ -11,6 +11,7 @@ import { useClosedViewStore } from "./closedViewStore";
 import { resolveStorage } from "./lib/storage";
 import type { ThreadPanelPresentation } from "./rightPanelLayout";
 import type { ChatFileAttachment } from "./types";
+import type { PullRequestCommentRequest } from "./lib/pullRequestCommentLink";
 
 const RIGHT_PANEL_KINDS = [
   "diff",
@@ -79,6 +80,7 @@ export type RightPanelSurface =
       url?: string;
       detailTab?: PullRequestDetailTab;
       commitRequest?: PullRequestCommitRequest;
+      commentRequest?: PullRequestCommentRequest;
     }
   | { id: "pull-requests"; kind: "pull-requests" };
 
@@ -152,7 +154,13 @@ interface RightPanelStoreState {
       url?: string;
       detailTab?: PullRequestDetailTab;
       commitRequest?: PullRequestCommitRequest;
+      commentRequest?: PullRequestCommentRequest;
     },
+  ) => void;
+  consumePullRequestCommentRequest: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    requestId: string,
   ) => void;
   consumePullRequestCommitRequest: (
     ref: ScopedThreadRef,
@@ -286,6 +294,7 @@ export function pullRequestSurface(target: {
   url?: string;
   detailTab?: PullRequestDetailTab;
   commitRequest?: PullRequestCommitRequest;
+  commentRequest?: PullRequestCommentRequest;
 }): PullRequestSurface {
   return {
     id: pullRequestSurfaceId(target),
@@ -298,6 +307,7 @@ export function pullRequestSurface(target: {
     ...(typeof target.url === "string" ? { url: target.url } : {}),
     ...(target.detailTab === undefined ? {} : { detailTab: target.detailTab }),
     ...(target.commitRequest === undefined ? {} : { commitRequest: target.commitRequest }),
+    ...(target.commentRequest === undefined ? {} : { commentRequest: target.commentRequest }),
   };
 }
 
@@ -711,18 +721,39 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = pullRequestSurface(target);
             const next = upsertSurface(current, surface);
-            return target.url || target.commitRequest
+            return target.url || target.commitRequest || target.commentRequest
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) => {
                     if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
-                    const { commitRequest: _commitRequest, ...rest } = entry;
+                    const {
+                      commitRequest: _commitRequest,
+                      commentRequest: _commentRequest,
+                      ...rest
+                    } = entry;
                     return { ...rest, ...surface };
                   }),
                 }
               : next;
           }),
         ),
+      consumePullRequestCommentRequest: (ref, surfaceId, requestId) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request" || existing.commentRequest?.id !== requestId)
+            return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) => {
+              if (surface.id !== surfaceId || surface.kind !== "pull-request") return surface;
+              const { commentRequest: _commentRequest, ...rest } = surface;
+              return rest;
+            }),
+          }));
+        }),
       consumePullRequestCommitRequest: (ref, surfaceId, requestId) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -1135,9 +1166,19 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       ),
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
-          Object.entries(state.byThreadKey).filter(
-            ([threadKey]) => !isPullRequestsPanelKey(threadKey),
-          ),
+          Object.entries(state.byThreadKey)
+            .filter(([threadKey]) => !isPullRequestsPanelKey(threadKey))
+            .map(([threadKey, panel]) => [
+              threadKey,
+              {
+                ...panel,
+                surfaces: panel.surfaces.map((surface) => {
+                  if (surface.kind !== "pull-request") return surface;
+                  const { commentRequest: _commentRequest, ...persisted } = surface;
+                  return persisted;
+                }),
+              },
+            ]),
         ),
         threadPanelVisibilityByThreadKey: Object.fromEntries(
           Object.entries(state.threadPanelVisibilityByThreadKey).flatMap(

@@ -12,11 +12,28 @@ describe("parsePullRequestLink", () => {
         ?.commitOid,
     ).toBe(oid);
   });
+  it.each(["discussion_r123", "issuecomment-456", "pullrequestreview-789"])(
+    "preserves a GitHub comment target %s",
+    (anchor) => {
+      expect(parsePullRequestLink(`https://github.com/acme/repo/pull/42#${anchor}`)).toMatchObject({
+        commentAnchor: `#${anchor}`,
+      });
+    },
+  );
+  it.each(["discussion_r", "discussion_r0", "discussion_r123extra", "files"])(
+    "ignores an invalid comment anchor %s",
+    (anchor) => {
+      expect(parsePullRequestLink(`https://github.com/acme/repo/pull/42#${anchor}`)).toMatchObject({
+        commentAnchor: null,
+      });
+    },
+  );
   it.each(["commits", "changes"])("selects the full commit from a GitHub %s URL", (route) => {
     const url = `https://github.com/acme/repo/pull/42/${route}/${oid.toUpperCase()}?diff=split#file`;
     expect(parsePullRequestLink(url)).toEqual({
       ...parseChangeRequestUrl(url),
       commitOid: oid,
+      commentAnchor: null,
     });
     expect(
       parsePullRequestLink(`https://github.company.test/acme/repo/pull/42/${route}/${oid}/`)
@@ -36,7 +53,11 @@ describe("parsePullRequestLink", () => {
     `/changes/%61${oid.slice(1)}`,
   ])("keeps ordinary PR behavior for the suffix %s", (suffix) => {
     const url = `https://github.com/acme/repo/pull/42${suffix}`;
-    expect(parsePullRequestLink(url)).toEqual({ ...parseChangeRequestUrl(url), commitOid: null });
+    expect(parsePullRequestLink(url)).toEqual({
+      ...parseChangeRequestUrl(url),
+      commitOid: null,
+      commentAnchor: null,
+    });
   });
 
   it.each([
@@ -53,7 +74,11 @@ describe("parsePullRequestLink", () => {
     `https://forge.example/acme/repo/pulls/42/commits/${oid}`,
     `https://bitbucket.org/acme/repo/pull-requests/42/commits/${oid}`,
   ])("preserves other hosts' PR identity for %s", (url) => {
-    expect(parsePullRequestLink(url)).toEqual({ ...parseChangeRequestUrl(url), commitOid: null });
+    expect(parsePullRequestLink(url)).toEqual({
+      ...parseChangeRequestUrl(url),
+      commitOid: null,
+      commentAnchor: null,
+    });
   });
 });
 

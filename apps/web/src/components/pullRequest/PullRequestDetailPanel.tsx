@@ -1,3 +1,4 @@
+import type { PullRequestCommentRequest } from "~/lib/pullRequestCommentLink";
 import { projectChangeRequestUrl } from "@t3tools/client-runtime/change-request-links";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { changeRequestReferenceAutolinker } from "@t3tools/client-runtime/pull-request-markdown";
@@ -281,6 +282,8 @@ export function PullRequestDetailPanel({
   onTabChange,
   commitRequest,
   onCommitRequestHandled,
+  commentRequest,
+  onCommentRequestHandled,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -296,6 +299,8 @@ export function PullRequestDetailPanel({
   composerDraftTarget?: ScopedThreadRef | DraftId;
   onBack?: (() => void) | undefined;
   onGuideShown?: (() => void) | undefined;
+  commentRequest?: PullRequestCommentRequest | undefined;
+  onCommentRequestHandled?: ((requestId: string) => void) | undefined;
   commitRequest?: PullRequestCommitRequest | undefined;
   onCommitRequestHandled?: ((requestId: string) => void) | undefined;
   initialTab?: PullRequestDetailTab;
@@ -463,6 +468,11 @@ export function PullRequestDetailPanel({
     coreDetail,
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
+  const [appliedCommentRequestId, setAppliedCommentRequestId] = useState<string | null>(null);
+  if (commentRequest && commentRequest.id !== appliedCommentRequestId) {
+    setAppliedCommentRequestId(commentRequest.id);
+    setTab("timeline");
+  }
   const [appliedCommitRequestId, setAppliedCommitRequestId] = useState<string | null>(null);
   const commitRequestReady = detail !== null && activity !== null;
   if (commitRequestReady && commitRequest && commitRequest.id !== appliedCommitRequestId) {
@@ -1809,6 +1819,10 @@ export function PullRequestDetailPanel({
                   />
                 ) : (
                   <PullRequestTimelineTab
+                    commentRequest={
+                      shortcutsEnabled && tab === "timeline" ? commentRequest : undefined
+                    }
+                    onCommentRequestHandled={onCommentRequestHandled}
                     scrollerRef={scrollerRefs.timeline}
                     detail={detail}
                     environmentId={environmentId}

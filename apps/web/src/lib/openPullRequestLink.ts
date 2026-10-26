@@ -19,22 +19,30 @@ import { environmentServerConfigsAtom, serverEnvironment } from "../state/server
 import { usePrimaryEnvironmentId } from "../state/environments";
 
 import { randomUUID } from "./utils";
+import { pullRequestCommentAnchor } from "./pullRequestCommentLink";
 import {
   sourceControlClients,
   type ChangeRequestLink,
 } from "@t3tools/client-runtime/source-control-clients";
 
-export function parsePullRequestLink(
-  targetUrl: string,
-): (ChangeRequestLink & { readonly commitOid: string | null }) | null {
-  const link = sourceControlClients.parseChangeRequestUrl(targetUrl)?.link;
-  if (link === undefined) return null;
+export function parsePullRequestLink(targetUrl: string):
+  | (ChangeRequestLink & {
+      readonly commitOid: string | null;
+      readonly commentAnchor: string | null;
+    })
+  | null {
+  const parsed = sourceControlClients.parseChangeRequestUrl(targetUrl);
+  if (parsed === null || parsed === undefined) return null;
+  const { link } = parsed;
+  const github = parsed.definition.kind === "github";
   const match = /^\/[^/]+\/[^/]+\/pull\/\d+\/(?:commits|changes)\/([a-fA-F0-9]{40})\/?$/u.exec(
-    sourceControlClients.parseChangeRequestUrl(targetUrl)?.definition.kind === "github"
-      ? new URL(targetUrl).pathname
-      : "",
+    github ? new URL(targetUrl).pathname : "",
   );
-  return { ...link, commitOid: match?.[1]?.toLowerCase() ?? null };
+  return {
+    ...link,
+    commitOid: match?.[1]?.toLowerCase() ?? null,
+    commentAnchor: github ? pullRequestCommentAnchor(targetUrl) : null,
+  };
 }
 
 export function usePullRequestPreviewTarget(environmentId: EnvironmentId | null, url: string) {
@@ -87,7 +95,9 @@ export function useOpenChangeRequestLink(
       lendHostProject: resolvedPanelRef !== undefined,
     });
     if (target === null) return false;
-    const commitOid = parsePullRequestLink(targetUrl)?.commitOid ?? null;
+    const parsed = parsePullRequestLink(targetUrl);
+    const commitOid = parsed?.commitOid ?? null;
+    const commentAnchor = parsed?.commentAnchor ?? null;
     const { project, repository, number, host } = target;
     event.preventDefault();
     event.stopPropagation();
@@ -98,7 +108,7 @@ export function useOpenChangeRequestLink(
       selectedProjectId: project.id,
       selectedEnvironmentId: project.environmentId,
     };
-    if (resolvedPanelRef || commitOid !== null) {
+    if (resolvedPanelRef || commitOid !== null || commentAnchor !== null) {
       const destinationPanelRef = resolvedPanelRef ?? PULL_REQUESTS_PANEL_REF;
       useRightPanelStore.getState().openPullRequest(destinationPanelRef, {
         // The standalone PR panel has a synthetic ref; each tab keeps its real environment.
@@ -110,7 +120,13 @@ export function useOpenChangeRequestLink(
         repository,
         url: targetUrl,
         number,
-        ...(commitOid === null
+        ...(commentAnchor === null
+          ? {}
+          : {
+              detailTab: "timeline",
+              commentRequest: { id: randomUUID(), anchor: commentAnchor },
+            }),
+        ...(commentAnchor !== null || commitOid === null
           ? {}
           : { detailTab: "code", commitRequest: { id: randomUUID(), oid: commitOid } }),
       });
