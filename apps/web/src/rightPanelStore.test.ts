@@ -1313,6 +1313,35 @@ describe("rightPanelStore", () => {
     });
   });
 
+  it("closes the panel when session reconciliation removes the last browser before its close action", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "tab-a");
+
+    store.reconcileBrowserSurfaces(refA, []);
+    store.closeSurface(refA, "browser:tab-a");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({ isOpen: false, activeSurfaceId: null, surfaces: [] });
+  });
+
+  it("keeps the panel open when another tab remains after a browser session closes", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.openBrowser(refA, "tab-a");
+
+    store.reconcileBrowserSurfaces(refA, []);
+    store.closeSurface(refA, "browser:tab-a");
+
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA),
+    ).toMatchObject({
+      isOpen: true,
+      activeSurfaceId: "files",
+      surfaces: [{ id: "files", kind: "files" }],
+    });
+  });
+
   it("does not replace a stale surface with a hidden tab, but preserves explicit opens", () => {
     const store = useRightPanelStore.getState();
     store.openBrowser(refA, "stale-tab");

@@ -12,7 +12,7 @@ import {
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
 } from "../../previewStateStore";
-import { useRightPanelStore } from "../../rightPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../../rightPanelStore";
 import {
   followPreviewSessions,
   revealServerTabs,
@@ -94,9 +94,8 @@ describe("followPreviewSessions", () => {
     sessions: Object.fromEntries(sessions.map((entry) => [entry.tabId, entry])),
   });
   const browserTabs = () =>
-    useRightPanelStore
-      .getState()
-      .byThreadKey[threadKey]?.surfaces.filter((surface) => surface.kind === "preview")
+    selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref)
+      .surfaces.filter((surface) => surface.kind === "preview")
       .map((surface) => surface.id);
 
   it("adds visible sessions as tabs and drops tabs whose session ended", () => {

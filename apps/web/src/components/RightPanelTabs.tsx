@@ -35,6 +35,7 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
@@ -832,6 +833,9 @@ function RightPanelTab(
   const content = (
     <>
       <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
+        <X className="size-3" />
+      </PanelTabCloseButton>
+      <span className="relative flex size-3 shrink-0 items-center justify-center">
         <SurfaceIcon
           surface={surface}
           previewUrl={props.previewUrl}
@@ -846,7 +850,7 @@ function RightPanelTab(
             aria-hidden
           />
         ) : null}
-      </PanelTabCloseButton>
+      </span>
       {audio === "none" || !audioRuntimeTabId ? null : (
         <Tooltip>
           <TooltipTrigger

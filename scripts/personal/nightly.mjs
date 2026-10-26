@@ -82,6 +82,7 @@ async function requiredTests() {
     "apps/web/src/components/pullRequest/pullRequestFilesViewed.logic.test.ts",
     "apps/web/src/lib/openPullRequestLink.test.ts",
     "apps/web/src/rightPanelStore.test.ts",
+    "apps/web/src/components/preview/agentOpenedPreviews.test.ts",
     "apps/web/src/versionSkew.test.ts",
     "apps/web/src/components/sidebar/updateEverything.logic.test.ts",
     "scripts/build-desktop-artifact.test.ts",
