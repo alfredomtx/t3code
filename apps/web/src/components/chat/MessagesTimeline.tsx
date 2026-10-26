@@ -111,7 +111,11 @@ import {
   McpAppTimelineRow,
 } from "./TimelineAssistantRows";
 import { V2EventTimelineRow } from "./TimelineV2EventRow";
-import { startTimelinePositionRestore } from "./useTimelinePositionRestore";
+import {
+  measuredEndOffset,
+  settleListScroll,
+  startTimelinePositionRestore,
+} from "./useTimelinePositionRestore";
 import {
   attachTimelineViewport,
   nextListOpening,
@@ -747,7 +751,32 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
+  const releaseBootstrapScrollRef = useRef<(() => void) | null>(null);
+  const bootstrappedScrollNodes = useRef(new WeakSet<HTMLElement>());
+  const followsBootstrapEnd = useStableCallback(
+    (scrollNode: HTMLElement) =>
+      liveFollowEnabled &&
+      anchorMessageId === null &&
+      citationRequest === null &&
+      !findOpen &&
+      listRef.current?.getScrollableNode() === scrollNode,
+  );
   const handleListLoad = () => {
+    const list = listRef.current;
+    const scrollNode = list?.getScrollableNode();
+    const finishBootstrap = () => {
+      if (scrollNode) bootstrappedScrollNodes.current.add(scrollNode);
+      if (listRef.current?.getScrollableNode() !== scrollNode) return;
+      releaseBootstrapScrollRef.current?.();
+      releaseBootstrapScrollRef.current = null;
+    };
+    if (list && scrollNode && followsBootstrapEnd(scrollNode)) {
+      void settleListScroll(
+        list,
+        measuredEndOffset,
+        () => !scrollNode.isConnected || !followsBootstrapEnd(scrollNode),
+      ).then(finishBootstrap);
+    } else finishBootstrap();
     onCitationListLoad();
     setFindListReady(true);
   };
@@ -1109,6 +1138,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     registerTimeline?.(scrollNode);
     const viewport = scrollNode ? attachTimelineViewport(scrollNode) : null;
     viewportRef.current = viewport;
+    // Initial list corrections remain programmatic until the measured end settles.
+    const releaseBootstrapScroll =
+      scrollNode && !bootstrappedScrollNodes.current.has(scrollNode)
+        ? viewport?.holdProgrammaticScroll()
+        : undefined;
+    releaseBootstrapScrollRef.current = releaseBootstrapScroll ?? null;
     const detachViewport = viewport ? onViewportAttach?.(viewport) : undefined;
     const stopRememberingRelease = viewport?.onFollowReleased(rememberReleasedPosition);
     let contentSizeFrame: number | null = null;
@@ -1133,6 +1168,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scheduleContentSizeChanged();
     return () => {
       stopListeningToContentSize?.();
+      releaseBootstrapScroll?.();
+      if (releaseBootstrapScrollRef.current === releaseBootstrapScroll)
+        releaseBootstrapScrollRef.current = null;
       stopRememberingRelease?.();
       onContentOverflowChange?.(false);
       if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);

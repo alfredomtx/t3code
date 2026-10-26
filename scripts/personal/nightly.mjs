@@ -64,6 +64,7 @@ const browserTests = [
   "apps/web/src/shortcutCoach.browser.test.tsx",
   "apps/web/src/components/ReopenClosedViewShortcut.browser.test.tsx",
   "apps/web/src/components/pullRequest/PullRequestTimelineTab.browser.test.tsx",
+  "apps/web/src/components/guest/GuestPage.browser.test.tsx",
   "apps/web/src/components/RelativeTime.browser.test.tsx",
   "apps/web/src/components/chat/useChatShortcuts.browser.test.tsx",
   "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
