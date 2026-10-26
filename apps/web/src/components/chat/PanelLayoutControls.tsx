@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import { PanelBottomIcon, PanelRightIcon, SquareMenuIcon } from "lucide-react";
 import { Maximize2, Minimize2 } from "lucide";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -49,6 +50,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleThreadPanel,
   onToggleRightPanel,
 }: PanelLayoutControlsProps) {
+  const coach = useShortcutCoach({ terminalOpen });
   const threadPanelToggle = (
     <Toggle
       className="relative shrink-0 [-webkit-app-region:no-drag]"
@@ -64,7 +66,14 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
     <Tooltip>
       <TooltipTrigger
         render={trigger}
-        {...(threadPanelPresentation === "popover" ? {} : { onClick: onToggleThreadPanel })}
+        {...(threadPanelPresentation === "popover"
+          ? {}
+          : {
+              onClick: (event: React.MouseEvent) => {
+                onToggleThreadPanel();
+                coach.notify("threadPanel.toggle", event);
+              },
+            })}
       />
       <TooltipPopup side="bottom">
         Toggle thread details
@@ -76,6 +85,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   return (
     <div
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
+      onPointerDownCapture={coach.capture}
       data-panel-layout-controls
     >
       {showThreadPanelControl
@@ -91,7 +101,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={terminalOpen}
-              onPressedChange={onToggleTerminal}
+              onClick={(event) => {
+                onToggleTerminal();
+                coach.notify("terminal.toggle", event);
+              }}
               aria-label="Toggle terminal drawer"
               variant="ghost"
               size="sm"
@@ -113,7 +126,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
             <Toggle
               className="shrink-0 [-webkit-app-region:no-drag]"
               pressed={rightPanelOpen}
-              onPressedChange={onToggleRightPanel}
+              onClick={(event) => {
+                onToggleRightPanel();
+                coach.notify("rightPanel.toggle", event);
+              }}
               aria-label="Toggle right panel"
               data-right-panel-toggle
               variant="ghost"
@@ -141,6 +157,7 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
+  const coach = useShortcutCoach();
   const label = maximized ? "Restore panel size" : "Maximize panel";
   return (
     <Tooltip>
@@ -149,7 +166,11 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           <Toggle
             className="shrink-0 [-webkit-app-region:no-drag]"
             pressed={maximized}
-            onPressedChange={onToggle}
+            onPointerDownCapture={coach.capture}
+            onClick={(event) => {
+              onToggle();
+              coach.notify("rightPanel.toggleMaximized", event);
+            }}
             aria-label={label}
             variant="ghost"
             size="sm"

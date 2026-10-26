@@ -1,5 +1,8 @@
 import type { ResolvedKeybindingsConfig, ScopedThreadRef } from "@t3tools/contracts";
-import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
+import {
+  compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
+} from "@t3tools/shared/keybindings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -262,4 +265,23 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+});
+
+it("publishes effective custom preview shortcuts through the single guest writer and clears them on unmount", async () => {
+  setup();
+  state.setShortcuts.mockClear();
+  state.keybindings = compileResolvedKeybindingsConfig([
+    { command: "preview.refresh", key: "ctrl+shift+r", when: "previewFocus" },
+    { command: "preview.focusUrl", key: "ctrl+l", when: "!previewFocus" },
+    { command: "preview.zoomIn", key: "ctrl+shift+r", when: "previewFocus && rightPanelOpen" },
+  ]);
+  await using view = await renderShortcut();
+  expect(state.setShortcuts).toHaveBeenLastCalledWith([
+    expect.objectContaining({
+      command: "preview.zoomIn",
+      shortcut: expect.objectContaining({ key: "r", ctrlKey: true, shiftKey: true }),
+    }),
+  ]);
+  await view[Symbol.asyncDispose]();
+  expect(state.setShortcuts).toHaveBeenLastCalledWith([]);
 });

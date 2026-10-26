@@ -453,3 +453,17 @@ export function keybindingFromKeyboardEvent(
   parts.push(keyToken);
   return parts.join("+");
 }
+
+export function coachSaveScopeMatches(
+  source: string | undefined,
+  scope: import("./settingsScope").ResolvedSettingsScope,
+  targets: readonly string[],
+): boolean {
+  return (
+    source !== undefined &&
+    scope.kind === "environment" &&
+    scope.environmentId === source &&
+    targets.length === 1 &&
+    targets[0] === source
+  );
+}

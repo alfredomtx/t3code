@@ -1,3 +1,4 @@
+import { PREVIEW_COMMANDS } from "./preview/previewActionBus";
 import { useAtomValue } from "@effect/atom-react";
 import {
   scopeProjectRef,
@@ -47,6 +48,8 @@ const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.new",
+  "rightPanel.close",
 ] as const;
 
 const isGlobalPullRequests = (ref: ScopedThreadRef) =>
@@ -185,6 +188,7 @@ export function ReopenClosedViewShortcut() {
       context: {
         previewFocus: true,
         previewOpen: true,
+        rightPanelOpen: true,
         terminalFocus: false,
         terminalOpen,
         editableFocus: false,
@@ -197,6 +201,7 @@ export function ReopenClosedViewShortcut() {
     const commands = [
       ...(hasHistory ? (["view.reopenClosed"] as const) : []),
       ...PREVIEW_FORWARDED_LAYOUT_COMMANDS,
+      ...PREVIEW_COMMANDS,
     ];
     void preview
       .setForwardedShortcuts(

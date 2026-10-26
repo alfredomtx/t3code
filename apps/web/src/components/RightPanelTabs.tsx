@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useProjects, useServerConfigs, useThreadShells } from "~/state/entities";
@@ -830,9 +831,17 @@ function RightPanelTab(
     id: surface.id,
     disabled: props.dragDisabled,
   });
+  const coach = useShortcutCoach();
   const content = (
     <>
-      <PanelTabCloseButton label={`Close ${title}`} onClick={() => onClose(surface)}>
+      <PanelTabCloseButton
+        label={`Close ${title}`}
+        onPointerDownCapture={coach.capture}
+        onClick={(event) => {
+          onClose(surface);
+          if (props.active) coach.notify("rightPanel.close", event);
+        }}
+      >
         <X className="size-3" />
       </PanelTabCloseButton>
       <span className="relative flex size-3 shrink-0 items-center justify-center">
@@ -948,6 +957,7 @@ function RightPanelTab(
 }
 
 export function RightPanelTabs(props: RightPanelTabsProps) {
+  const coach = useShortcutCoach(props.getShortcutContext);
   const ownsDesktopTitleBar = isElectron && props.mode === "inline";
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
@@ -963,6 +973,23 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
+  const openNewSurfaceLauncher = useEffectEvent(() => {
+    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS))
+      return false;
+    addSurfaceTriggerRef.current?.focus();
+    setAddSurfaceMenuOpen(true);
+    return true;
+  });
+  const onForwardedPanelAction = useEffectEvent((action: string) => {
+    if (action === "rightPanel.new") openNewSurfaceLauncher();
+    else if (
+      action === "rightPanel.close" &&
+      !document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)
+    ) {
+      const active = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+      if (active) props.onCloseSurface(active);
+    }
+  });
   const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented || event.isComposing) return;
     if (
@@ -975,14 +1002,17 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {
-      addSurfaceTriggerRef.current?.focus();
-      setAddSurfaceMenuOpen(true);
+      openNewSurfaceLauncher();
     }
   });
   useEffect(() => {
     if (props.open === false) return;
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
-    return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+    const unsubscribe = window.desktopBridge?.onMenuAction(onForwardedPanelAction);
+    return () => {
+      document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+      unsubscribe?.();
+    };
   }, [props.open]);
 
   const updateTabScrollState = () => {
@@ -1305,6 +1335,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}
+                  onPointerDownCapture={coach.capture}
+                  onClick={(event) => coach.notify("rightPanel.new", event)}
                   render={
                     <Button
                       aria-label="Add panel surface"

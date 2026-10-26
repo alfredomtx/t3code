@@ -1,5 +1,5 @@
 import { assert, describe, expect, it } from "vite-plus/test";
-import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import { EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import {
   compileResolvedKeybindingsConfig,
   parseKeybindingShortcut,
@@ -8,6 +8,7 @@ import {
 import { resolveShortcutCommand } from "../../keybindings";
 
 import {
+  coachSaveScopeMatches,
   buildKeybindingRows,
   keybindingConflictLabels,
   keybindingFromKeyboardEvent,
@@ -265,5 +266,25 @@ describe("KeybindingsSettings.logic", () => {
         when: "",
       }),
     ).toEqual(["Chat: New Local"]);
+  });
+});
+
+describe("coach save scope", () => {
+  it("requires the original single environment and rejects fallback, disconnection and changed selection", () => {
+    const source = EnvironmentId.make("source");
+    const other = EnvironmentId.make("other");
+    const scope = {
+      kind: "environment",
+      environmentId: source,
+      label: "Source",
+      members: [],
+      environmentIds: [source],
+    } as const;
+    expect(coachSaveScopeMatches(source, scope, [source])).toBe(true);
+    expect(coachSaveScopeMatches(undefined, scope, [source])).toBe(false);
+    expect(coachSaveScopeMatches(source, scope, [])).toBe(false);
+    expect(coachSaveScopeMatches(source, scope, [source, other])).toBe(false);
+    expect(coachSaveScopeMatches(source, { ...scope, environmentId: other }, [other])).toBe(false);
+    expect(coachSaveScopeMatches(source, { ...scope, kind: "all" }, [source])).toBe(false);
   });
 });

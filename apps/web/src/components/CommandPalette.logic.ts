@@ -181,7 +181,7 @@ export interface CommandPaletteItem {
 export interface CommandPaletteActionItem extends CommandPaletteItem {
   readonly kind: "action";
   readonly keepOpen?: boolean;
-  readonly run: () => Promise<void>;
+  readonly run: () => Promise<void | boolean>;
 }
 
 export interface CommandPaletteSubmenuItem extends CommandPaletteItem {

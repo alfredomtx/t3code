@@ -60,6 +60,9 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/settings/KeybindingsSettings.browser.test.tsx",
+  "apps/web/src/shortcutCoach.browser.test.tsx",
+  "apps/web/src/components/ReopenClosedViewShortcut.browser.test.tsx",
   "apps/web/src/components/RelativeTime.browser.test.tsx",
   "apps/web/src/components/chat/useChatShortcuts.browser.test.tsx",
   "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
@@ -74,6 +77,9 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/web/src/keybindings.test.ts",
+    "apps/web/src/components/settings/KeybindingsSettings.logic.test.ts",
+    "apps/desktop/src/preview/Manager.test.ts",
     "apps/web/src/timestampFormat.test.ts",
     "apps/web/src/remoteOpen.test.ts",
     "apps/web/src/components/chat/OpenInPicker.logic.test.ts",

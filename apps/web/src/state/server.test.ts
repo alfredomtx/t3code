@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { resolveShortcutCommand } from "../keybindings";
 import {
   createShortcutKeybindingsAtom,
+  createShortcutKeybindingsStateAtom,
   serverAvailableEditorsAtom,
   serverEnvironment,
 } from "./server";
@@ -154,4 +155,30 @@ describe("selected environment editors", () => {
       );
     },
   );
+});
+
+it("keeps shortcut source provenance with its primary or connected fallback configuration", () => {
+  const primary = Atom.make<EnvironmentId | null>(null);
+  const primaryConfig = Atom.make<ServerConfig | null>(null);
+  const environments = Atom.make<ReadonlyMap<EnvironmentId, Environment>>(
+    new Map([
+      [A, environment("offline", config(STALE))],
+      [B, environment("connected", config(SWAPPED))],
+    ]),
+  );
+  const atom = createShortcutKeybindingsStateAtom({
+    primaryEnvironmentIdAtom: primary,
+    primaryConfigAtom: primaryConfig,
+    environmentsAtom: environments,
+  });
+  const registry = AtomRegistry.make();
+  registries.push(registry);
+  registry.subscribe(atom, () => {});
+  expect(registry.get(atom).source).toBe(B);
+  expect(registry.get(atom).keybindings?.[0]?.command).toBe("chat.newLocal");
+  registry.set(primary, A);
+  expect(registry.get(atom)).toEqual({ source: null, keybindings: null });
+  registry.set(primaryConfig, config(STALE));
+  expect(registry.get(atom).source).toBe(A);
+  expect(registry.get(atom).keybindings?.[0]?.command).toBe("chat.newWithoutProject");
 });

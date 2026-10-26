@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
@@ -30,9 +31,9 @@ const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
 export interface PreviewMoreMenuActions {
   readonly hardReload: () => void;
   readonly setColorScheme: (colorScheme: DesktopPreviewColorScheme) => void;
-  readonly zoomIn: () => void;
-  readonly zoomOut: () => void;
-  readonly resetZoom: () => void;
+  readonly zoomIn: () => void | Promise<boolean>;
+  readonly zoomOut: () => void | Promise<boolean>;
+  readonly resetZoom: () => void | Promise<boolean>;
   readonly clearCookies: () => void;
   readonly clearCache: () => void;
   readonly openDevTools?: () => void;
@@ -51,11 +52,12 @@ interface Props {
   move?: { readonly label: string; readonly onMove: () => void };
 }
 
-const MenuTriggerButton = () => (
+const MenuTriggerButton = ({ capture }: { capture: React.PointerEventHandler }) => (
   <Tooltip>
     <TooltipTrigger
       render={
         <MenuTrigger
+          onPointerDownCapture={capture}
           render={<Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />}
         />
       }
@@ -77,11 +79,12 @@ export function PreviewMoreMenu({
   profileName,
   move,
 }: Props) {
+  const coach = useShortcutCoach({ previewOpen: true });
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
   const disabled = !enabled;
   return (
     <Menu>
-      <MenuTriggerButton />
+      <MenuTriggerButton capture={coach.capture} />
       <MenuPopup align="end" sideOffset={6}>
         <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
@@ -130,7 +133,14 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={actions.zoomOut}
+              onClick={(event) => {
+                const remind = coach.prepare("preview.zoomOut", event);
+                void Promise.resolve(actions.zoomOut())
+                  .then((accepted) => {
+                    if (accepted) remind();
+                  })
+                  .catch(() => undefined);
+              }}
               aria-label="Zoom out"
               disabled={disabled}
             >
@@ -143,7 +153,14 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={actions.zoomIn}
+              onClick={(event) => {
+                const remind = coach.prepare("preview.zoomIn", event);
+                void Promise.resolve(actions.zoomIn())
+                  .then((accepted) => {
+                    if (accepted) remind();
+                  })
+                  .catch(() => undefined);
+              }}
               aria-label="Zoom in"
               disabled={disabled}
             >
@@ -153,7 +170,14 @@ export function PreviewMoreMenu({
               variant="ghost"
               size="icon-xs"
               type="button"
-              onClick={actions.resetZoom}
+              onClick={(event) => {
+                const remind = coach.prepare("preview.resetZoom", event);
+                void Promise.resolve(actions.resetZoom())
+                  .then((accepted) => {
+                    if (accepted) remind();
+                  })
+                  .catch(() => undefined);
+              }}
               aria-label="Reset zoom"
               disabled={disabled}
             >

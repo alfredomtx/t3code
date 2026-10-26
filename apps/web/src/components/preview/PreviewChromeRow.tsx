@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   ArrowLeft,
@@ -31,7 +32,7 @@ interface Props {
   focusUrlNonce?: number | undefined;
   onBack: () => void;
   onForward: () => void;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<boolean>;
   onSubmit: (url: string) => void;
   onOpenInBrowser?: (() => void) | undefined;
   onCapture?: ((record: boolean) => void) | undefined;
@@ -76,6 +77,7 @@ export function PreviewChromeRow({
   trailingActions,
   leadingActions,
 }: Props) {
+  const coach = useShortcutCoach({ previewOpen: true });
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [draft, setDraft] = useState(url);
   const [inputFocused, setInputFocused] = useState(false);
@@ -143,7 +145,16 @@ export function PreviewChromeRow({
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  onClick={refreshDisabled ? NOOP : onRefresh}
+                  onPointerDownCapture={coach.capture}
+                  onClick={(event) => {
+                    if (refreshDisabled) return;
+                    const remind = coach.prepare("preview.refresh", event);
+                    void Promise.resolve(onRefresh())
+                      .then((accepted) => {
+                        if (accepted) remind();
+                      })
+                      .catch(() => undefined);
+                  }}
                   disabled={refreshDisabled}
                   aria-label={loading ? "Stop" : "Refresh"}
                   type="button"
@@ -164,6 +175,10 @@ export function PreviewChromeRow({
               render={
                 <InputGroupInput
                   ref={inputRef}
+                  onPointerDownCapture={coach.capture}
+                  onClick={(event) => {
+                    if (!inputDisabled) coach.notify("preview.focusUrl", event);
+                  }}
                   value={inputFocused ? draft : url}
                   onChange={(event) => setDraft(event.target.value)}
                   onFocus={() => {

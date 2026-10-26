@@ -302,13 +302,19 @@ export function PreviewView({
     } catch {}
   };
 
-  const handleRefresh = () => {
-    if (isServerTab) serverSurfaceRef.current?.reload();
-    else if (previewBridge && runtimeTabId) void previewBridge.refresh(runtimeTabId);
+  const handleRefresh = async () => {
+    if (isServerTab) {
+      if (!serverSurfaceRef.current) return false;
+      serverSurfaceRef.current.reload();
+      return true;
+    }
+    if (!previewBridge || !runtimeTabId) return false;
+    await previewBridge.refresh(runtimeTabId);
+    return true;
   };
 
   const adjustServerTab = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
-    if (!tabId) return;
+    if (!tabId) return false;
     const result = await adjust({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, tabId, ...change },
@@ -323,10 +329,11 @@ export function PreviewView({
       return;
     }
     updatePreviewServerSnapshot(threadRef, result.value);
+    return true;
   };
 
   const serverZoomFactor = snapshot?.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
-  const stepServerZoom = (direction: -1 | 0 | 1) => {
+  const stepServerZoom = async (direction: -1 | 0 | 1) => {
     const index = PREVIEW_ZOOM_LEVELS.indexOf(serverZoomFactor);
     const next =
       direction === 0
@@ -337,22 +344,29 @@ export function PreviewView({
               PREVIEW_ZOOM_LEVELS.length - 1,
             )
           ]!;
-    if (next !== serverZoomFactor) void adjustServerTab({ zoomFactor: next });
+    if (next === serverZoomFactor) return false;
+    return (await adjustServerTab({ zoomFactor: next })) === true;
   };
 
-  const handleZoomIn = () => {
-    if (serverOwnsRendering) stepServerZoom(1);
-    else if (previewBridge && runtimeTabId) void previewBridge.zoomIn(runtimeTabId);
+  const handleZoomIn = async () => {
+    if (serverOwnsRendering) return stepServerZoom(1);
+    if (!previewBridge || !runtimeTabId) return false;
+    await previewBridge.zoomIn(runtimeTabId);
+    return true;
   };
 
-  const handleZoomOut = () => {
-    if (serverOwnsRendering) stepServerZoom(-1);
-    else if (previewBridge && runtimeTabId) void previewBridge.zoomOut(runtimeTabId);
+  const handleZoomOut = async () => {
+    if (serverOwnsRendering) return stepServerZoom(-1);
+    if (!previewBridge || !runtimeTabId) return false;
+    await previewBridge.zoomOut(runtimeTabId);
+    return true;
   };
 
-  const handleResetZoom = () => {
-    if (serverOwnsRendering) stepServerZoom(0);
-    else if (previewBridge && runtimeTabId) void previewBridge.resetZoom(runtimeTabId);
+  const handleResetZoom = async () => {
+    if (serverOwnsRendering) return stepServerZoom(0);
+    if (!previewBridge || !runtimeTabId) return false;
+    await previewBridge.resetZoom(runtimeTabId);
+    return true;
   };
 
   const handleViewportChange = async (nextViewport: PreviewViewportSetting) => {

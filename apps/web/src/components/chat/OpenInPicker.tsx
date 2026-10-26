@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
   AuthOrchestrationOperateScope,
@@ -225,6 +226,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   displayMode?: "toolbar" | "panel";
   revealFileManager?: boolean;
 }) {
+  const coach = useShortcutCoach();
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -367,7 +369,13 @@ export const OpenInPicker = memo(function OpenInPicker({
             density={presentation === "menu" ? "touch" : "default"}
 
             disabled={!openInCwd || !canOpenEditor}
-            onClick={() => openInEditor(preferredEditor)}
+            onPointerDownCapture={coach.capture}
+            onClick={(event) => {
+              const remind = coach.prepare("editor.openFavorite", event);
+              void openInEditor(preferredEditor).then((opened) => {
+                if (opened) remind();
+              });
+            }}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
             <MenuItemLabel>Open in {primaryOption.label}</MenuItemLabel>
@@ -402,7 +410,13 @@ export const OpenInPicker = memo(function OpenInPicker({
         part="primary"
         panel={isPanel}
         disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-        onClick={() => openInEditor(preferredEditor)}
+        onPointerDownCapture={coach.capture}
+        onClick={(event) => {
+          const remind = coach.prepare("editor.openFavorite", event);
+          void openInEditor(preferredEditor).then((opened) => {
+            if (opened) remind();
+          });
+        }}
       >
         {primaryOption?.Icon ? (
           <primaryOption.Icon

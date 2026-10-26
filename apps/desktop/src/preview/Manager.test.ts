@@ -592,6 +592,71 @@ describe("PreviewManager", () => {
       ),
   );
 
+  effectIt.effect.each([
+    "preview.toggle",
+    "preview.refresh",
+    "preview.focusUrl",
+    "preview.zoomIn",
+    "preview.zoomOut",
+    "preview.resetZoom",
+  ] as const)(
+    "forwards custom %s only from a focused non-composing guest and protects editing",
+    (command) =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const preview = makeFaviconWebContents();
+          const send = vi.fn();
+          const reload = vi.fn();
+          Object.assign(preview.webContents, {
+            hostWebContents: { isDestroyed: () => false, send },
+            reload,
+          });
+          fromId.mockReturnValue(preview.webContents);
+          yield* manager.createTab("tab_coach");
+          yield* manager.registerWebview("tab_coach", 42);
+          yield* manager.setForwardedShortcuts([
+            { command, shortcut: parseKeybindingShortcut("mod+shift+k")! },
+          ]);
+          const beforeInput = preview.listeners.get("before-input-event")!;
+          const key = {
+            type: "keyDown",
+            key: "K",
+            code: "KeyK",
+            meta: true,
+            control: false,
+            shift: true,
+            alt: false,
+          };
+          const preventDefault = vi.fn();
+          beforeInput({ preventDefault } as never, key as never);
+          expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
+          beforeInput({ preventDefault } as never, { ...key, isAutoRepeat: true } as never);
+          expect(send).toHaveBeenCalledOnce();
+          expect(preventDefault).toHaveBeenCalledTimes(2);
+          beforeInput({ preventDefault } as never, { ...key, isComposing: true } as never);
+          expect(preventDefault).toHaveBeenCalledTimes(2);
+          Object.assign(preview.webContents, { focusedFrame: null });
+          beforeInput({ preventDefault } as never, key as never);
+          expect(preventDefault).toHaveBeenCalledTimes(2);
+          Object.assign(preview.webContents, { focusedFrame: {} });
+          yield* manager.setForwardedShortcuts([
+            { command, shortcut: parseKeybindingShortcut("mod+c")! },
+          ]);
+          beforeInput(
+            { preventDefault } as never,
+            { ...key, key: "c", code: "KeyC", shift: false } as never,
+          );
+          expect(send).toHaveBeenCalledOnce();
+          expect(preventDefault).toHaveBeenCalledTimes(2);
+          beforeInput(
+            { preventDefault } as never,
+            { ...key, key: "r", code: "KeyR", shift: false } as never,
+          );
+          expect(reload).toHaveBeenCalledOnce();
+        }),
+      ),
+  );
+
   effectIt.effect("keeps editing and forwarded shortcuts in whichever tab holds focus", () =>
     withManager((manager) =>
       Effect.gen(function* () {

@@ -2,7 +2,7 @@ import { AuthPreviewOperateScope } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { Outlet, createFileRoute, redirect, useMatches } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { ThreadRouteView } from "../components/ThreadRouteView";
@@ -19,7 +19,10 @@ import { usePrimaryEnvironmentId } from "../state/environments";
 import { useEnvironmentScope } from "../state/session";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
-import { dispatchPreviewAction } from "../components/preview/previewActionBus";
+import {
+  dispatchPreviewAction,
+  previewActionForCommand,
+} from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useScratchProject } from "../hooks/useScratchProject";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -29,7 +32,11 @@ import { isEditableFocused } from "../lib/editableFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
 import { resolveShortcutCommand } from "../keybindings";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
-import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import {
+  selectActiveRightPanel,
+  selectThreadRightPanelState,
+  useRightPanelStore,
+} from "../rightPanelStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -67,6 +74,29 @@ function ChatRouteGlobalShortcuts() {
       ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
       : false,
   );
+  const rightPanelOpen = useRightPanelStore(
+    (state) => selectThreadRightPanelState(state.byThreadKey, routeThreadRef).isOpen,
+  );
+  const runPreviewCommand = useEffectEvent((command: string) => {
+    const action = previewActionForCommand(command);
+    if (action === null) return false;
+    if (isCommandPaletteOpen() || !routeThreadRef) return true;
+    if (action === "toggle-panel" ? !canOperatePreview && !previewOpen : !canOperatePreview)
+      return true;
+    if (!isPreviewAvailableFor(routeThreadRef.environmentId)) {
+      if (action === "toggle-panel")
+        toastManager.add(
+          stackedThreadToast({
+            type: "info",
+            title: "Preview is desktop-only",
+            description: "Open T3 Code in the desktop app to use the in-app preview.",
+          }),
+        );
+      return true;
+    }
+    dispatchPreviewAction(action);
+    return true;
+  });
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
@@ -76,6 +106,7 @@ function ChatRouteGlobalShortcuts() {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          rightPanelOpen,
           editableFocus: isEditableFocused(event.target),
           modelPickerOpen: isModelPickerOpen(),
         },
@@ -130,69 +161,36 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "preview.toggle") {
+      if (command && runPreviewCommand(command)) {
         event.preventDefault();
         event.stopPropagation();
-        if (!routeThreadRef || (!canOperatePreview && !previewOpen)) return;
-        if (!isPreviewAvailableFor(routeThreadRef.environmentId)) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "info",
-              title: "Preview is desktop-only",
-              description: "Open T3 Code in the desktop app to use the in-app preview.",
-            }),
-          );
-          return;
-        }
-        dispatchPreviewAction("toggle-panel");
-        return;
-      }
-
-      if (
-        command === "preview.refresh" ||
-        command === "preview.focusUrl" ||
-        command === "preview.zoomIn" ||
-        command === "preview.zoomOut" ||
-        command === "preview.resetZoom"
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!canOperatePreview) return;
-        const action =
-          command === "preview.refresh"
-            ? "refresh"
-            : command === "preview.focusUrl"
-              ? "focus-url"
-              : command === "preview.zoomIn"
-                ? "zoom-in"
-                : command === "preview.zoomOut"
-                  ? "zoom-out"
-                  : "reset-zoom";
-        dispatchPreviewAction(action);
       }
     };
 
+    const unsubscribeMenu = window.desktopBridge?.onMenuAction((action) => {
+      runPreviewCommand(action);
+    });
     window.addEventListener("keydown", onWindowKeyDown);
     return () => {
       window.removeEventListener("keydown", onWindowKeyDown);
+      unsubscribeMenu?.();
     };
   }, [
     activeDraftThread,
     activeThread,
     clearSelection,
-    canOperatePreview,
     handleNewThread,
     keybindings,
     defaultProjectRef,
     previewOpen,
     primaryEnvironmentId,
     projectGroupCount,
-    routeThreadRef,
     scratchEnvironmentId,
     selectedThreadKeysSize,
     startScratchThread,
     legacySidebarEnabled,
     terminalOpen,
+    rightPanelOpen,
   ]);
 
   return null;

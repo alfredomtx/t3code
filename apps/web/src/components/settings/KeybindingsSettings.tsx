@@ -11,6 +11,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
+import { ShortcutCoachSettings } from "../../shortcutCoach";
 import { useLocation } from "@tanstack/react-router";
 import {
   type KeyboardEvent,
@@ -23,6 +24,7 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
+  type EnvironmentId,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
@@ -51,6 +53,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Toggle } from "../ui/toggle";
 import { toastManager } from "../ui/toast";
 import {
+  coachSaveScopeMatches,
   buildKeybindingRows,
   filterKeybindingRows,
   buildKeybindingCommandOptions,
@@ -711,12 +714,17 @@ function useKeybindingRowEditor({
   row,
   allRows,
   onSave,
+  initialRecording,
 }: {
+  initialRecording?: boolean;
   row: KeybindingRow;
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
 }) {
-  const [draft, setDraft] = useReducer(keybindingRowDraftReducer, row, createKeybindingRowDraft);
+  const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
+    ...createKeybindingRowDraft(row),
+    isRecording: initialRecording ?? false,
+  });
   const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
   const whenDraftExpression = whenAstToExpression(whenDraft);
   const isDirty = keyDraft !== row.key || whenDraftExpression !== row.when;
@@ -766,6 +774,7 @@ function useKeybindingRowEditor({
 type KeybindingRowEditor = ReturnType<typeof useKeybindingRowEditor>;
 
 interface KeybindingRowActions {
+  coachCommand?: KeybindingCommand | undefined;
   allRows: ReadonlyArray<KeybindingRow>;
   variables: ReadonlyArray<WhenVariableOption>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
@@ -985,7 +994,12 @@ function KeybindingHoverRowMenu(props: {
 
 function KeybindingSettingsRow(props: KeybindingRowProps) {
   const { row, isSaving, anchorId, allRows, variables, onSave, onReset, onRemove } = props;
-  const editor = useKeybindingRowEditor({ row, allRows, onSave });
+  const editor = useKeybindingRowEditor({
+    row,
+    allRows,
+    onSave,
+    initialRecording: props.coachCommand === row.command && anchorId !== undefined,
+  });
 
   return (
     <SettingsRow
@@ -1017,11 +1031,13 @@ function KeybindingSettingsRow(props: KeybindingRowProps) {
 function useNewKeybindingDraft({
   allRows,
   onSave,
+  initialCommand,
 }: {
+  initialCommand?: KeybindingCommand | undefined;
   allRows: ReadonlyArray<KeybindingRow>;
   onSave: (input: ServerUpsertKeybindingInput) => void;
 }) {
-  const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">("");
+  const [commandDraft, setCommandDraft] = useState<KeybindingCommand | "">(initialCommand ?? "");
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, {
     keyDraft: "",
     whenDraft: undefined,
@@ -1080,6 +1096,7 @@ function useNewKeybindingDraft({
 type NewKeybindingDraft = ReturnType<typeof useNewKeybindingDraft>;
 
 interface NewKeybindingProps {
+  initialCommand?: KeybindingCommand | undefined;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
   allRows: ReadonlyArray<KeybindingRow>;
   variables: ReadonlyArray<WhenVariableOption>;
@@ -1192,7 +1209,7 @@ function NewKeybindingCancelIcon({
 
 function NewKeybindingSettingsRow(props: NewKeybindingProps) {
   const { commandOptions, allRows, variables, isSaving, onSave, onCancel } = props;
-  const draft = useNewKeybindingDraft({ allRows, onSave });
+  const draft = useNewKeybindingDraft({ allRows, onSave, initialCommand: props.initialCommand });
 
   return (
     <SettingsRow
@@ -1286,14 +1303,25 @@ function useKeybindingCatalog() {
   };
 }
 
-export function KeybindingsSettingsPanel() {
-  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
+export function KeybindingsSettingsPanel({
+  coachCommand,
+  coachSource,
+}: { coachCommand?: KeybindingCommand | undefined; coachSource?: EnvironmentId | undefined } = {}) {
+  const { environment: primaryEnvironment, connectedEnvironments, scope } = useSettingsScope();
+  const coachScopeMatches =
+    coachCommand === undefined ||
+    coachSaveScopeMatches(
+      coachSource,
+      scope,
+      connectedEnvironments.map((environment) => environment.environmentId),
+    );
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
   );
   const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
   const canWriteSettings =
+    coachScopeMatches &&
     connectedEnvironments.length > 0 &&
     connectedEnvironments.every((target) => writableIds.has(target.environmentId));
   const keybindingsConfigPath = primaryEnvironment?.serverConfig?.keybindingsConfigPath ?? null;
@@ -1311,7 +1339,10 @@ export function KeybindingsSettingsPanel() {
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
-  const [isAddingBinding, setIsAddingBinding] = useState(false);
+  const { commandOptions, allRows } = useKeybindingCatalog();
+  const [isAddingBinding, setIsAddingBinding] = useState(
+    coachCommand !== undefined && !allRows.some((row) => row.command === coachCommand),
+  );
   const searchTargetId = useLocation({ select: (location) => location.hash.replace(/^#/, "") });
   const [handledSearchTargetId, setHandledSearchTargetId] = useState(searchTargetId);
 
@@ -1320,7 +1351,6 @@ export function KeybindingsSettingsPanel() {
     if (searchTargetId.startsWith("keybinding-")) setQuery("");
   }
   const whenVariables = buildWhenVariableOptions();
-  const { commandOptions, allRows } = useKeybindingCatalog();
   const rows = filterKeybindingRows(allRows, query);
   const groups = groupKeybindingRows(rows);
   const anchorIds = keybindingAnchorIds(rows);
@@ -1350,6 +1380,7 @@ export function KeybindingsSettingsPanel() {
   const saveKeybinding = (input: ServerUpsertKeybindingInput) => {
     if (
       !primaryEnvironment ||
+      !canWriteSettings ||
       !connectedEnvironments.every((target) =>
         readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
       )
@@ -1388,6 +1419,7 @@ export function KeybindingsSettingsPanel() {
   const removeKeybinding = (row: KeybindingRow) => {
     if (
       !primaryEnvironment ||
+      !canWriteSettings ||
       !connectedEnvironments.every((target) =>
         readEnvironmentScope(target.environmentId, AuthSettingsWriteScope),
       )
@@ -1433,6 +1465,7 @@ export function KeybindingsSettingsPanel() {
   const cancelAdd = () => setIsAddingBinding(false);
 
   const rowActions: KeybindingRowActions = {
+    coachCommand,
     allRows,
     variables: whenVariables,
     onSave: saveKeybinding,
@@ -1442,6 +1475,13 @@ export function KeybindingsSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <ShortcutCoachSettings />
+      {coachCommand ? (
+        <p className="px-4 text-xs text-muted-foreground">
+          Save to:{" "}
+          {coachScopeMatches ? primaryEnvironment?.label : "Original shortcut source unavailable"}
+        </p>
+      ) : null}
       <SettingsSection
         {...searchableSetting("keybindings")}
         headerAction={!isElectron ? <BrowserKeybindingNotice /> : null}
@@ -1488,6 +1528,7 @@ export function KeybindingsSettingsPanel() {
         {isAddingBinding ? (
           <SettingsGroup>
             <NewKeybindingSettingsRow
+              initialCommand={coachCommand}
               commandOptions={commandOptions}
               allRows={allRows}
               variables={whenVariables}

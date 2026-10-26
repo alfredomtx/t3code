@@ -81,6 +81,19 @@ export function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
 }
 
+export function isBrowserEditingShortcut(input: ShortcutEventLike, platform: string): boolean {
+  const isMac = isMacPlatform(platform);
+  const isWindows = /^win/i.test(platform);
+  if (isMac ? !input.metaKey || input.ctrlKey : !input.ctrlKey || input.metaKey) return false;
+  const key = input.key.toLowerCase();
+  if (isMac && input.altKey && input.shiftKey && input.code === "KeyV") return true;
+  if (key === "v" && input.shiftKey) return input.altKey === isMac;
+  if (input.altKey) return false;
+  if (key === "z") return !input.shiftKey || !isWindows;
+  if (input.shiftKey) return false;
+  return key === "a" || key === "c" || key === "v" || key === "x" || (key === "y" && isWindows);
+}
+
 export function normalizeEventKey(key: string): string {
   const normalized = key.toLowerCase();
   if (normalized === "esc") return "escape";

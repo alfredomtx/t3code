@@ -114,24 +114,36 @@ export const primaryServerProvidersAtom = Atom.make(
 ).pipe(Atom.withLabel("web-primary-server-providers"));
 
 /** Without a primary, global shortcuts follow unscoped Settings. */
-export function createShortcutKeybindingsAtom(input: {
+export function createShortcutKeybindingsStateAtom(input: {
   readonly primaryEnvironmentIdAtom: Atom.Atom<EnvironmentId | null>;
   readonly primaryConfigAtom: Atom.Atom<ServerConfig | null>;
   readonly environmentsAtom: Atom.Atom<
     ReadonlyMap<EnvironmentId, Pick<EnvironmentPresentation, "connection" | "serverConfig">>
   >;
 }) {
-  // Selected before merging, so unrelated config updates keep the merged array.
-  const customAtom = Atom.make((get) => {
-    if (get(input.primaryEnvironmentIdAtom) !== null) {
-      // A primary stays authoritative while its config loads.
-      return get(input.primaryConfigAtom)?.keybindings ?? null;
+  return Atom.make((get) => {
+    const primary = get(input.primaryEnvironmentIdAtom);
+    if (primary !== null) {
+      const config = get(input.primaryConfigAtom);
+      return { source: config === null ? null : primary, keybindings: config?.keybindings ?? null };
     }
-    const environments = [...get(input.environmentsAtom).values()];
-    return environments.find(isConnectedWithConfig)?.serverConfig?.keybindings ?? null;
+    const selected = [...get(input.environmentsAtom)].find(([, environment]) =>
+      isConnectedWithConfig(environment),
+    );
+    return {
+      source: selected?.[0] ?? null,
+      keybindings: selected?.[1].serverConfig?.keybindings ?? null,
+    };
   });
+}
+
+export function createShortcutKeybindingsAtom(
+  input: Parameters<typeof createShortcutKeybindingsStateAtom>[0],
+) {
+  const state = createShortcutKeybindingsStateAtom(input);
+  const custom = Atom.make((get) => get(state).keybindings);
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeWithDefaultKeybindings(get(customAtom) ?? []),
+    mergeWithDefaultKeybindings(get(custom) ?? []),
   );
 }
 
@@ -158,11 +170,19 @@ const environmentConnectionsAtom = Atom.make((get) => {
   return environments;
 });
 
-export const primaryServerKeybindingsAtom = createShortcutKeybindingsAtom({
+const primaryShortcutStateAtom = createShortcutKeybindingsStateAtom({
   primaryEnvironmentIdAtom,
   primaryConfigAtom: primaryServerConfigAtom,
   environmentsAtom: environmentConnectionsAtom,
-}).pipe(Atom.withLabel("web-primary-server-keybindings"));
+});
+
+export const primaryServerKeybindingsSourceAtom = Atom.make(
+  (get) => get(primaryShortcutStateAtom).source,
+);
+const primaryCustomKeybindingsAtom = Atom.make((get) => get(primaryShortcutStateAtom).keybindings);
+export const primaryServerKeybindingsAtom = Atom.make((get) =>
+  mergeWithDefaultKeybindings(get(primaryCustomKeybindingsAtom) ?? []),
+).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
 export const serverAvailableEditorsAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make(

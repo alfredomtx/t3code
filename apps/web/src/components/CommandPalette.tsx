@@ -1,3 +1,5 @@
+import { useShortcutCoach } from "~/shortcutCoach";
+import type { MouseEvent } from "react";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -563,15 +565,16 @@ function OpenCommandPaletteDialog(props: {
         });
   const copyActiveThreadReference = async () => {
     const target = activeThreadReferenceCopyTarget;
-    if (target === null) return;
+    if (target === null) return false;
     try {
       const didCopy = await writeTextToClipboard(target.value, target.clipboardTarget);
-      if (!didCopy) return;
+      if (!didCopy) return false;
       toastManager.add({
         type: "success",
         title: target.successTitle,
         description: target.value,
       });
+      return true;
     } catch (error) {
       console.error(error);
       toastManager.add(
@@ -581,6 +584,7 @@ function OpenCommandPaletteDialog(props: {
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
+      return false;
     }
   };
   const threads = useThreadShells();
@@ -2508,7 +2512,12 @@ function OpenCommandPaletteDialog(props: {
     }
   }
 
-  function executeItem(item: CommandPaletteActionItem | CommandPaletteSubmenuItem): void {
+  const coach = useShortcutCoach();
+
+  function executeItem(
+    item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+    event?: MouseEvent,
+  ): void {
     if (item.disabled) {
       return;
     }
@@ -2522,15 +2531,22 @@ function OpenCommandPaletteDialog(props: {
       setOpen(false);
     }
 
-    void item.run().catch((error: unknown) => {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Unable to run command",
-          description: error instanceof Error ? error.message : "An unexpected error occurred.",
-        }),
-      );
-    });
+    const remind =
+      event && item.shortcutCommand ? coach.prepare(item.shortcutCommand, event) : () => {};
+    void item
+      .run()
+      .then((accepted) => {
+        if (accepted !== false) remind();
+      })
+      .catch((error: unknown) => {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to run command",
+            description: error instanceof Error ? error.message : "An unexpected error occurred.",
+          }),
+        );
+      });
   }
 
   const handleOpenProjectFromFileManager = async () => {
@@ -2794,6 +2810,7 @@ function OpenCommandPaletteDialog(props: {
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={isActionsOnly}
         keybindings={keybindings}
+        onPointerDownCapture={coach.capture}
         onExecuteItem={executeItem}
         {...(addProjectCloneFlow?.step === "repository"
           ? {

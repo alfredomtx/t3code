@@ -1,7 +1,13 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { ChevronRightIcon } from "lucide-react";
-import { type ReactNode, type RefObject, useState } from "react";
+import {
+  type ReactNode,
+  type MouseEvent,
+  type PointerEvent,
+  type RefObject,
+  useState,
+} from "react";
 import { cn } from "~/lib/utils";
 import { textDirection } from "~/textDirection";
 import { shortcutLabelForCommand } from "../keybindings";
@@ -30,7 +36,11 @@ interface CommandPaletteResultsProps {
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
   keybindings: ResolvedKeybindingsConfig;
-  onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+  onPointerDownCapture?: ((event: PointerEvent) => void) | undefined;
+  onExecuteItem: (
+    item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+    event?: MouseEvent,
+  ) => void;
 }
 
 function CommandPaletteEmptyState(props: { emptyStateMessage?: string; isActionsOnly: boolean }) {
@@ -65,6 +75,7 @@ export function CommandPaletteResults(props: CommandPaletteResultsProps) {
                   keybindings={props.keybindings}
                   isActive={props.highlightedItemValue === item.value}
                   onExecuteItem={props.onExecuteItem}
+                  onPointerDownCapture={props.onPointerDownCapture}
                 />
               )
             }
@@ -131,6 +142,7 @@ export function CommandPaletteVirtualizedResults(props: CommandPaletteVirtualize
               keybindings={props.keybindings}
               isActive={props.highlightedItemValue === row.item.value}
               onExecuteItem={props.onExecuteItem}
+              onPointerDownCapture={props.onPointerDownCapture}
             />
           )
         }
@@ -225,7 +237,11 @@ function CommandPaletteResultRow(props: {
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem;
   isActive: boolean;
   keybindings: ResolvedKeybindingsConfig;
-  onExecuteItem: (item: CommandPaletteActionItem | CommandPaletteSubmenuItem) => void;
+  onPointerDownCapture?: ((event: PointerEvent) => void) | undefined;
+  onExecuteItem: (
+    item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
+    event?: MouseEvent,
+  ) => void;
 }) {
   const shortcutLabel = props.item.shortcutCommand
     ? shortcutLabelForCommand(props.keybindings, props.item.shortcutCommand)
@@ -239,8 +255,9 @@ function CommandPaletteResultRow(props: {
       onMouseDown={(event) => {
         event.preventDefault();
       }}
-      onClick={() => {
-        props.onExecuteItem(props.item);
+      onPointerDownCapture={props.onPointerDownCapture}
+      onClick={(event) => {
+        props.onExecuteItem(props.item, event);
       }}
     >
       <CommandPaletteTitleIcon>{props.item.icon}</CommandPaletteTitleIcon>

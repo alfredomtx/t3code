@@ -20,7 +20,7 @@ import type {
   PreviewForwardedShortcut,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { matchesKeybindingShortcut, isBrowserEditingShortcut } from "@t3tools/shared/keybindings";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import {
   BrowserWindow,
@@ -468,22 +468,16 @@ export const isPreviewEditingShortcut = (
   input: Electron.Input,
   platform: NodeJS.Platform,
 ): boolean => {
-  const isMac = platform === "darwin";
-  if (isMac ? !input.meta || input.control : !input.control || input.meta) return false;
-
-  const key = input.key.toLowerCase();
-  // Option changes the DOM key for macOS Paste and Match Style (for example, to ◊).
-  if (isMac && input.alt && input.shift && input.code === "KeyV") return true;
-  if (key === "v" && input.shift) return input.alt === isMac;
-  if (input.alt) return false;
-  if (key === "z") return !input.shift || platform !== "win32";
-  if (input.shift) return false;
-  return (
-    key === "a" ||
-    key === "c" ||
-    key === "v" ||
-    key === "x" ||
-    (key === "y" && platform === "win32")
+  return isBrowserEditingShortcut(
+    {
+      key: input.key,
+      code: input.code,
+      metaKey: input.meta,
+      ctrlKey: input.control,
+      altKey: input.alt,
+      shiftKey: input.shift,
+    },
+    platform === "darwin" ? "MacIntel" : platform,
   );
 };
 
@@ -1489,19 +1483,21 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           input.alt &&
           /^(?:[^a-zA-Z0-9]|Dead)$/u.test(input.key)
         ) &&
-        forwardedShortcuts.find(({ shortcut }) =>
-          matchesKeybindingShortcut(
-            {
-              key: input.key,
-              code: input.code,
-              metaKey: input.meta,
-              ctrlKey: input.control,
-              shiftKey: input.shift,
-              altKey: input.alt,
-            },
-            shortcut,
-            hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
-          ),
+        forwardedShortcuts.find(
+          ({ command, shortcut }) =>
+            !(command.startsWith("preview.") && isPreviewEditingShortcut(input, hostPlatform)) &&
+            matchesKeybindingShortcut(
+              {
+                key: input.key,
+                code: input.code,
+                metaKey: input.meta,
+                ctrlKey: input.control,
+                shiftKey: input.shift,
+                altKey: input.alt,
+              },
+              shortcut,
+              hostPlatform === "darwin" ? "MacIntel" : hostPlatform,
+            ),
         );
       if (forwarded && host) {
         event.preventDefault();

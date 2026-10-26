@@ -1,3 +1,4 @@
+import { useShortcutCoach } from "~/shortcutCoach";
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
@@ -348,6 +349,7 @@ function Sidebar({
 function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<typeof Button>) {
   const { toggleSidebar } = useSidebar();
   const isOpen = useSidebarVisibility();
+  const coach = useShortcutCoach();
 
   return (
     <Button
@@ -358,9 +360,11 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-sidebar="trigger"
       data-slot="sidebar-trigger"
       aria-pressed={isOpen}
+      onPointerDownCapture={coach.capture}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();
+        coach.notify("sidebar.toggle", event);
       }}
       size="icon"
       variant="ghost"
