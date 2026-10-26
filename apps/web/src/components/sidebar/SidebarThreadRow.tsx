@@ -558,6 +558,7 @@ type SidebarThreadRowProps = {
   onUnsettle: (threadRef: ScopedThreadRef) => void;
   onSnooze: (threadRef: ScopedThreadRef, preset: Pick<SnoozePreset, "snoozedUntil">) => void;
   onUnsnooze: (threadRef: ScopedThreadRef) => void;
+  onPin: (threadRef: ScopedThreadRef) => void;
   onUnpin: (threadRef: ScopedThreadRef) => void;
   onAcknowledgeWoke: (threadRef: ScopedThreadRef, visitedAt: string) => void;
   onFileDropThreads?: ((threadRef: ScopedThreadRef, files: File[]) => void) | undefined;
@@ -621,6 +622,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     onThreadClick,
     onUnsettle,
     onUnsnooze,
+    onPin,
     onUnpin,
     openPullRequestsInRightPanel,
     renamingTitle,
@@ -859,10 +861,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     event.stopPropagation();
     onUnsnooze(threadRef);
   };
-  const handleUnpinClick = (event: ReactMouseEvent) => {
+  const handlePinClick = (event: ReactMouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
-    onUnpin(threadRef);
+    if (props.isPinned) onUnpin(threadRef);
+    else onPin(threadRef);
   };
   const handleSnoozePreset = (preset: Pick<SnoozePreset, "snoozedUntil">) => {
     onSnooze(threadRef, preset);
@@ -1057,7 +1060,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     </Tooltip>
   ) : null;
   const showPin =
-    props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
+    (props.isPinned || (props.pinningSupported && canOperateThread)) &&
+    (!sortable?.isDragging || (props.isPinned && props.dragOverPinned && props.dropVerb === null));
   const pinIndicator = showPin ? (
     props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
       <Tooltip>
@@ -1065,22 +1069,34 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           render={
             <button
               type="button"
-              aria-label="Unpin thread"
-              onClick={handleUnpinClick}
-              className="group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              aria-label={props.isPinned ? "Unpin thread" : "Pin thread"}
+              onPointerDown={(event) => event.stopPropagation()}
+              onDoubleClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => event.stopPropagation()}
+              onClick={handlePinClick}
+              className={cn(
+                "group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                !props.isPinned &&
+                  "opacity-0 group-hover/sidebar-row:opacity-100 group-focus-within/sidebar-row:opacity-100 pointer-coarse:opacity-100",
+              )}
             />
           }
         >
           <PinIcon
             aria-hidden
-            className="size-3 shrink-0 group-hover/unpin:hidden group-focus-visible/unpin:hidden"
+            className={cn(
+              "size-3 shrink-0",
+              props.isPinned && "group-hover/unpin:hidden group-focus-visible/unpin:hidden",
+            )}
           />
-          <PinOffIcon
-            aria-hidden
-            className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
-          />
+          {props.isPinned ? (
+            <PinOffIcon
+              aria-hidden
+              className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
+            />
+          ) : null}
         </TooltipTrigger>
-        <TooltipPopup>Unpin thread</TooltipPopup>
+        <TooltipPopup>{props.isPinned ? "Unpin thread" : "Pin thread"}</TooltipPopup>
       </Tooltip>
     ) : (
       <PinIcon
