@@ -1,6 +1,81 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
-import { parsePullRequestLink, shouldOpenPullRequestExternally } from "./openPullRequestLink";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
+import {
+  parsePullRequestLink,
+  shouldOpenPullRequestExternally,
+  useOpenChangeRequestLink,
+} from "./openPullRequestLink";
+
+vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
+vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => true }));
+vi.mock("../browser/useOpenLink", () => ({ useOpenLink: () => vi.fn() }));
+vi.mock("../state/environments", () => ({
+  usePrimaryEnvironmentId: () => EnvironmentId.make("env-1"),
+}));
+vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => new Map() } }));
+vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
+vi.mock("../state/entities", () => ({ readProjects: () => [] }));
+vi.mock("@t3tools/client-runtime/change-request-links", () => ({
+  resolveChangeRequestLinkTarget: () => ({
+    project: { id: "project-a", environmentId: EnvironmentId.make("env-1") },
+    repository: "acme/repo",
+    number: 42,
+  }),
+}));
+
+describe("opening a PR link", () => {
+  it.each([
+    ["#discussion_r123", "timeline", "commentRequest"],
+    [`/commits/${"a".repeat(40)}`, "code", "commitRequest"],
+    [`/changes/${"a".repeat(40)}`, "code", "commitRequest"],
+  ])("preserves the explicit destination for %s", (suffix, detailTab, request) => {
+    useRightPanelStore.setState({ byThreadKey: {} });
+    const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-a"));
+    const open = useOpenChangeRequestLink(ref);
+    open(
+      { preventDefault: vi.fn(), stopPropagation: vi.fn(), metaKey: false, ctrlKey: false },
+      `https://github.com/acme/repo/pull/42${suffix}`,
+    );
+    const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+    expect(panel.surfaces).toHaveLength(1);
+    expect(panel.surfaces[0]).toMatchObject({ detailTab });
+    expect(panel.surfaces[0]).toHaveProperty(request);
+  });
+
+  it.each(["code", "timeline"] as const)(
+    "returns an existing %s tab to Summary without opening a duplicate",
+    (detailTab) => {
+      useRightPanelStore.setState({ byThreadKey: {} });
+      const ref = scopeThreadRef(EnvironmentId.make("env-1"), ThreadId.make("thread-a"));
+      const url = "https://github.com/acme/repo/pull/42";
+      useRightPanelStore.getState().openPullRequest(ref, {
+        projectId: "project-a",
+        repository: "acme/repo",
+        number: 42,
+        detailTab,
+        commitRequest: { id: "old-commit", oid: "a".repeat(40) },
+        commentRequest: { id: "old-comment", anchor: "#discussion_r123" },
+      });
+      const open = useOpenChangeRequestLink(ref);
+      expect(
+        open(
+          { preventDefault: vi.fn(), stopPropagation: vi.fn(), metaKey: false, ctrlKey: false },
+          url,
+        ),
+      ).toBe(true);
+      const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref);
+      expect(panel.isOpen).toBe(true);
+      expect(panel.surfaces).toHaveLength(1);
+      expect(panel.surfaces[0]).toMatchObject({ url, detailTab: "summary" });
+      expect(panel.surfaces[0]).not.toHaveProperty("commitRequest");
+      expect(panel.surfaces[0]).not.toHaveProperty("commentRequest");
+      expect(panel.activeSurfaceId).toBe(panel.surfaces[0]?.id);
+    },
+  );
+});
 const parseChangeRequestUrl = (url: string) =>
   sourceControlClients.parseChangeRequestUrl(url)?.link ?? null;
 

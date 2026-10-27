@@ -120,6 +120,7 @@ export function useOpenChangeRequestLink(
         repository,
         url: targetUrl,
         number,
+        detailTab: "summary",
         ...(commentAnchor === null
           ? {}
           : {

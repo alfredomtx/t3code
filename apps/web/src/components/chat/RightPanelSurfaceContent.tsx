@@ -157,7 +157,7 @@ export function RightPanelSurfaceContent(props: {
               .getState()
               .consumePullRequestCommitRequest(threadRef, surface.id, requestId);
           }}
-          initialTab={surface.detailTab ?? "summary"}
+          selectedTab={surface.detailTab ?? "summary"}
           onTabChange={(tab) => {
             useRightPanelStore.getState().setPullRequestDetailTab(threadRef, surface.id, tab);
           }}

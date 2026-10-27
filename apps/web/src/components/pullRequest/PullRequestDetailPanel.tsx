@@ -279,7 +279,7 @@ export function PullRequestDetailPanel({
   onBack,
   onSelectPullRequest,
   onGuideShown,
-  initialTab = "summary",
+  selectedTab = "summary",
   onTabChange,
   commitRequest,
   onCommitRequestHandled,
@@ -309,7 +309,7 @@ export function PullRequestDetailPanel({
   onCommentRequestHandled?: ((requestId: string) => void) | undefined;
   commitRequest?: PullRequestCommitRequest | undefined;
   onCommitRequestHandled?: ((requestId: string) => void) | undefined;
-  initialTab?: PullRequestDetailTab;
+  selectedTab?: PullRequestDetailTab;
   onTabChange?: ((tab: PullRequestDetailTab) => void) | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
@@ -368,7 +368,6 @@ export function PullRequestDetailPanel({
     coreDetail,
     detail,
   } = usePullRequestDetail(environmentId, reference, matchingListEntry);
-  const [selectedTab, setTab] = useState<PullRequestDetailTab>(initialTab);
   const reviewGuidesEnabled = useEnvironmentSettings(
     environmentId,
     (settings) => settings.reviewGuidesEnabled,
@@ -377,19 +376,15 @@ export function PullRequestDetailPanel({
   const pageTab = useGuideRunStore((state) =>
     tabOnPage && state.pageDetailTab?.key === guideKey ? state.pageDetailTab.tab : null,
   );
-  const requestedTab = tabOnPage ? (pageTab ?? initialTab) : selectedTab;
+  const requestedTab = tabOnPage ? (pageTab ?? selectedTab) : selectedTab;
   const isTabAvailable = (value: PullRequestDetailTab) =>
     (value !== "code" || detail === null || detail.capabilities.diff) &&
     (value !== "guide" || reviewGuidesEnabled);
   // An unavailable tab falls back without overwriting the saved selection.
   const tab = isTabAvailable(requestedTab) ? requestedTab : "summary";
-  const publishTab = (next: PullRequestDetailTab) => {
+  const selectTab = (next: PullRequestDetailTab) => {
     if (tabOnPage) useGuideRunStore.getState().showPageDetailTab(guideKey, next);
     onTabChange?.(next);
-  };
-  const selectTab = (next: PullRequestDetailTab) => {
-    if (!tabOnPage) setTab(next);
-    publishTab(next);
   };
   const [timelineOrder, setTimelineOrder] = useState<"newest" | "oldest">("newest");
   const [codeCommitScope, setCodeCommitScope] = useState<{
@@ -484,12 +479,7 @@ export function PullRequestDetailPanel({
   const [handoff, setHandoff] = useState<string | null>(null);
   const turnRefresh = usePullRequestTurnRefresh(environmentId);
   const commentRequestId = commentRequest?.id;
-  const [appliedCommentRequestId, setAppliedCommentRequestId] = useState<string | null>(null);
-  if (commentRequest && commentRequest.id !== appliedCommentRequestId) {
-    setAppliedCommentRequestId(commentRequest.id);
-    setTab("timeline");
-  }
-  const selectCommentTab = useEffectEvent(() => publishTab("timeline"));
+  const selectCommentTab = useEffectEvent(() => selectTab("timeline"));
   // oxlint-disable-next-line t3code/react-effect-budget -- Apply incoming comment navigation to the page or panel that owns tab selection.
   useEffect(() => {
     if (commentRequestId) selectCommentTab();
@@ -499,10 +489,9 @@ export function PullRequestDetailPanel({
   if (commitRequestReady && commitRequest && commitRequest.id !== appliedCommitRequestId) {
     setAppliedCommitRequestId(commitRequest.id);
     selectCodeCommit(commitRequest.oid);
-    setTab("code");
   }
   const acknowledgeCommitRequest = useEffectEvent((requestId: string) => {
-    publishTab("code");
+    selectTab("code");
     onCommitRequestHandled?.(requestId);
   });
   // oxlint-disable-next-line t3code/react-effect-budget -- Acknowledge the applied commit request in the owning panel store.

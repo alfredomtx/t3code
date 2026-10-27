@@ -1504,7 +1504,7 @@ export function PullRequestsPage() {
               key={renderedPullRequestSurface.id}
               environmentId={panelEnvironmentId}
               onGuideShown={onGuideShown}
-              initialTab={renderedPullRequestSurface.detailTab ?? "summary"}
+              selectedTab={renderedPullRequestSurface.detailTab ?? "summary"}
               onTabChange={(tab) => {
                 if (rightPanelRef === null) return;
                 useRightPanelStore
