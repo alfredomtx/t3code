@@ -26,6 +26,7 @@ const {
   filesViewedAtom,
   command,
   permission,
+  diffCommits,
 } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const Cause = await import("effect/Cause");
@@ -61,6 +62,7 @@ const {
     AsyncResult.initial(),
   );
   return {
+    diffCommits: [] as Array<string | undefined>,
     filePatch,
     firstDiffData,
     heldDiffRead,
@@ -96,8 +98,10 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
-      diff: (({ input }: { input: { cursor?: string } }) =>
-        input.cursor ? pageAtoms(input.cursor) : diffAtom) as never,
+      diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
+        diffCommits.push(input.commit);
+        return input.cursor ? pageAtoms(input.cursor) : diffAtom;
+      }) as never,
       setFilesViewed: {
         ...actual.pullRequestEnvironment.setFilesViewed,
         permissionAtom: () => permission,
@@ -142,7 +146,9 @@ const detail: PullRequestDetailView = {
   commentCount: 0,
   commentsTruncated: false,
   reviewThreads: [],
-  commits: [],
+  commits: [
+    { oid: "commit", messageHeadline: "Current commit", committedDate: "2026-09-01T00:00:00Z" },
+  ],
   mergeCapabilities: { merge: false, squash: false, rebase: false },
   capabilities: {
     diff: true,
@@ -172,6 +178,7 @@ function setup(
     mode?: "collapsed" | "autoViewed" | "off";
   } = {},
 ) {
+  diffCommits.length = 0;
   const stack = new DisposableStack();
   const settings = getClientSettings();
   __setClientSettingsForTests({ ...settings, diffFilesCollapsed: false });
@@ -683,4 +690,33 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   await screen.rerender(fixture.tab(0, { revealRequest: { path: "late.ts", nonce: 1 } }));
 
   await expectFileHeaderShown(screen, container, "late.ts");
+});
+
+it("never requests the diff of a selected commit the pull request no longer has", async () => {
+  using fixture = setup();
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  // The timeline can open a commit that a force-push removed from the pull request.
+  await using screen = await render(
+    fixture.tab(0, {
+      detail: {
+        ...detail,
+        commits: [
+          {
+            oid: "kept",
+            messageHeadline: "Kept commit",
+            committedDate: "2026-09-01T00:00:00Z",
+          },
+        ],
+      },
+      selectedCommitOid: "gone",
+    }),
+    { container },
+  );
+
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
+    .toBeVisible();
+  expect(diffCommits).not.toContain("gone");
 });

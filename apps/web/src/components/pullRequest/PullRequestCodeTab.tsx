@@ -338,7 +338,10 @@ function PullRequestCodeTab({
   }>({ key: "", cursor: null, slices: NO_SLICES });
 
   const referenceKey = pullRequestReviewKey(reference);
-  const commit = selectedCommitOid;
+  const commit =
+    selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
+      ? selectedCommitOid
+      : null;
   const scopeKey = JSON.stringify([
     environmentId,
     referenceKey,
@@ -1172,7 +1175,6 @@ function PullRequestCodeTab({
     </div>
   );
 
-  // Clear obsolete commit scopes even when an empty list hides the dropdown.
   const selectedCommit = orderedCommits.find((entry) => entry.oid === commit);
   const scopeLabel = selectedCommit ? selectedCommit.messageHeadline : "All commits";
   const changeIgnoreWhitespace = (next: boolean) => {
@@ -1554,11 +1556,6 @@ function PullRequestCodeTab({
     answerReveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
   }, [canLoadNextSlice, items, revealRequest]);
-  useEffect(() => {
-    if (commit !== null && selectedCommit === undefined) {
-      onSelectedCommitChange(null);
-    }
-  }, [commit, onSelectedCommitChange, selectedCommit]);
   const withToolbar = (body: ReactNode) => (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
