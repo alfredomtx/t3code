@@ -462,12 +462,26 @@ describe("large text preview recovery", () => {
     const original = URL.createObjectURL(new Blob(["original\n".repeat(1000)]));
     const changed = URL.createObjectURL(new Blob(["changed\n".repeat(1000)]));
     const workers: Worker[] = [];
+    let onIndexed: () => void;
+    let onIndexError: (error: Error) => void;
+    const indexed = new Promise<void>((resolve, reject) => {
+      onIndexed = resolve;
+      onIndexError = reject;
+    });
     using _worker = stubGlobal(
       "Worker",
       class extends Worker {
         constructor(...args: ConstructorParameters<typeof Worker>) {
           super(...args);
           workers.push(this);
+          this.addEventListener(
+            "message",
+            (event: MessageEvent<import("./largeTextProtocol").TextPreviewResult>) => {
+              if (event.data.type === "meta" && event.data.complete) onIndexed();
+              else if (event.data.type === "error") onIndexError(new Error(event.data.message));
+            },
+          );
+          this.addEventListener("error", (event) => onIndexError(new Error(event.message)));
         }
       },
     );
@@ -499,7 +513,8 @@ describe("large text preview recovery", () => {
       await using screen = await render(preview("first"));
       await vi.waitFor(() => expect(workers).toHaveLength(1));
       await vi.waitFor(() => expect(screen.container.textContent).toContain("original"));
-      await vi.waitFor(() => expect(screen.container.textContent).toContain("1,000 lines"));
+      await act(() => indexed);
+      expect(screen.container.textContent).toContain("1,000 lines");
       const viewport = screen.container.querySelector<HTMLElement>('[tabindex="0"]')!;
       await act(() =>
         viewport.dispatchEvent(
