@@ -28,6 +28,35 @@ export function isFileViewed(
   return pressed ?? isViewedState(states?.get(path));
 }
 
+export function settleFileViewedOverlay(
+  overlay: FileViewedOverlay,
+  states: FileViewedStates | null,
+  pending: ReadonlySet<string>,
+  answered: ReadonlySet<string>,
+): FileViewedOverlay {
+  if (states === null || overlay.size === 0) return overlay;
+  const next = new Map(overlay);
+  for (const [path, pressed] of overlay) {
+    if (pending.has(path)) continue;
+    if (answered.has(path) || isViewedState(states.get(path)) === pressed) next.delete(path);
+  }
+  return next.size === overlay.size ? overlay : next;
+}
+
+/** Revert only owned paths; later presses belong to other requests. */
+export function revertFileViewedOverlay(
+  overlay: FileViewedOverlay,
+  batch: ReadonlyArray<{ readonly path: string; readonly viewed: boolean }>,
+  owned: ReadonlySet<string>,
+): FileViewedOverlay {
+  const next = new Map(overlay);
+  for (const { path, viewed } of batch) {
+    if (!owned.has(path)) continue;
+    if (next.get(path) === viewed) next.delete(path);
+  }
+  return next.size === overlay.size ? overlay : next;
+}
+
 export function toFileViewedBatch(
   overlay: FileViewedOverlay,
 ): ReadonlyArray<{ readonly path: string; readonly viewed: boolean }> {

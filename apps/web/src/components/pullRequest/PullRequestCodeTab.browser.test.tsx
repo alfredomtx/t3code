@@ -14,6 +14,7 @@ import { expect, it, vi } from "vite-plus/test";
 import "~/index.css";
 
 const {
+  filePatch,
   firstDiffData,
   heldDiffRead,
   diffFailure,
@@ -28,17 +29,19 @@ const {
 } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const Cause = await import("effect/Cause");
-  const firstPage: PullRequestDiffResult = {
-    patch: [
-      "diff --git a/a.ts b/a.ts",
+  const filePatch = (path: string) =>
+    [
+      `diff --git a/${path} b/${path}`,
       "index 1111111..2222222 100644",
-      "--- a/a.ts",
-      "+++ b/a.ts",
+      `--- a/${path}`,
+      `+++ b/${path}`,
       "@@ -1 +1 @@",
       "-before()",
       "+after()",
       "",
-    ].join("\n"),
+    ].join("\n");
+  const firstPage: PullRequestDiffResult = {
+    patch: filePatch("a.ts"),
     truncated: false,
     nextCursor: null,
   };
@@ -58,6 +61,7 @@ const {
     AsyncResult.initial(),
   );
   return {
+    filePatch,
     firstDiffData,
     heldDiffRead,
     diffFailure,
@@ -614,3 +618,69 @@ it.each(["headSha", "updatedAt"] as const)(
     expect(command.mock.calls[1]?.[0].input.files).toEqual([{ path: "new.test.ts", viewed: true }]);
   },
 );
+
+function pagedContainer() {
+  const container = document.createElement("div");
+  container.className = "flex h-[500px] w-[900px]";
+  return container;
+}
+
+// Rows are virtualized, so a header far down is not rendered until the view scrolls to it.
+async function expectFileHeaderShown(
+  screen: Awaited<ReturnType<typeof render>>,
+  container: HTMLElement,
+  path: string,
+) {
+  const header = screen.getByText(path, { exact: true }).first();
+  await expect.element(header).toBeInTheDocument();
+  await vi.waitFor(() => {
+    const top = header.element().getBoundingClientRect().top;
+    const bounds = container.getBoundingClientRect();
+    expect(top).toBeGreaterThanOrEqual(bounds.top);
+    expect(top).toBeLessThan(bounds.top + bounds.height / 2);
+  });
+}
+
+it("scrolls to a file asked for as the tab opens", async () => {
+  using fixture = setup(null, {
+    patch: {
+      patch: Array.from({ length: 40 }, (_, index) => filePatch(`early-${index}.ts`)).join(""),
+      truncated: true,
+      nextCursor: "page-2",
+    },
+    changedFiles: 41,
+  });
+  fixture.registry.set(
+    diffPagesAtom,
+    new Map([["page-2", { patch: filePatch("late.ts"), truncated: false, nextCursor: null }]]),
+  );
+  const container = pagedContainer();
+  await using screen = await render(
+    fixture.tab(0, { revealRequest: { path: "early-39.ts", nonce: 1 } }),
+    { container },
+  );
+
+  await expectFileHeaderShown(screen, container, "early-39.ts");
+});
+
+it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
+  using fixture = setup(null, {
+    patch: {
+      patch: Array.from({ length: 40 }, (_, index) => filePatch(`early-${index}.ts`)).join(""),
+      truncated: true,
+      nextCursor: "page-2",
+    },
+    changedFiles: 41,
+  });
+  fixture.registry.set(
+    diffPagesAtom,
+    new Map([["page-2", { patch: filePatch("late.ts"), truncated: false, nextCursor: null }]]),
+  );
+  const container = pagedContainer();
+  await using screen = await render(fixture.tab(0), { container });
+  await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
+
+  await screen.rerender(fixture.tab(0, { revealRequest: { path: "late.ts", nonce: 1 } }));
+
+  await expectFileHeaderShown(screen, container, "late.ts");
+});
