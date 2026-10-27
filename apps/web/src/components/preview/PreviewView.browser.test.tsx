@@ -6,6 +6,7 @@ import {
   EnvironmentId,
   FILL_PREVIEW_VIEWPORT,
   ThreadId,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -17,6 +18,9 @@ import { act, render } from "../../../test/render";
 import type { PreviewableServer } from "./useDiscoveredLocalServers";
 
 const mocks = vi.hoisted(() => ({
+  refresh: vi.fn(async () => undefined),
+  serverReload: vi.fn(),
+  streamedServerTab: false,
   navigate: vi.fn(async (_tabId: string, _url: string): Promise<void> => undefined),
   rememberPreviewUrl: vi.fn(),
   readPreparedConnection: vi.fn(() => ({ httpBaseUrl: "http://172.25.85.75:3773" })),
@@ -57,7 +61,7 @@ vi.mock(import("./previewBridge"), async (original) => ({
     pickElement: mocks.pickElement,
     setAnnotationSendEnabled: mocks.setAnnotationSendEnabled,
     cancelPickElement: mocks.cancelPickElement,
-    refresh: vi.fn(async () => undefined),
+    refresh: mocks.refresh,
     goBack: vi.fn(async () => undefined),
     goForward: vi.fn(async () => undefined),
     hardReload: vi.fn(async () => undefined),
@@ -89,42 +93,46 @@ vi.mock(import("~/browser/browserDefaults"), async (original) => ({
   useBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
   getBrowserDefaults: () => STUB_BROWSER_DEFAULTS,
 }));
-vi.mock(import("~/previewStateStore"), async (original) => ({
-  ...(await original()),
-  rememberPreviewUrl: mocks.rememberPreviewUrl,
-  useThreadPreviewState: (() => ({
-    activeTabId: "tab-1",
-    serverEpoch: mocks.serverEpoch,
-    desktopByTabId: {
-      "tab-1": {
-        hasWebContents: true,
-        canGoBack: false,
-        canGoForward: false,
-        loading: mocks.loading,
-        zoomFactor: 1,
-        pictureInPicture: mocks.pictureInPicture,
-        colorScheme: "system",
-        audioMuted: false,
-        audible: false,
-        controller: "none",
-      },
-    },
-    recentlySeenUrls: [],
-    sessions: mocks.showEmptyState
-      ? {}
-      : {
-          "tab-1": {
-            threadId: "thread-1",
-            tabId: "tab-1",
-            runtime: mocks.nativeServerTab ? "server" : "desktop",
-            navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
-            canGoBack: false,
-            canGoForward: false,
-            updatedAt: "2026-07-13T00:00:00.000Z",
-          },
+vi.mock(import("~/previewStateStore"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    rememberPreviewUrl: mocks.rememberPreviewUrl,
+    useThreadPreviewState: ((ref: ScopedThreadRef) => ({
+      ...actual.useThreadPreviewState(ref),
+      activeTabId: "tab-1",
+      serverEpoch: mocks.serverEpoch,
+      desktopByTabId: {
+        "tab-1": {
+          hasWebContents: true,
+          canGoBack: false,
+          canGoForward: false,
+          loading: mocks.loading,
+          zoomFactor: 1,
+          pictureInPicture: mocks.pictureInPicture,
+          colorScheme: "system",
+          audioMuted: false,
+          audible: false,
+          controller: "none",
         },
-  })) as never,
-}));
+      },
+      recentlySeenUrls: [],
+      sessions: mocks.showEmptyState
+        ? {}
+        : {
+            "tab-1": {
+              threadId: "thread-1",
+              tabId: "tab-1",
+              runtime: mocks.nativeServerTab || mocks.streamedServerTab ? "server" : "desktop",
+              navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+              canGoBack: false,
+              canGoForward: false,
+              updatedAt: "2026-07-13T00:00:00.000Z",
+            },
+          },
+    })) as never,
+  };
+});
 vi.mock(import("~/state/environments"), async (original) => ({
   ...(await original()),
   useEnvironment: (() => ({ label: "WSL" })) as never,
@@ -154,6 +162,36 @@ vi.mock(import("~/browser/previewRuntime"), async (original) => ({
   useRendersServerTabNatively: () => mocks.nativeServerTab,
 }));
 
+vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => {
+  const actual = await original();
+  const { useImperativeHandle } = await import("react");
+  return {
+    ...actual,
+    ServerBrowserSurface: ({
+      ref,
+      onControl,
+    }: ComponentProps<typeof actual.ServerBrowserSurface>) => {
+      useImperativeHandle(ref, () => ({
+        navigate: () => {},
+        history: () => {},
+        viewport: () => {},
+        canvas: () => null,
+        reload: mocks.serverReload,
+      }));
+      return (
+        <button
+          className="fixed top-0 left-0 z-50"
+          onClick={() =>
+            onControl?.({ controller: "you", canOperate: true, generation: 1, dialog: null })
+          }
+        >
+          Grant browser control
+        </button>
+      );
+    },
+  };
+});
+
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -162,6 +200,20 @@ import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { dispatchPreviewAction } from "./previewActionBus";
 import { PreviewView } from "./PreviewView";
+import { AppAtomRegistryProvider } from "~/rpc/atomRegistry";
+
+function PreviewViewWithRegistry(props: ComponentProps<typeof PreviewView>) {
+  return (
+    <AppAtomRegistryProvider>
+      <PreviewView {...props} />
+    </AppAtomRegistryProvider>
+  );
+}
+import {
+  applyPreviewServerSnapshot,
+  requestPreviewReload,
+  resetPreviewStateForTests,
+} from "~/previewStateStore";
 
 const TEST_THREAD_REF = {
   environmentId: EnvironmentId.make("environment-1"),
@@ -171,7 +223,7 @@ const TEST_RUNTIME_TAB_ID = previewRuntimeTabId(TEST_THREAD_REF, null, "tab-1");
 
 function view(onSendAnnotation?: ComponentProps<typeof PreviewView>["onSendAnnotation"]) {
   return (
-    <PreviewView
+    <PreviewViewWithRegistry
       threadRef={TEST_THREAD_REF}
       tabId="tab-1"
       visible
@@ -199,6 +251,8 @@ function annotation(id: string, screenshot: unknown = null) {
 // resetting them.
 function setup() {
   vi.clearAllMocks();
+  resetPreviewStateForTests();
+  mocks.streamedServerTab = false;
   mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
   mocks.setAnnotationSendEnabled.mockReset().mockResolvedValue(undefined);
   mocks.pickElement.mockReset();
@@ -286,4 +340,56 @@ describe("PreviewView", () => {
     act(() => dispatchPreviewAction("focus-url"));
     await expect.element(address).toHaveFocus();
   });
+});
+
+it.each([false, true])(
+  "reloads only the visible reused native tab once (server-native %s)",
+  async (serverNative) => {
+    setup();
+    mocks.nativeServerTab = serverNative;
+    applyPreviewServerSnapshot(TEST_THREAD_REF, {
+      threadId: TEST_THREAD_REF.threadId,
+      tabId: "tab-1",
+      navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-07-13T00:00:00.000Z",
+    });
+    requestPreviewReload(TEST_THREAD_REF, "tab-1");
+    await using screen = await render(
+      <PreviewViewWithRegistry threadRef={TEST_THREAD_REF} tabId="tab-1" visible={false} />,
+    );
+    expect(mocks.refresh).not.toHaveBeenCalled();
+    await screen.rerender(
+      <PreviewViewWithRegistry threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
+    );
+    expect(mocks.refresh).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID);
+    await screen.rerender(
+      <PreviewViewWithRegistry threadRef={TEST_THREAD_REF} tabId="tab-1" visible={false} />,
+    );
+    await screen.rerender(
+      <PreviewViewWithRegistry threadRef={TEST_THREAD_REF} tabId="tab-1" visible />,
+    );
+    expect(mocks.refresh).toHaveBeenCalledOnce();
+  },
+);
+
+it("waits for streamed browser control before reloading a reused link", async () => {
+  setup();
+  mocks.streamedServerTab = true;
+  applyPreviewServerSnapshot(TEST_THREAD_REF, {
+    threadId: TEST_THREAD_REF.threadId,
+    tabId: "tab-1",
+    runtime: "server",
+    navStatus: { _tag: "Success", url: "http://example.com/", title: "Example" },
+    canGoBack: false,
+    canGoForward: false,
+    updatedAt: "2026-07-13T00:00:00.000Z",
+  });
+  requestPreviewReload(TEST_THREAD_REF, "tab-1");
+  await using screen = await render(view());
+  expect(mocks.serverReload).not.toHaveBeenCalled();
+  await screen.getByRole("button", { name: "Grant browser control" }).click();
+  expect(mocks.serverReload).toHaveBeenCalledOnce();
+  expect(mocks.refresh).not.toHaveBeenCalled();
 });

@@ -2,17 +2,15 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import * as Schema from "effect/Schema";
 
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "~/browser/browserDefaults";
 import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
-import type { OpenPreviewMutation } from "~/browser/openFileInPreview";
-import { isPreviewAvailableFor, previewRuntimeFor } from "~/browser/previewRuntime";
+import {
+  BrowserSettingsReadError,
+  openUrlInPreview,
+  type OpenPreviewMutation,
+} from "~/browser/openFileInPreview";
+import { isPreviewAvailableFor } from "~/browser/previewRuntime";
 import { recordVisitForThread } from "~/browserHistoryStore";
-import { applyPreviewServerSnapshot } from "~/previewStateStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 
 const terminalLinkErrorContext = {
   environmentId: Schema.String,
@@ -59,22 +57,17 @@ export async function openTerminalLinkInPreview<E>(
     targetOrigin: new URL(input.url).origin,
   };
 
-  const defaults = await resolveBrowserDefaults();
-  const runtime = previewRuntimeFor(input.threadRef.environmentId);
-  const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
-    input: {
-      threadId: input.threadRef.threadId,
-      url: input.url,
-      viewport: browserDefaultOpenViewport(defaults),
-      profileId: browserDefaultOpenProfileId(defaults),
-      ...(runtime === undefined ? {} : { runtime }),
-    },
+  const result = await openUrlInPreview({
+    threadRef: input.threadRef,
+    url: input.url,
+    openPreview: input.openPreview,
   });
   if (result._tag === "Failure") {
     if (isAtomCommandInterrupted(result)) {
       return;
     }
+    const failure = squashAtomCommandFailure(result);
+    if (failure instanceof BrowserSettingsReadError) throw failure;
     console.error(
       new TerminalLinkPreviewOpenError({
         ...errorContext,
@@ -85,6 +78,4 @@ export async function openTerminalLinkInPreview<E>(
     return;
   }
   recordVisitForThread(input.threadRef, input.url);
-  applyPreviewServerSnapshot(input.threadRef, result.value);
-  useRightPanelStore.getState().openBrowser(input.threadRef, result.value.tabId);
 }

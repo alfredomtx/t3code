@@ -35,6 +35,7 @@ import { ensureLocalApi } from "~/localApi";
 import { getClientSettings } from "~/hooks/useSettings";
 import {
   rememberPreviewUrl,
+  consumePreviewReload,
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
@@ -289,6 +290,25 @@ export function PreviewView({
     await previewBridge.refresh(runtimeTabId);
     return true;
   };
+
+  const reloadRequested = tabId !== null && previewState.pendingReloadTabIds.has(tabId);
+  const reloadReady = isServerTab
+    ? !serverInputDisabled
+    : Boolean(previewBridge && desktopOverlay?.hasWebContents);
+  const reloadReusedTab = useEffectEvent(() => {
+    if (!tabId || !consumePreviewReload(threadRef, tabId)) return;
+    void handleRefresh().catch((error: unknown) => {
+      toastManager.add({
+        type: "error",
+        title: "Unable to refresh browser tab",
+        description: error instanceof Error ? error.message : String(error),
+      });
+    });
+  });
+  // oxlint-disable-next-line t3code/react-effect-budget -- Reload a reused link only after its visible browser transport is ready.
+  useEffect(() => {
+    if (visible && runtimeTabId && reloadRequested && reloadReady) reloadReusedTab();
+  }, [visible, reloadRequested, reloadReady, runtimeTabId]);
 
   const adjustServerTab = async (change: Omit<PreviewAdjustInput, "threadId" | "tabId">) => {
     if (!tabId) return false;

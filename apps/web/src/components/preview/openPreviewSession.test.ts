@@ -16,6 +16,8 @@ import {
   readThreadPreviewState,
   resetPreviewStateForTests,
   setActivePreviewTab,
+  consumePreviewReload,
+  beginPreviewSessionClose,
 } from "~/previewStateStore";
 
 import { openPreviewSession } from "./openPreviewSession";
@@ -91,6 +93,73 @@ describe("openPreviewSession", () => {
 });
 
 describe("openUrlInPreview from a link", () => {
+  it("focuses an existing matching tab instead of opening a duplicate", async () => {
+    applyPreviewServerSnapshot(threadRef, snapshot);
+    useRightPanelStore.getState().open(threadRef, "files");
+    const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "duplicate" }));
+
+    await openUrlInPreview({ threadRef, url: "https://t3.chat", openPreview });
+
+    expect(openPreview).not.toHaveBeenCalled();
+    expect(readThreadPreviewState(threadRef).activeTabId).toBe("tab-1");
+    expect(Object.keys(readThreadPreviewState(threadRef).sessions)).toEqual(["tab-1"]);
+    expect(consumePreviewReload(threadRef, "tab-1")).toBe(true);
+    expect(consumePreviewReload(threadRef, "tab-1")).toBe(false);
+  });
+
+  it("coalesces simultaneous foreground opens of the same URL", async () => {
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    await Promise.all([
+      openUrlInPreview({ threadRef, url: "https://t3.chat/", openPreview }),
+      openUrlInPreview({ threadRef, url: "https://t3.chat/", openPreview }),
+    ]);
+    expect(openPreview).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { url: "https://t3.chat/?page=2" },
+    { url: "https://t3.chat/#comment-2" },
+    { profileId: "work" },
+    { runtime: "server" as const },
+  ])("keeps different URLs, profiles, and runtimes separate: %j", async (different) => {
+    applyPreviewServerSnapshot(threadRef, {
+      ...snapshot,
+      ...(different.url
+        ? { navStatus: { _tag: "Success", title: "Other", url: different.url } }
+        : {}),
+      ...(different.profileId ? { profileId: different.profileId } : {}),
+      ...(different.runtime ? { runtime: different.runtime } : {}),
+    });
+    const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new" }));
+    await openUrlInPreview({ threadRef, url: "https://t3.chat/", openPreview });
+    expect(openPreview).toHaveBeenCalledOnce();
+  });
+
+  it("does not reuse a tab closed by this client", async () => {
+    applyPreviewServerSnapshot(threadRef, snapshot);
+    beginPreviewSessionClose(threadRef, snapshot.tabId);
+    const openPreview = vi.fn(async () => AsyncResult.success({ ...snapshot, tabId: "new" }));
+    await openUrlInPreview({ threadRef, url: "https://t3.chat/", openPreview });
+    expect(openPreview).toHaveBeenCalledOnce();
+  });
+
+  it("does not reuse tabs in another thread or change explicit new-tab behavior", async () => {
+    applyPreviewServerSnapshot(
+      { ...threadRef, threadId: "other" as ScopedThreadRef["threadId"] },
+      snapshot,
+    );
+    const openPreview = vi.fn(async () => AsyncResult.success(snapshot));
+    await openUrlInPreview({ threadRef, url: "https://t3.chat/", openPreview });
+    await openPreviewSession({ threadRef, url: "https://t3.chat/", openPreview });
+    await openUrlInPreview({
+      threadRef,
+      url: "https://t3.chat/",
+      openPreview,
+      reuseExisting: false,
+    });
+    expect(openPreview).toHaveBeenCalledTimes(3);
+  });
+
   // regression: #16961 a background link open switched the active preview tab
   it("keeps the current tab active for a background open", async () => {
     applyPreviewServerSnapshot(threadRef, { ...snapshot, tabId: "tab-current" });

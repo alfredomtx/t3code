@@ -33,6 +33,7 @@ export interface ThreadPreviewState {
   /** Tabs intentionally closed by this client. Stale list snapshots must not resurrect them. */
   suppressedTabIds: ReadonlySet<string>;
   activeTabId: string | null;
+  pendingReloadTabIds: ReadonlySet<string>;
   desktopOverlay: DesktopPreviewOverlay | null;
   desktopByTabId: Record<string, DesktopPreviewOverlay>;
   recentlySeenUrls: string[];
@@ -46,6 +47,7 @@ const EMPTY_THREAD_PREVIEW_STATE: ThreadPreviewState = Object.freeze({
   sessions: {},
   suppressedTabIds: new Set<string>(),
   activeTabId: null,
+  pendingReloadTabIds: new Set<string>(),
   desktopOverlay: null,
   desktopByTabId: {},
   recentlySeenUrls: [] as string[],
@@ -155,12 +157,32 @@ const removeSession = (current: ThreadPreviewState, tabId: string): ThreadPrevie
   return {
     ...current,
     sessions,
+    pendingReloadTabIds: new Set([...current.pendingReloadTabIds].filter((id) => id !== tabId)),
     desktopByTabId,
     activeTabId: snapshot?.tabId ?? null,
     snapshot,
     desktopOverlay: snapshot ? (desktopByTabId[snapshot.tabId] ?? null) : null,
   };
 };
+
+export function requestPreviewReload(ref: ScopedThreadRef, tabId: string): void {
+  updateThreadPreviewState(ref, (current) => {
+    if (!current.sessions[tabId] || current.pendingReloadTabIds.has(tabId)) return current;
+    return { ...current, pendingReloadTabIds: new Set(current.pendingReloadTabIds).add(tabId) };
+  });
+}
+
+export function consumePreviewReload(ref: ScopedThreadRef, tabId: string): boolean {
+  let consumed = false;
+  updateThreadPreviewState(ref, (current) => {
+    if (!current.pendingReloadTabIds.has(tabId)) return current;
+    const pendingReloadTabIds = new Set(current.pendingReloadTabIds);
+    pendingReloadTabIds.delete(tabId);
+    consumed = true;
+    return { ...current, pendingReloadTabIds };
+  });
+  return consumed;
+}
 
 export function useThreadPreviewState(ref: ScopedThreadRef | null | undefined): ThreadPreviewState {
   const atom = ref ? previewStateAtom(scopedThreadKey(ref)) : emptyPreviewStateAtom;
@@ -357,6 +379,11 @@ export function reconcilePreviewServerSessions(
     return {
       ...current,
       sessions,
+      pendingReloadTabIds: new Set(
+        [...current.pendingReloadTabIds].filter(
+          (id) => (sameServer || current.serverEpoch === null) && sessions[id],
+        ),
+      ),
       suppressedTabIds,
       activeTabId,
       snapshot,

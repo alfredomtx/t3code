@@ -3,18 +3,11 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { resetPreviewStateForTests, readThreadPreviewState } from "~/previewStateStore";
+
+import * as previewRuntime from "~/browser/previewRuntime";
+
 import { openTerminalLinkInPreview } from "./openTerminalLinkInPreview";
-
-vi.mock("~/previewStateStore", () => ({
-  applyPreviewServerSnapshot: vi.fn(),
-  isPreviewSupportedInRuntime: () => true,
-}));
-
-vi.mock("~/rightPanelStore", () => ({
-  useRightPanelStore: {
-    getState: () => ({ openBrowser: vi.fn() }),
-  },
-}));
 
 const browserDefaultsMocks = vi.hoisted(() => ({
   resolve: vi.fn(),
@@ -46,6 +39,8 @@ const threadRef = {
 };
 
 beforeEach(() => {
+  resetPreviewStateForTests();
+  vi.spyOn(previewRuntime, "isPreviewAvailableFor").mockReturnValue(true);
   browserDefaultsMocks.resolve.mockReset();
   browserDefaultsMocks.resolve.mockResolvedValue(hydratedDefaults);
   linkTargetMocks.preference.mockReturnValue("app");
@@ -71,4 +66,33 @@ describe("openTerminalLinkInPreview", () => {
     expect(reportError).not.toHaveBeenCalled();
     expect(fallbackToBrowser).not.toHaveBeenCalled();
   });
+});
+
+it("reuses and reloads normal terminal links, preserving forced external opens", async () => {
+  const openPreview = vi.fn(async () =>
+    AsyncResult.success({
+      threadId: threadRef.threadId,
+      tabId: "terminal-link",
+      profileId: "work",
+      navStatus: { _tag: "Success" as const, url: "https://example.com/", title: "Example" },
+      canGoBack: false,
+      canGoForward: false,
+      updatedAt: "2026-10-26T00:00:00Z",
+    }),
+  );
+  const fallbackToBrowser = vi.fn();
+  const input = {
+    url: "https://example.com/",
+    threadRef,
+    openPreview,
+    fallbackToBrowser,
+    forceBrowser: false,
+  };
+  await openTerminalLinkInPreview(input);
+  await openTerminalLinkInPreview(input);
+  expect(openPreview).toHaveBeenCalledOnce();
+  expect(readThreadPreviewState(threadRef).pendingReloadTabIds.has("terminal-link")).toBe(true);
+  await openTerminalLinkInPreview({ ...input, forceBrowser: true });
+  expect(fallbackToBrowser).toHaveBeenCalledOnce();
+  expect(openPreview).toHaveBeenCalledOnce();
 });

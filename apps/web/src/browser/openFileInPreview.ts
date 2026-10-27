@@ -6,6 +6,9 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { DEFAULT_BROWSER_PROFILE_ID } from "@t3tools/contracts";
+import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
   type AtomCommandResult,
@@ -21,6 +24,7 @@ import {
   applyPreviewServerSnapshot,
   readThreadPreviewState,
   rememberPreviewUrl,
+  requestPreviewReload,
   setActivePreviewTab,
   updatePreviewServerSnapshot,
 } from "~/previewStateStore";
@@ -54,12 +58,23 @@ export type OpenPreviewMutation<E = unknown> = (input: {
   readonly input: PreviewOpenInput;
 }) => Promise<AtomCommandResult<PreviewSessionSnapshot, E>>;
 
+const pendingLinkOpens = new Map<string, Promise<unknown>>();
+
+function comparablePreviewUrl(url: string): string {
+  try {
+    return normalizePreviewUrl(url);
+  } catch {
+    return url;
+  }
+}
+
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
   readonly openPreview: OpenPreviewMutation<E>;
   readonly profileId?: PreviewOpenInput["profileId"];
   readonly background?: boolean;
+  readonly reuseExisting?: boolean;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
     (cause: unknown) => new BrowserSettingsReadError({ cause }),
@@ -68,39 +83,78 @@ export async function openUrlInPreview<E>(input: {
     return AsyncResult.failure(Cause.fail(defaults));
   }
   const runtime = previewRuntimeFor(input.threadRef.environmentId);
-  const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
-  // The server changes the active tab, not panel selection; selection changes come from the user.
-  const selectedSurface = () =>
-    selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, input.threadRef)
-      ?.id ?? null;
-  const surfaceBeforeOpen = selectedSurface();
-  const result = await input.openPreview({
-    environmentId: input.threadRef.environmentId,
-    input: {
-      threadId: input.threadRef.threadId,
-      url: input.url,
-      viewport: browserDefaultOpenViewport(defaults),
-      profileId: input.profileId ?? browserDefaultOpenProfileId(defaults),
-      ...(runtime === undefined ? {} : { runtime }),
-    },
-  });
-  return mapAtomCommandResult(result, (snapshot) => {
-    rememberPreviewUrl(input.threadRef, input.url);
-    if (input.background) {
-      updatePreviewServerSnapshot(input.threadRef, snapshot);
-      // Restore focus unless the user picked a tab while opening this one.
-      if (
-        previousActiveTabId &&
-        readThreadPreviewState(input.threadRef).activeTabId === snapshot.tabId &&
-        selectedSurface() === surfaceBeforeOpen
-      ) {
-        setActivePreviewTab(input.threadRef, previousActiveTabId);
-      }
-      return;
+  const profileId = input.profileId ?? browserDefaultOpenProfileId(defaults);
+  const url = comparablePreviewUrl(input.url);
+  const open = async () => {
+    const state = readThreadPreviewState(input.threadRef);
+    const matches = (snapshot: PreviewSessionSnapshot) =>
+      !state.suppressedTabIds.has(snapshot.tabId) &&
+      (snapshot.profileId ?? DEFAULT_BROWSER_PROFILE_ID) === profileId &&
+      (snapshot.runtime ?? "desktop") === (runtime ?? "desktop") &&
+      snapshot.navStatus._tag !== "Idle" &&
+      comparablePreviewUrl(snapshot.navStatus.url) === url;
+    const active = state.activeTabId ? state.sessions[state.activeTabId] : undefined;
+    const existing =
+      input.background || input.reuseExisting === false
+        ? undefined
+        : active && matches(active)
+          ? active
+          : Object.values(state.sessions).find(matches);
+    if (existing) {
+      setActivePreviewTab(input.threadRef, existing.tabId);
+      useRightPanelStore.getState().openBrowser(input.threadRef, existing.tabId);
+      requestPreviewReload(input.threadRef, existing.tabId);
+      rememberPreviewUrl(input.threadRef, input.url);
+      return AsyncResult.success(undefined);
     }
-    applyPreviewServerSnapshot(input.threadRef, snapshot);
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
-  });
+    const previousActiveTabId = readThreadPreviewState(input.threadRef).activeTabId;
+    // The server changes the active tab, not panel selection; selection changes come from the user.
+    const selectedSurface = () =>
+      selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, input.threadRef)
+        ?.id ?? null;
+    const surfaceBeforeOpen = selectedSurface();
+    const result = await input.openPreview({
+      environmentId: input.threadRef.environmentId,
+      input: {
+        threadId: input.threadRef.threadId,
+        url: input.url,
+        viewport: browserDefaultOpenViewport(defaults),
+        profileId,
+        ...(runtime === undefined ? {} : { runtime }),
+      },
+    });
+    return mapAtomCommandResult(result, (snapshot) => {
+      rememberPreviewUrl(input.threadRef, input.url);
+      if (input.background) {
+        updatePreviewServerSnapshot(input.threadRef, snapshot);
+        // Restore focus unless the user picked a tab while opening this one.
+        if (
+          previousActiveTabId &&
+          readThreadPreviewState(input.threadRef).activeTabId === snapshot.tabId &&
+          selectedSurface() === surfaceBeforeOpen
+        ) {
+          setActivePreviewTab(input.threadRef, previousActiveTabId);
+        }
+        return;
+      }
+      applyPreviewServerSnapshot(input.threadRef, snapshot);
+      useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    });
+  };
+  if (input.background || input.reuseExisting === false) return open();
+  const key = JSON.stringify([
+    scopedThreadKey(input.threadRef),
+    profileId,
+    runtime ?? "desktop",
+    url,
+  ]);
+  const pending = (pendingLinkOpens.get(key) ?? Promise.resolve()).then(open, open);
+  pendingLinkOpens.set(key, pending);
+  try {
+    return await pending;
+  } finally {
+    if (pendingLinkOpens.get(key) === pending) pendingLinkOpens.delete(key);
+  }
 }
 
 export async function openFileInPreview<AssetError, PreviewError>(input: {

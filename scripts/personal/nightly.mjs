@@ -62,6 +62,7 @@ const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
   "apps/web/src/components/RightPanelTabs.browser.test.tsx",
   "apps/web/src/components/files/BrowserDocumentFrame.browser.test.tsx",
+  "apps/web/src/components/preview/PreviewView.browser.test.tsx",
   "apps/web/src/components/settings/KeybindingsSettings.browser.test.tsx",
   "apps/web/src/shortcutCoach.browser.test.tsx",
   "apps/web/src/components/ReopenClosedViewShortcut.browser.test.tsx",
@@ -81,6 +82,9 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/web/src/components/preview/openPreviewSession.test.ts",
+    "apps/web/src/components/preview/openTerminalLinkInPreview.test.ts",
+    "apps/web/src/previewStateStore.test.ts",
     "apps/web/src/keybindings.test.ts",
     "apps/web/src/components/settings/KeybindingsSettings.logic.test.ts",
     "apps/desktop/src/preview/Manager.test.ts",

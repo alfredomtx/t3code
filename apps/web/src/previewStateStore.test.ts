@@ -19,6 +19,8 @@ import {
   reconcilePreviewServerSessions,
   resetPreviewStateForTests,
   setActivePreviewTab,
+  requestPreviewReload,
+  consumePreviewReload,
 } from "./previewStateStore";
 import { appAtomRegistry } from "./rpc/atomRegistry";
 
@@ -416,5 +418,31 @@ describe("previewStateStore (single-tab)", () => {
       url: "http://localhost:5173/new",
       title: "New",
     });
+  });
+});
+
+describe("pending link reloads", () => {
+  it("drops reloads on close and server replacement, and consumes each only once", () => {
+    const snapshot = makeSnapshot();
+    applyPreviewServerSnapshot(ref, snapshot);
+    requestPreviewReload(ref, snapshot.tabId);
+    expect(consumePreviewReload(ref, snapshot.tabId)).toBe(true);
+    expect(consumePreviewReload(ref, snapshot.tabId)).toBe(false);
+    requestPreviewReload(ref, snapshot.tabId);
+    beginPreviewSessionClose(ref, snapshot.tabId);
+    expect(consumePreviewReload(ref, snapshot.tabId)).toBe(false);
+    cancelPreviewSessionClose(ref, snapshot, snapshot.tabId);
+    reconcilePreviewServerSessions(ref, {
+      serverEpoch: "first",
+      revision: 1,
+      sessions: [snapshot],
+    });
+    requestPreviewReload(ref, snapshot.tabId);
+    reconcilePreviewServerSessions(ref, {
+      serverEpoch: "replacement",
+      revision: 1,
+      sessions: [snapshot],
+    });
+    expect(consumePreviewReload(ref, snapshot.tabId)).toBe(false);
   });
 });
