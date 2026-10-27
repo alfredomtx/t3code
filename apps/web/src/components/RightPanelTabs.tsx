@@ -980,24 +980,46 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (!addSurfaceMenuOpen) addSurfaceTriggerRef.current?.click();
     return true;
   });
+  const activateAdjacentTab = (direction: -1 | 1) => {
+    if (props.surfaces.length < 2) return;
+    const index = props.surfaces.findIndex((surface) => surface.id === props.activeSurfaceId);
+    const next =
+      index < 0
+        ? props.surfaces.at(direction === 1 ? 0 : -1)
+        : props.surfaces[(index + direction + props.surfaces.length) % props.surfaces.length];
+    if (next) props.onActivate(next);
+  };
   const onForwardedPanelAction = useEffectEvent((action: string) => {
-    if (action === "rightPanel.new") openNewSurfaceLauncher();
-    else if (
-      action === "rightPanel.close" &&
-      !document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)
-    ) {
+    if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    if (action === "rightPanel.previousTab") activateAdjacentTab(-1);
+    else if (action === "rightPanel.nextTab") activateAdjacentTab(1);
+    else if (action === "rightPanel.new") openNewSurfaceLauncher();
+    else if (action === "rightPanel.close") {
       const active = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
       if (active) props.onCloseSurface(active);
     }
   });
-  const onNewSurfaceKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (event.defaultPrevented || event.isComposing) return;
+  const onPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (
-      resolveShortcutCommand(event, props.keybindings, {
-        context: { ...props.getShortcutContext(), rightPanelOpen: true },
-      }) !== "rightPanel.new"
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.getModifierState("AltGraph")
     )
       return;
+    if (event.target instanceof Element && event.target.closest("[data-keybinding-capture]"))
+      return;
+    const command = resolveShortcutCommand(event, props.keybindings, {
+      context: { ...props.getShortcutContext(), rightPanelOpen: true },
+    });
+    if (command === "rightPanel.previousTab" || command === "rightPanel.nextTab") {
+      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) activateAdjacentTab(command === "rightPanel.previousTab" ? -1 : 1);
+      return;
+    }
+    if (command !== "rightPanel.new") return;
     if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -1007,10 +1029,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   });
   useEffect(() => {
     if (props.open === false) return;
-    document.addEventListener("keydown", onNewSurfaceKeyDown, true);
+    document.addEventListener("keydown", onPanelKeyDown, true);
     const unsubscribe = window.desktopBridge?.onMenuAction(onForwardedPanelAction);
     return () => {
-      document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
+      document.removeEventListener("keydown", onPanelKeyDown, true);
       unsubscribe?.();
     };
   }, [props.open]);

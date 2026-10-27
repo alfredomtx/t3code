@@ -18,7 +18,10 @@ import {
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
-import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import {
+  mergeRightPanelTabKeybindings,
+  rightPanelTabKeybindingsAtom,
+} from "../rightPanelTabKeybindings";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -143,7 +146,7 @@ export function createShortcutKeybindingsAtom(
   const state = createShortcutKeybindingsStateAtom(input);
   const custom = Atom.make((get) => get(state).keybindings);
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeWithDefaultKeybindings(get(custom) ?? []),
+    mergeRightPanelTabKeybindings(get(custom) ?? [], get(rightPanelTabKeybindingsAtom)),
   );
 }
 
@@ -181,7 +184,10 @@ export const primaryServerKeybindingsSourceAtom = Atom.make(
 );
 const primaryCustomKeybindingsAtom = Atom.make((get) => get(primaryShortcutStateAtom).keybindings);
 export const primaryServerKeybindingsAtom = Atom.make((get) =>
-  mergeWithDefaultKeybindings(get(primaryCustomKeybindingsAtom) ?? []),
+  mergeRightPanelTabKeybindings(
+    get(primaryCustomKeybindingsAtom) ?? [],
+    get(rightPanelTabKeybindingsAtom),
+  ),
 ).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
 export const serverAvailableEditorsAtom = Atom.family((environmentId: EnvironmentId) =>

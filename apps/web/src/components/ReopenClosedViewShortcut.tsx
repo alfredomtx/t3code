@@ -49,6 +49,8 @@ const PREVIEW_FORWARDED_LAYOUT_COMMANDS = [
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
   "rightPanel.new",
+  "rightPanel.previousTab",
+  "rightPanel.nextTab",
   "rightPanel.close",
 ] as const;
 

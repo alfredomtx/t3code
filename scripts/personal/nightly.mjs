@@ -60,6 +60,8 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/RightPanelTabs.browser.test.tsx",
+  "apps/web/src/components/files/BrowserDocumentFrame.browser.test.tsx",
   "apps/web/src/components/settings/KeybindingsSettings.browser.test.tsx",
   "apps/web/src/shortcutCoach.browser.test.tsx",
   "apps/web/src/components/ReopenClosedViewShortcut.browser.test.tsx",

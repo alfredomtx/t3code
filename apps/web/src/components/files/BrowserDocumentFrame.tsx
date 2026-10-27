@@ -57,6 +57,8 @@ const HTML_RENDER_SHORTCUT_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   "sidebar.toggle",
   "rightPanel.toggle",
   "rightPanel.toggleMaximized",
+  "rightPanel.previousTab",
+  "rightPanel.nextTab",
   "threadPanel.toggle",
   "terminal.toggle",
   "preview.toggle",
@@ -161,8 +163,7 @@ export function HtmlRenderDocument(props: {
   const environmentKeybindings = useAtomValue(
     serverEnvironment.configValueAtom(props.threadRef?.environmentId ?? null),
   )?.keybindings;
-  // Replay only Cmd/Ctrl chords exclusive to allowed commands regardless of when; live resolution could
-  // otherwise type in the composer.
+  // A page may forge key events; replay only chords exclusive to allowed commands.
   const mac = isMacPlatform(navigator.platform);
   const resolve = (shortcut: KeybindingShortcut): HtmlRenderShortcut => ({
     key: shortcut.key,
@@ -178,7 +179,11 @@ export function HtmlRenderDocument(props: {
   for (const { command, shortcut } of keybindings) {
     if (
       HTML_RENDER_SHORTCUT_COMMANDS.has(command) &&
-      (shortcut.metaKey || shortcut.ctrlKey || shortcut.modKey)
+      (shortcut.metaKey ||
+        shortcut.ctrlKey ||
+        shortcut.modKey ||
+        (shortcut.altKey &&
+          (command === "rightPanel.previousTab" || command === "rightPanel.nextTab")))
     ) {
       shortcutsByKey.set(shortcutConflictKey(shortcut), resolve(shortcut));
     }

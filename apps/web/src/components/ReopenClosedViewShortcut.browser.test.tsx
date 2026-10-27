@@ -288,3 +288,22 @@ it("publishes effective custom preview shortcuts through the single guest writer
   await view[Symbol.asyncDispose]();
   expect(state.setShortcuts).toHaveBeenLastCalledWith([]);
 });
+
+it("forwards configurable tab navigation into the native browser guest", async () => {
+  setup();
+  state.setShortcuts.mockClear();
+  state.keybindings = DEFAULT_RESOLVED_KEYBINDINGS;
+  await using _view = await renderShortcut();
+  expect(state.setShortcuts).toHaveBeenLastCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({
+        command: "rightPanel.previousTab",
+        shortcut: expect.objectContaining({ key: "d", altKey: true }),
+      }),
+      expect.objectContaining({
+        command: "rightPanel.nextTab",
+        shortcut: expect.objectContaining({ key: "f", altKey: true }),
+      }),
+    ]),
+  );
+});

@@ -162,6 +162,27 @@ export function writeLocalStorageValue<T, E>(
   }
 }
 
+export function subscribeLocalStorage(key: string, onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const handleStorageChange = (event: StorageEvent) => {
+    if (event.key === key) {
+      onStoreChange();
+    }
+  };
+  const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
+    if (event.detail.key === key) {
+      onStoreChange();
+    }
+  };
+
+  window.addEventListener("storage", handleStorageChange);
+  window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  return () => {
+    window.removeEventListener("storage", handleStorageChange);
+    window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
+  };
+}
+
 export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,
@@ -169,25 +190,7 @@ export function useLocalStorage<T, E>(
 ): [T, (value: T | ((val: T) => T)) => void] {
   const getSnapshot = () => readSerializedValue(key);
 
-  const subscribe = (onStoreChange: () => void) => {
-    const handleStorageChange = (event: StorageEvent) => {
-      if (event.key === key) {
-        onStoreChange();
-      }
-    };
-    const handleLocalChange = (event: CustomEvent<LocalStorageChangeDetail>) => {
-      if (event.detail.key === key) {
-        onStoreChange();
-      }
-    };
-
-    window.addEventListener("storage", handleStorageChange);
-    window.addEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-    return () => {
-      window.removeEventListener("storage", handleStorageChange);
-      window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
-    };
-  };
+  const subscribe = (onStoreChange: () => void) => subscribeLocalStorage(key, onStoreChange);
 
   const serializedValue = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const storedValue = decodeOrInitial(key, schema, serializedValue, initialValue);

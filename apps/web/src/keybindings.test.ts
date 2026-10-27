@@ -894,3 +894,25 @@ describe("Usage shortcuts", () => {
     );
   });
 });
+
+describe("right-panel tab navigation", () => {
+  it("matches Option glyphs to the default previous and next tab commands", () => {
+    const context = { rightPanelOpen: true, terminalFocus: false, editableFocus: false };
+    assert.equal(
+      resolveShortcutCommand(
+        event({ key: "∂", code: "KeyD", altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { context, platform: "MacIntel" },
+      ),
+      "rightPanel.previousTab",
+    );
+    assert.equal(
+      resolveShortcutCommand(
+        event({ key: "ƒ", code: "KeyF", altKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { context, platform: "MacIntel" },
+      ),
+      "rightPanel.nextTab",
+    );
+  });
+});

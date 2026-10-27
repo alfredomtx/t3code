@@ -30,7 +30,11 @@ import {
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
-import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
+import {
+  isLocalTabCommand,
+  mergeRightPanelTabKeybindings,
+  useRightPanelTabKeybindings,
+} from "~/rightPanelTabKeybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -1296,7 +1300,8 @@ function keybindingAnchorIds(rows: ReturnType<typeof buildKeybindingRows>) {
 // Cache rows in a separate hook so the compiler does not rebuild them per search keystroke.
 function useKeybindingCatalog() {
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
-  const merged = mergeWithDefaultKeybindings(serverKeybindings ?? []);
+  const [local] = useRightPanelTabKeybindings();
+  const merged = mergeRightPanelTabKeybindings(serverKeybindings ?? [], local);
   return {
     commandOptions: buildKeybindingCommandOptions(merged),
     allRows: buildKeybindingRows(merged),
@@ -1338,6 +1343,7 @@ export function KeybindingsSettingsPanel({
   );
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const [localTabKeybindings, setLocalTabKeybindings] = useRightPanelTabKeybindings();
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const { commandOptions, allRows } = useKeybindingCatalog();
   const [isAddingBinding, setIsAddingBinding] = useState(
@@ -1386,6 +1392,27 @@ export function KeybindingsSettingsPanel({
       )
     )
       return;
+    if (isLocalTabCommand(input.command)) {
+      const rule = {
+        command: input.command,
+        key: input.key.trim(),
+        ...(input.when?.trim() ? { when: input.when.trim() } : {}),
+      };
+      setLocalTabKeybindings((current) => [
+        ...current.filter(
+          (entry) =>
+            !(
+              entry.command === input.replace?.command &&
+              entry.key === input.replace.key &&
+              entry.when === input.replace.when
+            ) &&
+            !(entry.command === rule.command && entry.key === rule.key && entry.when === rule.when),
+        ),
+        rule,
+      ]);
+      setIsAddingBinding(false);
+      return;
+    }
     setSavingCommand(input.command);
     const payload: ServerUpsertKeybindingInput = {
       command: input.command,
@@ -1425,6 +1452,22 @@ export function KeybindingsSettingsPanel({
       )
     )
       return;
+    if (
+      isLocalTabCommand(row.command) &&
+      localTabKeybindings.some((entry) => entry.command === row.command)
+    ) {
+      setLocalTabKeybindings((current) =>
+        current.filter(
+          (entry) =>
+            !(
+              entry.command === row.command &&
+              entry.key === row.key &&
+              (entry.when ?? "") === row.when
+            ),
+        ),
+      );
+      return;
+    }
     setSavingCommand(row.command);
     void (async () => {
       const results = await Promise.all(
@@ -1479,7 +1522,11 @@ export function KeybindingsSettingsPanel({
       {coachCommand ? (
         <p className="px-4 text-xs text-muted-foreground">
           Save to:{" "}
-          {coachScopeMatches ? primaryEnvironment?.label : "Original shortcut source unavailable"}
+          {isLocalTabCommand(coachCommand)
+            ? "This client"
+            : coachScopeMatches
+              ? primaryEnvironment?.label
+              : "Original shortcut source unavailable"}
         </p>
       ) : null}
       <SettingsSection
@@ -1517,6 +1564,9 @@ export function KeybindingsSettingsPanel({
         </div>
       </SettingsSection>
 
+      <p className="text-xs text-muted-foreground">
+        Previous and Next Panel Tab shortcuts are saved in this client.
+      </p>
       {!canWriteSettings ? (
         <p className="text-xs text-muted-foreground">
           {connectedEnvironments.length === 0
