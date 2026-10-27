@@ -7,6 +7,8 @@ import {
   ProjectId,
 } from "@t3tools/contracts";
 import {
+  createDraft,
+  hasScheduledTaskDraftChanges,
   scheduledTaskDefaultModel,
   DEFAULT_SCHEDULE,
   scheduleDraftForTask,
@@ -195,4 +197,19 @@ it("rejects dedupe keys without valid request placeholders", () => {
   expect(
     scheduleFromDraft({ ...DEFAULT_SCHEDULE, mode: "webhook", coalesceKey: "{{body.bad" }),
   ).toBeNull();
+});
+
+it("tracks policy edits independently from the saved model options", () => {
+  const selection = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "test",
+    options: [{ id: "futureOption", value: true }],
+  };
+  const initial = createDraft(ProjectId.make("project"), selection);
+  expect(initial.boundModelSelectionMode).toBe("inherit_thread");
+  const override = { ...initial, boundModelSelectionMode: "use_task_selection" as const };
+  expect(hasScheduledTaskDraftChanges(initial, override)).toBe(true);
+  const inherited = { ...override, boundModelSelectionMode: "inherit_thread" as const };
+  expect(inherited.modelSelection).toEqual(selection);
+  expect(hasScheduledTaskDraftChanges(initial, inherited)).toBe(false);
 });

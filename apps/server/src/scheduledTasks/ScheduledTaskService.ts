@@ -191,6 +191,7 @@ interface ScheduledTaskRow {
   readonly thread_id: string | null;
   readonly workspace_strategy_json: string;
   readonly model_selection_json: string;
+  readonly bound_model_selection_mode: string;
   readonly runtime_mode: string;
   readonly interaction_mode: string;
   readonly created_by: string;
@@ -331,6 +332,7 @@ const decodeRow = Effect.fnUntraced(
       threadId: row.thread_id,
       workspaceStrategy,
       modelSelection,
+      boundModelSelectionMode: row.bound_model_selection_mode,
       runtimeMode: row.runtime_mode,
       interactionMode: row.interaction_mode,
       createdBy: row.created_by,
@@ -434,6 +436,7 @@ export const layer = Layer.effect(
         thread_id,
         workspace_strategy_json,
         model_selection_json,
+        bound_model_selection_mode,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -471,6 +474,7 @@ export const layer = Layer.effect(
         thread_id,
         workspace_strategy_json,
         model_selection_json,
+        bound_model_selection_mode,
         runtime_mode,
         interaction_mode,
         created_by,
@@ -534,6 +538,7 @@ export const layer = Layer.effect(
         readonly secret: string | null;
         readonly secretChanged: boolean;
       },
+      updateModelSelectionMode: boolean,
     ) =>
       sql<{ task_id: string }>`
         INSERT INTO scheduled_tasks (
@@ -546,6 +551,7 @@ export const layer = Layer.effect(
           thread_id,
           workspace_strategy_json,
           model_selection_json,
+          bound_model_selection_mode,
           runtime_mode,
           interaction_mode,
           created_by,
@@ -570,6 +576,7 @@ export const layer = Layer.effect(
           ${task.threadId},
           ${JSON.stringify(task.workspaceStrategy)},
           ${JSON.stringify(task.modelSelection)},
+          ${task.boundModelSelectionMode},
           ${task.runtimeMode},
           ${task.interactionMode},
           ${task.createdBy},
@@ -595,6 +602,10 @@ export const layer = Layer.effect(
           thread_id = excluded.thread_id,
           workspace_strategy_json = excluded.workspace_strategy_json,
           model_selection_json = excluded.model_selection_json,
+          bound_model_selection_mode = CASE
+            WHEN ${updateModelSelectionMode ? 1 : 0} = 1 THEN excluded.bound_model_selection_mode
+            ELSE scheduled_tasks.bound_model_selection_mode
+          END,
           runtime_mode = excluded.runtime_mode,
           interaction_mode = excluded.interaction_mode,
           creation_source = excluded.creation_source,
@@ -833,8 +844,6 @@ export const layer = Layer.effect(
                   .pipe(Effect.map((launched) => launched.threadId)),
               )
             : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
                 threadManagement
                   .sendToThread({
                     projectId: active.projectId,
@@ -844,6 +853,12 @@ export const layer = Layer.effect(
                     scheduledTaskId: active.id,
                     text: prompt,
                     attachments: [],
+                    ...(active.boundModelSelectionMode === "use_task_selection"
+                      ? {
+                          modelSelection: active.modelSelection,
+                          modelSelectionScope: "turn" as const,
+                        }
+                      : {}),
                     mode: "queue",
                     createdBy: active.createdBy,
                     creationSource: active.creationSource,
@@ -1146,6 +1161,10 @@ export const layer = Layer.effect(
         threadId: input.threadId ?? null,
         workspaceStrategy,
         modelSelection: input.modelSelection,
+        boundModelSelectionMode:
+          input.boundModelSelectionMode ??
+          existingTask?.boundModelSelectionMode ??
+          "inherit_thread",
         runtimeMode: input.runtimeMode,
         interactionMode: input.interactionMode,
         createdBy: existingTask?.createdBy ?? input.createdBy ?? "user",
@@ -1160,7 +1179,12 @@ export const layer = Layer.effect(
         lastRunError: existingTask?.lastRunError ?? null,
         runCount: existingTask?.runCount ?? 0,
       };
-      yield* saveTask(task, input.requireExisting === true, webhook);
+      yield* saveTask(
+        task,
+        input.requireExisting === true,
+        webhook,
+        input.boundModelSelectionMode !== undefined,
+      );
       yield* notifyChanged;
       return { task: (yield* findTask(id)) ?? task };
     });

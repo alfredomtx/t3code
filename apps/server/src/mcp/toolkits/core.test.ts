@@ -625,6 +625,12 @@ it.effect("a caller cannot rewrite a scheduled task that runs above its own mode
     const allowed = yield* call("schedule_task", {
       scheduledTaskId: "task-auto",
       enabled: false,
+      modelSelection: {
+        instanceId: "codex",
+        model: "task-model",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+      boundModelSelectionMode: "use_task_selection",
     });
     expect(allowed.isError).toBe(false);
     const incomplete = yield* call("schedule_task", { prompt: "Run nightly" });
@@ -681,6 +687,7 @@ function scheduledTask(id: string, runtimeMode: "auto" | "full-access"): never {
     lastRunThreadId: null,
     lastRunError: null,
     runCount: 0,
+    boundModelSelectionMode: "inherit_thread",
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt: "2026-10-01T00:00:00.000Z",
   } as never;

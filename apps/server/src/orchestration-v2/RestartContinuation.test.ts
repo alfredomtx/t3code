@@ -130,6 +130,18 @@ it("requires matching saved native state for an unfinished root run", () => {
     assert.isUndefined(restartContinuationRun(invalid as OrchestrationV2ThreadProjection, now));
 });
 
+it("recovers turn-scoped work across providers only with matching native state", () => {
+  const projection = makeProjection();
+  const scoped = {
+    ...projection,
+    thread: { ...projection.thread, providerInstanceId: ProviderInstanceId.make("other") },
+    runs: [{ ...projection.runs[0]!, modelSelectionScope: "turn" as const }],
+  };
+  assert.equal(restartContinuationRun(scoped, now)?.id, runId);
+  assert.isUndefined(restartContinuationRun({ ...scoped, providerSessions: [] }, now));
+  assert.isUndefined(restartContinuationRun({ ...scoped, providerThreads: [] }, now));
+});
+
 it("continues a live turn whose session the adapter never marked running", () => {
   const projection = makeProjection();
   const withSessionStatus = (status: string) =>
@@ -428,7 +440,10 @@ it.effect.each(["running", "waiting"])(
 it.effect("does not duplicate delivery and yields to newer user work or opt-out", () =>
   Effect.gen(function* () {
     let projection = makeProjection();
-    projection = { ...projection, runs: [{ ...projection.runs[0]!, status: "cancelled" }] };
+    projection = {
+      ...projection,
+      runs: [{ ...projection.runs[0]!, status: "cancelled", modelSelectionScope: "turn" }],
+    };
     const commands: Parameters<
       ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
     >[0][] = [];
@@ -454,8 +469,10 @@ it.effect("does not duplicate delivery and yields to newer user work or opt-out"
     );
     assert.lengthOf(commands, 1);
     assert.match(String(commands[0]!.commandId), /run:restart$/);
-    if (commands[0]!.type === "message.dispatch")
+    if (commands[0]!.type === "message.dispatch") {
       assert.equal(commands[0]!.restartContinuationOfRunId, runId);
+      assert.equal(commands[0]!.modelSelectionScope, "turn");
+    }
     projection = {
       ...projection,
       messages: [],

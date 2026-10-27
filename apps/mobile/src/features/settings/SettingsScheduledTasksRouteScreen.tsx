@@ -1,3 +1,7 @@
+import * as Option from "effect/Option";
+import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import { useEnvironmentThread } from "../../state/threads";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -668,6 +672,37 @@ function TaskForm({
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
   const modelOptions = buildModelOptions(config, null, undefined, draft.projectId);
+  const supportsTaskPolicy =
+    config?.environment.capabilities.scheduledTaskTurnModelSelection === true;
+  const inheritsThread =
+    draft.task?.threadId != null && draft.boundModelSelectionMode === "inherit_thread";
+  const boundState = useEnvironmentThread(environmentId, draft.task?.threadId ?? null);
+  const inheritedSelection =
+    !availableTargets.some((target) => target.environmentId === environmentId) ||
+    boundState.status === "deleted" ||
+    Option.isSome(boundState.error)
+      ? null
+      : (Option.getOrNull(boundState.data)?.thread.modelSelection ?? null);
+  const inheritedModel = inheritedSelection
+    ? buildModelOptions(config, inheritedSelection, undefined, draft.projectId).find(
+        (option) =>
+          option.selection.instanceId === inheritedSelection.instanceId &&
+          option.selection.model === inheritedSelection.model,
+      )
+    : null;
+  const inheritedOptions = resolveProviderOptionDescriptors({
+    capabilities: inheritedModel?.capabilities,
+    selections: inheritedSelection?.options,
+  });
+  const inheritedLabel =
+    boundState.status === "deleted"
+      ? "The bound thread no longer exists."
+      : Option.isSome(boundState.error)
+        ? "The thread settings are unavailable."
+        : inheritedSelection === null
+          ? "Waiting for the thread settings."
+          : `${boundState.status === "live" ? "Inherited from thread" : "Last known thread settings"}: ${inheritedModel?.label ?? inheritedSelection.model}${inheritedOptions.length ? `, ${inheritedOptions.map((descriptor) => getProviderOptionCurrentLabel(descriptor)).join(", ")}` : ""}`;
+
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
   );
@@ -701,6 +736,17 @@ function TaskForm({
       environmentUnavailable
     )
       return;
+    if (
+      draft.task?.threadId &&
+      draft.boundModelSelectionMode === "use_task_selection" &&
+      !supportsTaskPolicy
+    ) {
+      Dialog.alert(
+        "Server update required",
+        "This server cannot save task model overrides. Reconnect to a supported server before saving.",
+      );
+      return;
+    }
     // Preserve signatures edited on other clients by sending the task's current value.
     const liveTask = tasks.data?.tasks.find((task) => task.id === draft.task?.id);
     const schedule = scheduleFromDraft(
@@ -754,6 +800,7 @@ function TaskForm({
       prompt: draft.prompt.trim(),
       projectId: draft.projectId,
       modelSelection: draft.modelSelection,
+      ...(supportsTaskPolicy ? { boundModelSelectionMode: draft.boundModelSelectionMode } : {}),
       schedule,
       enabled: draft.enabled,
       threadId: draft.task?.threadId ?? null,
@@ -875,21 +922,64 @@ function TaskForm({
               });
             }}
           />
-          <PickerRow
-            label="Model"
-            borderTop
-            value={
-              modelOptions.find(
-                (option) =>
-                  option.selection.instanceId === draft.modelSelection?.instanceId &&
-                  option.selection.model === draft.modelSelection?.model,
-              )?.label ??
-              draft.modelSelection?.model ??
-              (modelOptions.length ? "Choose model" : "No models available")
-            }
-            onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
-            disabled={saving || dictationPending || environmentUnavailable}
-          />
+          {draft.task?.threadId ? (
+            <SelectRow
+              label="Model policy"
+              value={
+                draft.boundModelSelectionMode === "inherit_thread"
+                  ? "Inherit from thread"
+                  : "Use task model and reasoning"
+              }
+              actions={
+                !supportsTaskPolicy || environmentUnavailable || saving
+                  ? []
+                  : [
+                      {
+                        id: "inherit_thread",
+                        title: "Inherit from thread",
+                        state:
+                          draft.boundModelSelectionMode === "inherit_thread" ? "on" : undefined,
+                      },
+                      {
+                        id: "use_task_selection",
+                        title: "Use task model and reasoning",
+                        state:
+                          draft.boundModelSelectionMode === "use_task_selection" ? "on" : undefined,
+                      },
+                    ]
+              }
+              onSelect={(value) => {
+                if (value === "inherit_thread" || value === "use_task_selection")
+                  setDraft({ ...draft, boundModelSelectionMode: value });
+              }}
+            />
+          ) : null}
+          {inheritsThread ? (
+            <Text className="px-4 py-3 text-sm text-foreground-muted">
+              {environmentUnavailable ? "Reconnect to load the thread settings." : inheritedLabel}
+            </Text>
+          ) : (
+            <PickerRow
+              label="Model and options"
+              borderTop
+              value={
+                modelOptions.find(
+                  (option) =>
+                    option.selection.instanceId === draft.modelSelection?.instanceId &&
+                    option.selection.model === draft.modelSelection?.model,
+                )?.label ??
+                draft.modelSelection?.model ??
+                "Choose model"
+              }
+              onPress={() => navigation.navigate("SettingsScheduledTaskModel")}
+              disabled={saving || dictationPending || environmentUnavailable}
+            />
+          )}
+          {draft.task?.threadId && !supportsTaskPolicy ? (
+            <Text className="px-4 py-3 text-sm text-foreground-muted">
+              Update the server to enable task model overrides.
+            </Text>
+          ) : null}
         </SettingsSection>
 
         <SettingsSection title="Workspace">

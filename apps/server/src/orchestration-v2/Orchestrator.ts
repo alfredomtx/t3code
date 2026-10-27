@@ -1655,7 +1655,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       // The picker may already have moved ahead of the native conversation.
       const switchFromActiveProvider =
-        followsCurrent &&
         activeProviderThread !== undefined &&
         activeProviderThread.providerInstanceId !== queuedRun.providerInstanceId;
       const switchPlan =
@@ -2032,7 +2031,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       yield* writeSystemEvents(
         [
-          ...(selectionChanged
+          ...(selectionChanged && queuedRun.modelSelectionScope !== "turn"
             ? [
                 {
                   type:
@@ -5025,7 +5024,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
         projection.thread.settledOverride === "settled" ||
-        projection.thread.providerInstanceId !== run.providerInstanceId ||
+        (run.modelSelectionScope !== "turn" &&
+          projection.thread.providerInstanceId !== run.providerInstanceId) ||
         projection.runtimeRequests.some((request) => request.status === "pending") ||
         (projection.thread.snoozedUntil != null &&
           DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now))
@@ -5059,7 +5059,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         !isRestartContinuationSource(source, projection.providerTurns) ||
         projection.thread.archivedAt !== null ||
         projection.thread.deletedAt !== null ||
-        projection.thread.providerInstanceId !== source.providerInstanceId ||
+        (source.modelSelectionScope !== "turn" &&
+          projection.thread.providerInstanceId !== source.providerInstanceId) ||
         projection.runs.some(
           (run) =>
             run.id !== source.id &&
@@ -5082,6 +5083,20 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         return;
       }
+    }
+
+    const continuationId =
+      command.restartContinuationOfRunId ?? command.usageLimitContinuationOfRunId;
+    const continuation =
+      continuationId === undefined
+        ? undefined
+        : projection.runs.find((run) => run.id === continuationId);
+    if (continuation?.modelSelectionScope === "turn") {
+      command = {
+        ...command,
+        modelSelection: continuation.modelSelection,
+        modelSelectionScope: "turn",
+      };
     }
 
     if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {
@@ -5601,6 +5616,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        ...(command.modelSelectionScope === undefined
+          ? {}
+          : { modelSelectionScope: command.modelSelectionScope }),
         providerThreadId: queuedProviderThread.id,
         userMessageId: command.messageId,
         rootNodeId,
@@ -5805,8 +5823,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
     const now = yield* DateTime.now;
     if (
-      !modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
-      projection.thread.providerInstanceId !== modelSelection.instanceId
+      command.modelSelectionScope !== "turn" &&
+      (!modelSelectionsEqual(projection.thread.modelSelection, modelSelection) ||
+        projection.thread.providerInstanceId !== modelSelection.instanceId)
     ) {
       yield* emit(
         events,
@@ -5965,6 +5984,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ordinal,
         providerInstanceId: modelSelection.instanceId,
         modelSelection,
+        ...(command.modelSelectionScope === undefined
+          ? {}
+          : { modelSelectionScope: command.modelSelectionScope }),
         providerThreadId,
         userMessageId: command.messageId,
         rootNodeId,
@@ -6652,6 +6674,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ordinal,
       providerInstanceId: modelSelection.instanceId,
       modelSelection,
+      ...(command.modelSelectionScope === undefined
+        ? {}
+        : { modelSelectionScope: command.modelSelectionScope }),
       providerThreadId: providerThread.id,
       userMessageId: command.messageId,
       rootNodeId,

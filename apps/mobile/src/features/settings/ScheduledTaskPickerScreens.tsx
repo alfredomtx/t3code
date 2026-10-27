@@ -1,3 +1,4 @@
+import { mergeProviderOptionSelections } from "@t3tools/shared/model";
 import { useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
 import { useMemo, useState } from "react";
@@ -46,6 +47,16 @@ export function ScheduledTaskModelPickerRouteScreen() {
   );
 
   if (!editor) return <MissingTaskDraft />;
+  if (editor.draft.task?.threadId && editor.draft.boundModelSelectionMode === "inherit_thread") {
+    return (
+      <SettingsScreen title="Model and options">
+        <Text className="p-5 text-base text-foreground-muted">
+          This task inherits its thread settings. Select Use task selection in the task form to edit
+          an override.
+        </Text>
+      </SettingsScreen>
+    );
+  }
 
   return (
     <ThreadSettingsPickerScreen
@@ -66,7 +77,11 @@ export function ScheduledTaskModelPickerRouteScreen() {
                 ...current,
                 draft: {
                   ...current.draft,
-                  modelSelection: option.selection,
+                  modelSelection:
+                    current.draft.modelSelection?.instanceId === option.selection.instanceId &&
+                    current.draft.modelSelection.model === option.selection.model
+                      ? current.draft.modelSelection
+                      : { instanceId: option.selection.instanceId, model: option.selection.model },
                   modelSelectionIsExplicit: true,
                 },
               }
@@ -81,7 +96,14 @@ export function ScheduledTaskModelPickerRouteScreen() {
                 ...current,
                 draft: {
                   ...current.draft,
-                  modelSelection: { ...current.draft.modelSelection, options },
+                  modelSelection: {
+                    ...current.draft.modelSelection,
+                    options: mergeProviderOptionSelections({
+                      current: current.draft.modelSelection.options,
+                      descriptors: optionDescriptors,
+                      next: options,
+                    }),
+                  },
                   modelSelectionIsExplicit: true,
                 },
               }

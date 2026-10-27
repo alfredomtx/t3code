@@ -15,6 +15,7 @@ import {
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
+  type ModelSelectionScope,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
   type OrchestrationV2GetTurnItemResult,
@@ -129,6 +130,7 @@ export interface ThreadManagementSendInput {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly modelSelection?: ModelSelection;
+  readonly modelSelectionScope?: ModelSelectionScope;
   readonly mode: ThreadManagementSendMode;
   readonly createdBy: OrchestrationV2Actor;
   readonly creationSource: OrchestrationV2CreationSource;
@@ -666,16 +668,29 @@ const make = Effect.gen(function* () {
 
   const assertDispatchTargetEnabled = (command: OrchestrationV2ServerCommand) => {
     switch (command.type) {
-      case "message.dispatch":
-        return orchestrator.getThreadRecords(command.threadId, []).pipe(
-          Effect.flatMap((projection) =>
-            assertProviderInstanceEnabled({
-              projectId: projection.thread.projectId,
-              commandId: command.commandId,
-              instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+      case "message.dispatch": {
+        const continuationId =
+          command.restartContinuationOfRunId ?? command.usageLimitContinuationOfRunId;
+        return orchestrator
+          .getThreadRecords(command.threadId, continuationId === undefined ? [] : ["runs"])
+          .pipe(
+            Effect.flatMap((projection) => {
+              const source =
+                continuationId === undefined
+                  ? undefined
+                  : projection.runs.find((run) => run.id === continuationId);
+              const selection =
+                source?.modelSelectionScope === "turn"
+                  ? source.modelSelection
+                  : (command.modelSelection ?? projection.thread.modelSelection);
+              return assertProviderInstanceEnabled({
+                projectId: projection.thread.projectId,
+                commandId: command.commandId,
+                instanceId: selection.instanceId,
+              });
             }),
-          ),
-        );
+          );
+      }
       case "delegated_task.request":
         return orchestrator.getThreadRecords(command.parentThreadId, []).pipe(
           Effect.flatMap((parent) =>
@@ -810,6 +825,9 @@ const make = Effect.gen(function* () {
       text: input.text,
       attachments: input.attachments,
       ...(input.modelSelection === undefined ? {} : { modelSelection: input.modelSelection }),
+      ...(input.modelSelectionScope === undefined
+        ? {}
+        : { modelSelectionScope: input.modelSelectionScope }),
       dispatchMode,
       createdBy: input.createdBy,
       creationSource: input.creationSource,

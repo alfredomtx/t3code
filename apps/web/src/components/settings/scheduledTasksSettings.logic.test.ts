@@ -141,6 +141,7 @@ const legacyTask: ScheduledTask = {
   lastRunStatus: "never",
   lastRunError: null,
   runCount: 0,
+  boundModelSelectionMode: "inherit_thread",
 };
 
 describe("editing scheduled task branch settings", () => {

@@ -189,6 +189,7 @@ export type ScheduledTaskDraft = {
   readonly prompt: string;
   readonly projectId: ProjectId | null;
   readonly modelSelection: ModelSelection | null;
+  readonly boundModelSelectionMode: ScheduledTask["boundModelSelectionMode"];
   readonly modelSelectionIsExplicit: boolean;
   readonly schedule: ScheduleDraft;
   readonly workspace: Workspace;
@@ -206,6 +207,7 @@ function draftSignature(draft: ScheduledTaskDraft): string {
     draft.projectId,
     draft.modelSelection?.instanceId,
     draft.modelSelection?.model,
+    draft.boundModelSelectionMode,
     [...(draft.modelSelection?.options ?? [])]
       .sort((a, b) => a.id.localeCompare(b.id))
       .map((option) => [option.id, option.value]),
@@ -244,6 +246,7 @@ export function createDraft(
     prompt: "",
     projectId,
     modelSelection,
+    boundModelSelectionMode: "inherit_thread",
     modelSelectionIsExplicit: false,
     schedule: DEFAULT_SCHEDULE,
     workspace: "worktree",
@@ -262,6 +265,7 @@ export function editDraft(task: ScheduledTask): ScheduledTaskDraft {
     prompt: task.prompt,
     projectId: task.projectId,
     modelSelection: task.modelSelection,
+    boundModelSelectionMode: task.boundModelSelectionMode ?? "inherit_thread",
     modelSelectionIsExplicit: true,
     schedule: scheduleDraftForTask(task),
     workspace: task.workspaceStrategy.type,

@@ -15,7 +15,6 @@ import {
 import { type ReactNode, useRef, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
   ScheduledTask,
@@ -23,7 +22,6 @@ import type {
   ScheduledTaskSchedule,
   ScheduledTaskUpsertInput,
   ScheduledTaskWebhookDeliverySummary,
-  ThreadId,
 } from "@t3tools/contracts";
 import {
   DEFAULT_WEBHOOK_PROMPT,
@@ -38,6 +36,7 @@ import {
   MAX_WEBHOOK_FILTERS,
   MIN_SCHEDULED_TASK_INTERVAL_MS,
   ProviderInstanceId,
+  ThreadId,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
@@ -47,6 +46,14 @@ import {
 
 import { formatRelativeTime } from "../../timestampFormat";
 import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  getProviderOptionDescriptors,
+  mergeProviderOptionSelections,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
+import { getProviderModelCapabilities } from "../../providerModels";
+import { useEnvironmentThread } from "../../state/threads";
+import { TraitsPicker } from "../chat/TraitsPicker";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -113,12 +120,7 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
-import {
-  SettingsPageContainer,
-  SettingsRow,
-  SettingsSection,
-  SETTINGS_PICKER_TRIGGER_CLASSNAME,
-} from "./settingsLayout";
+import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -145,10 +147,10 @@ const EMPTY_DRAFT: DraftState = {
   baseRef: "main",
   startFromOrigin: true,
   existingWorktreePath: "",
-  modelKey: "",
+  modelSelection: null,
+  boundModelSelectionMode: "inherit_thread",
   runtimeMode: "full-access",
   interactionMode: "default",
-  baseModelSelection: null,
   signatureEnabled: false,
   ...WEBHOOK_SIGNATURE_DEFAULTS,
   signatureSecret: "",
@@ -275,15 +277,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
@@ -1160,21 +1153,63 @@ function ScheduledTaskEditorForm({
   );
 
   const firstInstance = instanceEntries[0];
-  const draftSelection = draft.modelKey ? splitModelKey(draft.modelKey) : null;
   const activeSelection =
-    draftSelection &&
-    instanceEntries.some((entry) => entry.instanceId === draftSelection.instanceId && entry.enabled)
-      ? draftSelection
-      : scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+    draft.modelSelection ??
+    scheduledTaskDefaultModel(settings, selectedProject ?? null, instanceEntries);
+  const supportsTaskPolicy =
+    environment?.serverConfig?.environment.capabilities.scheduledTaskTurnModelSelection === true;
+  const inheritsThread =
+    Boolean(draft.threadId) && draft.boundModelSelectionMode === "inherit_thread";
+  const boundState = useEnvironmentThread(
+    connected && draft.threadId ? environmentId : null,
+    connected && draft.threadId ? ThreadId.make(draft.threadId) : null,
+  );
+  const inheritedSelection =
+    connected && boundState.status !== "deleted" && Option.isNone(boundState.error)
+      ? (Option.getOrNull(boundState.data)?.thread.modelSelection ?? null)
+      : null;
+  const displayedSelection = inheritsThread ? inheritedSelection : activeSelection;
   const activeInstanceId =
-    activeSelection?.instanceId ?? firstInstance?.instanceId ?? ("" as ProviderInstanceId);
-  const activeModel = activeSelection?.model ?? "";
+    displayedSelection?.instanceId ?? firstInstance?.instanceId ?? ProviderInstanceId.make("");
+  const activeModel = displayedSelection?.model ?? "";
+  const activeEntry = instanceEntries.find((entry) => entry.instanceId === activeInstanceId);
+  const modelAvailable =
+    activeEntry?.models.some(
+      (model) => model.slug === normalizeModelSlug(activeModel, activeEntry.driverKind),
+    ) === true;
+  const planModeEnabled =
+    settings.planModeEnabled ||
+    displayedSelection?.options?.some(
+      (option) => option.id === "agent" && option.value === "plan",
+    ) === true;
+  const descriptors = activeEntry
+    ? getProviderOptionDescriptors({
+        caps: getProviderModelCapabilities(
+          activeEntry.models,
+          activeModel,
+          activeEntry.driverKind,
+          planModeEnabled,
+        ),
+        selections: displayedSelection?.options,
+      })
+    : [];
   const modelOptionsByInstance = getCustomModelOptionsByInstance(
     settings,
     providers,
     activeInstanceId,
     activeModel,
   );
+  const boundSelectionStatus = !connected
+    ? "Reconnect to load the thread's current model and reasoning."
+    : boundState.status === "deleted"
+      ? "The bound thread no longer exists."
+      : Option.isSome(boundState.error)
+        ? "The bound thread's settings are unavailable."
+        : inheritedSelection === null
+          ? "Loading the thread's current model and reasoning."
+          : boundState.status === "live"
+            ? "Inherited from thread. Changes in the thread apply to future runs."
+            : "Last known thread settings. Waiting for live settings.";
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -1196,6 +1231,17 @@ function ScheduledTaskEditorForm({
       tasksQuery.data === null
     )
       return;
+    if (
+      draft.threadId &&
+      draft.boundModelSelectionMode === "use_task_selection" &&
+      !supportsTaskPolicy
+    ) {
+      reportFailure(
+        "Server update required",
+        "This server cannot save task model overrides. Reconnect to a supported server before saving.",
+      );
+      return;
+    }
     const selection = activeSelection;
     if (
       !draft.title.trim() ||
@@ -1237,12 +1283,7 @@ function ScheduledTaskEditorForm({
       reportFailure("Checkout path is required", "Enter the path of the checkout to run in.");
       return;
     }
-    const modelSelection =
-      draft.baseModelSelection !== null &&
-      draft.baseModelSelection.instanceId === selection.instanceId &&
-      draft.baseModelSelection.model === selection.model
-        ? draft.baseModelSelection
-        : selection;
+    const modelSelection = selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1263,6 +1304,7 @@ function ScheduledTaskEditorForm({
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
       workspaceStrategy,
       modelSelection,
+      ...(supportsTaskPolicy ? { boundModelSelectionMode: draft.boundModelSelectionMode } : {}),
       runtimeMode: draft.runtimeMode,
       interactionMode: draft.interactionMode,
       creationSource: "web",
@@ -1308,8 +1350,8 @@ function ScheduledTaskEditorForm({
                 setDraft((current) => ({
                   ...current,
                   projectId: "",
-                  modelKey: "",
-                  baseModelSelection: null,
+                  modelSelection: null,
+                  boundModelSelectionMode: "inherit_thread",
                   baseRef: "main",
                   startFromOrigin: true,
                   existingWorktreePath: "",
@@ -1475,23 +1517,113 @@ function ScheduledTaskEditorForm({
             />
           </Field>
 
-          <Field label="Model">
-            <div>
-              <ProviderModelPicker
-                environmentId={environmentId}
-                disabled={saving || !connected}
-                activeInstanceId={activeInstanceId}
-                model={activeModel}
-                lockedProvider={null}
-                instanceEntries={instanceEntries}
-                modelOptionsByInstance={modelOptionsByInstance}
-                isComposerOwned={false}
-                triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-                onInstanceModelChange={(instanceId, model) =>
-                  setDraft((current) => ({ ...current, modelKey: `${instanceId}:${model}` }))
-                }
-              />
-            </div>
+          {draft.threadId ? (
+            <Field label="Model policy" htmlFor="scheduled-task-model-policy">
+              <Select
+                value={draft.boundModelSelectionMode}
+                disabled={saving || !connected || !supportsTaskPolicy}
+                onValueChange={(value) => {
+                  if (value === "inherit_thread" || value === "use_task_selection")
+                    setDraft((current) => ({ ...current, boundModelSelectionMode: value }));
+                }}
+              >
+                <SelectTrigger id="scheduled-task-model-policy">
+                  <SelectValue>
+                    {draft.boundModelSelectionMode === "inherit_thread"
+                      ? "Inherit from thread"
+                      : "Use task model and reasoning"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  <SelectItem value="inherit_thread">Inherit from thread</SelectItem>
+                  <SelectItem value="use_task_selection">Use task model and reasoning</SelectItem>
+                </SelectPopup>
+              </Select>
+              {!supportsTaskPolicy ? (
+                <p className="text-xs text-muted-foreground">
+                  This server inherits thread settings. Update the server to enable task overrides.
+                </p>
+              ) : null}
+            </Field>
+          ) : null}
+          <Field label="Model and reasoning">
+            {inheritsThread ? (
+              <p role="status" className="text-xs text-muted-foreground">
+                {boundSelectionStatus}
+              </p>
+            ) : null}
+            {displayedSelection ? (
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ProviderModelPicker
+                  environmentId={environmentId}
+                  disabled={saving || !connected || inheritsThread}
+                  activeInstanceId={activeInstanceId}
+                  model={activeModel}
+                  lockedProvider={null}
+                  instanceEntries={instanceEntries}
+                  modelOptionsByInstance={modelOptionsByInstance}
+                  isComposerOwned={false}
+                  onInstanceModelChange={(instanceId, model) =>
+                    setDraft((current) => ({
+                      ...current,
+                      modelSelection:
+                        activeSelection?.instanceId === instanceId &&
+                        activeSelection.model === model
+                          ? activeSelection
+                          : { instanceId, model },
+                    }))
+                  }
+                />
+                {activeEntry && modelAvailable ? (
+                  <TraitsPicker
+                    provider={activeEntry.driverKind}
+                    instanceId={activeInstanceId}
+                    models={activeEntry.models}
+                    model={activeModel}
+                    modelOptions={displayedSelection.options}
+                    allowPromptInjectedEffort={false}
+                    planModeEnabled={planModeEnabled}
+                    isComposerOwned={false}
+                    disabled={
+                      saving ||
+                      !connected ||
+                      inheritsThread ||
+                      !activeEntry.enabled ||
+                      !activeEntry.isAvailable
+                    }
+                    onModelOptionsChange={(next) => {
+                      if (inheritsThread || activeSelection === null) return;
+                      const options = mergeProviderOptionSelections({
+                        current: activeSelection.options,
+                        descriptors,
+                        next,
+                      });
+                      setDraft((current) => ({
+                        ...current,
+                        modelSelection: {
+                          instanceId: activeSelection.instanceId,
+                          model: activeSelection.model,
+                          ...(options ? { options } : {}),
+                        },
+                      }));
+                    }}
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    {inheritsThread
+                      ? "Thread model unavailable in catalog"
+                      : "Saved model unavailable"}
+                  </span>
+                )}
+              </div>
+            ) : !inheritsThread ? (
+              <p className="text-xs text-muted-foreground">No model available.</p>
+            ) : null}
+            {!inheritsThread && draft.threadId ? (
+              <p className="text-xs text-muted-foreground">
+                Uses the saved selection for each task turn. Thread settings stay unchanged.
+              </p>
+            ) : null}
           </Field>
 
           <div className="space-y-3">

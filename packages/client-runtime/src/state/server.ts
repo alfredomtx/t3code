@@ -1,4 +1,5 @@
 import {
+  ScheduledTaskError,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
@@ -43,6 +44,7 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as Persistence from "../platform/persistence.ts";
 import { runCachePersistence } from "./cachePersistence.ts";
 import {
+  getInitialServerConfig,
   isRpcClientError,
   request,
   requestGuarded,
@@ -1482,6 +1484,35 @@ export function createServerEnvironmentAtoms<R, E>(
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",
       tag: WS_METHODS.scheduledTasksUpsert,
+      execute: Effect.fn("ScheduledTasks.upsert")(function* (
+        input: EnvironmentRpcInput<typeof WS_METHODS.scheduledTasksUpsert>,
+      ) {
+        if (input.boundModelSelectionMode !== undefined) {
+          const config = yield* getInitialServerConfig().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ScheduledTaskError({ message: "Could not read server capabilities.", cause }),
+            ),
+          );
+          if (config.environment.capabilities.scheduledTaskTurnModelSelection !== true) {
+            return yield* new ScheduledTaskError({
+              message:
+                "This server does not support task model overrides. Update the server before saving this policy.",
+            });
+          }
+        }
+        const result = yield* requestGuarded(WS_METHODS.scheduledTasksUpsert, input);
+        if (
+          input.boundModelSelectionMode !== undefined &&
+          result.task.boundModelSelectionMode !== input.boundModelSelectionMode
+        ) {
+          return yield* new ScheduledTaskError({
+            message:
+              "The server did not save the task model policy. Reload the task before continuing.",
+          });
+        }
+        return result;
+      }),
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),

@@ -402,3 +402,95 @@ it.effect("thread cleanup notifies subscribers and a finishing run cannot recrea
     }).pipe(Effect.provide(layer));
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
+
+it.effect(
+  "persists bound policy across old-client saves and dispatches only explicit turn overrides",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const sends: ThreadManagementService.ThreadManagementSendInput[] = [];
+      const launches: Parameters<
+        ThreadLaunchService.ThreadLaunchService["Service"]["launch"]
+      >[0][] = [];
+      const selection = {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const layer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: (input) => {
+                launches.push(input);
+                return Effect.die("launch captured");
+              },
+            }),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({
+              sendToThread: (input) => {
+                sends.push(input);
+                return Effect.die("dispatch captured");
+              },
+            }),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () =>
+                sql`UPDATE scheduled_tasks SET bound_model_selection_mode = 'use_task_selection' WHERE task_id = 'task:policy'`.pipe(
+                  Effect.orDie,
+                  Effect.as(false),
+                ),
+            }),
+            NodeCrypto.layer,
+            Scheduler.layer,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ScheduledTaskService.ScheduledTaskService;
+        const input = {
+          id: ScheduledTaskId.make("task:policy"),
+          title: "Check progress",
+          prompt: "Check progress",
+          enabled: false,
+          schedule: { type: "interval", everyMs: 60_000 } as const,
+          projectId: ProjectId.make("project:test"),
+          threadId: ThreadId.make("thread:test"),
+          workspaceStrategy: { type: "root" } as const,
+          modelSelection: selection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+        };
+        const created = yield* service.upsert(input);
+        assert.equal(created.task.boundModelSelectionMode, "inherit_thread");
+        yield* service.runNow({ id: input.id });
+        assert.isUndefined(sends.at(-1)?.modelSelection);
+        const changed = yield* service.upsert({
+          ...input,
+          boundModelSelectionMode: "use_task_selection",
+        });
+        assert.equal(changed.task.boundModelSelectionMode, "use_task_selection");
+        const oldClient = yield* service.upsert({ ...input, title: "Edited by an old client" });
+        assert.equal(oldClient.task.boundModelSelectionMode, "use_task_selection");
+        assert.deepEqual((yield* service.list()).tasks[0]?.modelSelection, selection);
+        yield* service.runNow({ id: input.id });
+        assert.deepEqual(sends.at(-1)?.modelSelection, selection);
+        assert.equal(sends.at(-1)?.modelSelectionScope, "turn");
+        const restored = yield* service.upsert({
+          ...input,
+          boundModelSelectionMode: "inherit_thread",
+        });
+        assert.deepEqual(restored.task.modelSelection, selection);
+        yield* service.runNow({ id: input.id });
+        assert.isUndefined(sends.at(-1)?.modelSelection);
+        const concurrentSave = yield* service.upsert({
+          ...input,
+          workspaceStrategy: { type: "worktree", baseRef: "main" },
+        });
+        assert.equal(concurrentSave.task.boundModelSelectionMode, "use_task_selection");
+        yield* service.upsert({ ...input, threadId: null });
+        yield* service.runNow({ id: input.id });
+        assert.deepEqual(launches.at(-1)?.modelSelection, selection);
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);

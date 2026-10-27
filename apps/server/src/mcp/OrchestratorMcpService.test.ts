@@ -10,6 +10,7 @@ import {
   OrchestratorMcpTarget,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
+  type ScheduledTaskUpsertInput,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
@@ -2159,6 +2160,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       lastRunStatus: "never",
       lastRunError: null,
       runCount: 0,
+      boundModelSelectionMode: "inherit_thread",
       webhook: {
         path: "/hooks/scheduled-task/secret",
         url: "https://t3.example/hooks/secret",
@@ -2182,6 +2184,7 @@ describe("OrchestratorMcpService provider resolution", () => {
       tasks: ReadonlyArray<ScheduledTask>,
       boundThread: OrchestrationV2ThreadShell | null,
       upserted: Ref.Ref<number>,
+      inputs: ScheduledTaskUpsertInput[] = [],
     ) =>
       layerOrchestratorService.pipe(
         Layer.provide(
@@ -2200,12 +2203,56 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
-              upsert: () =>
-                Ref.update(upserted, (count) => count + 1).pipe(Effect.as({ task: tasks[0]! })),
+              upsert: (input) => {
+                inputs.push(input);
+                return Ref.update(upserted, (count) => count + 1).pipe(
+                  Effect.as({
+                    task: {
+                      ...tasks[0]!,
+                      modelSelection: input.modelSelection,
+                      boundModelSelectionMode:
+                        input.boundModelSelectionMode ?? tasks[0]!.boundModelSelectionMode,
+                    },
+                  }),
+                );
+              },
             }),
           ),
         ),
       );
+
+    it.effect(
+      "updates task selection and policy, preserves omitted fields and lists the saved values",
+      () =>
+        Effect.gen(function* () {
+          const upserted = yield* Ref.make(0);
+          const inputs: ScheduledTaskUpsertInput[] = [];
+          const saved = task({ boundModelSelectionMode: "use_task_selection" });
+          yield* Effect.gen(function* () {
+            const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
+            const selection = {
+              ...saved.modelSelection,
+              options: [{ id: "reasoningEffort", value: "high" }],
+            };
+            const updated = yield* mcp.updateScheduledTask(supervisedClient, {
+              scheduledTaskId: saved.id,
+              modelSelection: selection,
+              boundModelSelectionMode: "inherit_thread",
+            });
+            assert.deepEqual(updated.modelSelection, selection);
+            assert.equal(updated.boundModelSelectionMode, "inherit_thread");
+            yield* mcp.updateScheduledTask(supervisedClient, {
+              scheduledTaskId: saved.id,
+              title: "Title only",
+            });
+            assert.deepEqual(inputs[1]?.modelSelection, saved.modelSelection);
+            assert.isUndefined(inputs[1]?.boundModelSelectionMode);
+            const listed = yield* mcp.listScheduledTasks(supervisedClient, {});
+            assert.deepEqual(listed.tasks[0]?.modelSelection, saved.modelSelection);
+            assert.equal(listed.tasks[0]?.boundModelSelectionMode, "use_task_selection");
+          }).pipe(Effect.provide(service([saved], null, upserted, inputs)));
+        }),
+    );
 
     it.effect("hides a webhook URL from a caller below the task's modes", () =>
       Effect.gen(function* () {

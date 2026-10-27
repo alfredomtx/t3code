@@ -1,4 +1,5 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
+import { continueRestartedRun } from "./RestartContinuation.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -283,7 +284,11 @@ const layerTest = Layer.mergeAll(
   Layer.provide(SqlitePersistence.layerMemory),
   Layer.provide(layerCheckpointStoreTest),
   Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
+  Layer.provide(
+    ServerSettings.layerTest({
+      providerInstances: { [alternateInstanceId]: { driver, config: {}, enabled: true } },
+    }),
+  ),
   Layer.provide(layerTestProviderInstanceRegistry),
   Layer.provide(layerGitWorkflowTest),
   Layer.provide(layerProjectServiceTest),
@@ -4543,6 +4548,212 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("keeps immediate and queued turn selections out of saved thread settings", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const threadManagement = yield* ThreadManagementService.ThreadManagementService;
+      const scheduledLayer = ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.succeed(ThreadManagementService.ThreadManagementService, threadManagement),
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            Layer.mock(SecretRequests.SecretRequests)({}),
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/projects",
+              isScratchProject: () => Effect.succeed(false),
+            }),
+            Scheduler.layer,
+            NodeServices.layer,
+            SqlitePersistence.layerMemory,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const scheduled = yield* ScheduledTaskService.ScheduledTaskService;
+        for (const queued of [false, true]) {
+          for (const instanceId of [modelSelection.instanceId, alternateInstanceId]) {
+            const threadId = ThreadId.make(`turn-selection:${queued}:${instanceId}`);
+            const override = {
+              instanceId,
+              model: "gpt-5.5",
+              options: [{ id: "reasoningEffort", value: "high" }],
+            };
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              commandId: CommandId.make(`${threadId}:create`),
+              threadId,
+              createdBy: "user",
+              creationSource: "web",
+              projectId: ProjectId.make(`${threadId}:project`),
+              title: "Turn override",
+              modelSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: process.cwd(),
+            });
+            const completeActive = Effect.gen(function* () {
+              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const run = projection.runs.findLast((entry) => entry.status === "starting");
+              assert.isDefined(run);
+              const now = yield* DateTime.now;
+              const providerThread = projection.providerThreads.find(
+                (entry) => entry.id === run.providerThreadId,
+              );
+              assert.isDefined(providerThread);
+              yield* eventSink.write({
+                events: [
+                  {
+                    id: EventId.make(`${run.id}:native`),
+                    type: "provider-thread.updated",
+                    threadId,
+                    occurredAt: now,
+                    payload: {
+                      ...providerThread,
+                      nativeThreadRef: {
+                        driver,
+                        nativeId: `native:${providerThread.id}`,
+                        strength: "strong",
+                      },
+                      status: "idle",
+                      lastRunOrdinal: run.ordinal,
+                      updatedAt: now,
+                    },
+                  },
+                  {
+                    id: EventId.make(`${run.id}:complete`),
+                    type: "run.updated",
+                    threadId,
+                    runId: run.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: now,
+                    payload: { ...run, status: "completed", completedAt: now },
+                  },
+                ],
+              });
+            });
+            if (queued) {
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`${threadId}:first`),
+                threadId,
+                messageId: MessageId.make(`${threadId}:first`),
+                text: "First turn",
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+                dispatchMode: { type: "start_immediately" },
+              });
+            }
+            const { task } = yield* scheduled.upsert({
+              id: ScheduledTaskId.make(`${threadId}:task`),
+              projectId: ProjectId.make(`${threadId}:project`),
+              threadId,
+              title: "Scheduled override",
+              prompt: "Scheduled override",
+              enabled: false,
+              schedule: { type: "interval", everyMs: 60000 },
+              workspaceStrategy: { type: "root" },
+              modelSelection: override,
+              boundModelSelectionMode: "use_task_selection",
+              runtimeMode: "full-access",
+              interactionMode: "default",
+            });
+            const dispatched = yield* scheduled.runNow({ id: task.id });
+            assert.equal(
+              dispatched.task.lastRunStatus,
+              "succeeded",
+              dispatched.task.lastRunError ?? "",
+            );
+            if (queued) {
+              const waiting = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(waiting.runs.at(-1)?.modelSelectionScope, "turn");
+              yield* completeActive;
+              yield* orchestrator.resumeQueuedRuns;
+            }
+            const started = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(started.runs.at(-1)?.modelSelection, override);
+            assert.equal(started.runs.at(-1)?.status, "starting");
+            assert.deepEqual(started.thread.modelSelection, modelSelection);
+            assert.equal(started.thread.providerInstanceId, modelSelection.instanceId);
+            const overrideRun = started.runs.at(-1);
+            assert.isDefined(overrideRun);
+            const overrideThread = started.providerThreads.find(
+              (entry) => entry.id === overrideRun.providerThreadId,
+            );
+            assert.isDefined(overrideThread);
+            const sessionId = ProviderSessionId.make(`${threadId}:override-session`);
+            const now = yield* DateTime.now;
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make(`${threadId}:override-session`),
+                  type: "provider-session.attached",
+                  threadId,
+                  occurredAt: now,
+                  payload: {
+                    id: sessionId,
+                    driver,
+                    providerInstanceId: instanceId,
+                    status: "running",
+                    cwd: process.cwd(),
+                    model: override.model,
+                    capabilities: CodexProviderCapabilitiesV2,
+                    createdAt: now,
+                    updatedAt: now,
+                    lastError: null,
+                  },
+                },
+              ],
+            });
+            if (!queued) yield* completeActive;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`${threadId}:ordinary`),
+              threadId,
+              messageId: MessageId.make(`${threadId}:ordinary`),
+              text: "Ordinary turn",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: queued ? "queue_after_active" : "start_immediately" },
+            });
+            if (queued) {
+              const waiting = yield* orchestrator.getThreadProjection(threadId);
+              assert.equal(waiting.runs.at(-1)?.status, "queued");
+              yield* completeActive;
+              yield* orchestrator.resumeQueuedRuns;
+            }
+            const next = yield* orchestrator.getThreadProjection(threadId);
+            const ordinaryRun = next.runs.at(-1);
+            assert.isDefined(ordinaryRun);
+            assert.equal(ordinaryRun.status, "starting");
+            assert.deepEqual(ordinaryRun.modelSelection, modelSelection);
+            const ordinaryThread = next.providerThreads.find(
+              (entry) => entry.id === ordinaryRun.providerThreadId,
+            );
+            assert.isDefined(ordinaryThread);
+            assert.equal(ordinaryThread.providerInstanceId, modelSelection.instanceId);
+            assert.equal(next.thread.activeProviderThreadId, ordinaryThread.id);
+            if (instanceId !== modelSelection.instanceId) {
+              assert.notEqual(ordinaryThread.id, overrideThread.id);
+              if (queued)
+                assert.isFalse(next.providerSessions.some((entry) => entry.id === sessionId));
+              assert.isTrue(
+                next.contextTransfers.some(
+                  (entry) =>
+                    entry.targetRunId === ordinaryRun.id && entry.type === "provider_handoff",
+                ),
+              );
+            }
+            assert.deepEqual(next.thread.modelSelection, modelSelection);
+          }
+        }
+      }).pipe(Effect.provide(scheduledLayer));
+    }),
+  );
+
   it.effect("keeps queued user selections and pauses only the limited provider", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -6022,6 +6233,136 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
+  it.effect.each([
+    ["restart", alternateInstanceId],
+    ["usage_limit", modelSelection.instanceId],
+    ["usage_limit", alternateInstanceId],
+  ] as const)("preserves a task turn selection through %s on %s", ([reason, instanceId]) =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const events = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`scoped-recovery:${reason}:${instanceId}`);
+      const projectId = ProjectId.make(`${threadId}:project`);
+      const now = yield* DateTime.now;
+      const override = {
+        instanceId,
+        model: "gpt-5.5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      yield* seedProject({
+        projectId,
+        title: "Recovery",
+        workspaceRoot: process.cwd(),
+        defaultModelSelection: modelSelection,
+        createdAt: DateTime.formatIso(now),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId,
+        title: "Task recovery",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${threadId}:start`),
+        threadId,
+        messageId: MessageId.make(`${threadId}:start`),
+        text: "Task turn",
+        attachments: [],
+        modelSelection: override,
+        modelSelectionScope: "turn",
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+      yield* events.write({
+        events: [
+          {
+            id: EventId.make(`${threadId}:terminal`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...source,
+              status: reason === "restart" ? "cancelled" : "failed",
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      if (reason === "restart") {
+        yield* continueRestartedRun({ threadId, sourceRunId: source.id }).pipe(
+          Effect.provide(ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true })),
+        );
+      } else {
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:error`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`${threadId}:error`),
+                type: "error",
+                threadId,
+                runId: source.id,
+                nodeId: source.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+        assert.isNotNull(arm);
+        yield* orchestrator.dispatch(arm);
+        const armed = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (entry) => entry.id === threadId,
+        )!;
+        const resume = limitRecoveryCommand(armed, true, Date.parse(resetAt));
+        assert.isNotNull(resume);
+        yield* TestClock.adjust("1 minute");
+        yield* orchestrator.dispatch(resume);
+      }
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.lengthOf(after.runs, 2);
+      assert.deepEqual(after.runs[1]?.modelSelection, override);
+      assert.equal(after.runs[1]?.modelSelectionScope, "turn");
+      assert.equal(after.runs[1]?.status, "starting");
+      assert.equal(after.thread.providerInstanceId, modelSelection.instanceId);
+      assert.deepEqual(after.thread.modelSelection, modelSelection);
+    }),
+  );
+
   it.effect.each(["interrupted", "usage_limit"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>

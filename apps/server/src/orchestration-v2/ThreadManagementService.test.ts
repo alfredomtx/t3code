@@ -37,13 +37,18 @@ const layerReceiptsTest = CommandReceiptStore.layer.pipe(
 );
 
 const layerDispatchChokepointTest =
-  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) => (dispatched: Array<string>) =>
+  (settingsLayer: ReturnType<typeof ServerSettings.layerTest>) =>
+  (
+    dispatched: Array<string>,
+    source?: Pick<OrchestrationV2Run, "id" | "modelSelection" | "modelSelectionScope">,
+  ) =>
     ThreadManagementService.layer.pipe(
       Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
       Layer.provide(
         Layer.mock(Orchestrator.OrchestratorV2)({
           getThreadRecords: () =>
             Effect.succeed({
+              runs: source === undefined ? [] : [source],
               thread: {
                 id: ThreadId.make("thread:thread-management:chokepoint"),
                 projectId: ProjectId.make("project:thread-management:chokepoint"),
@@ -104,6 +109,47 @@ it.effect(
       expect(error).toMatchObject({ projectId, instanceId });
       expect(dispatched).toEqual([]);
     }).pipe(Effect.provide(layerTest));
+  },
+);
+
+it.effect.each([true, false])(
+  "checks a turn-scoped usage continuation against its source provider, enabled=%s",
+  (enabled) => {
+    const saved = ProviderInstanceId.make("codex_work");
+    const actual = ProviderInstanceId.make("codex_task");
+    const source = {
+      id: RunId.make("limited-task"),
+      modelSelectionScope: "turn" as const,
+      modelSelection: { instanceId: actual, model: "task-model" },
+    };
+    const dispatched: Array<string> = [];
+    const testLayer = layerDispatchChokepointTest(
+      ServerSettings.layerTest({
+        providerInstances: {
+          [saved]: { driver: "codex", enabled: !enabled },
+          [actual]: { driver: "codex", enabled },
+        },
+      }),
+    )(dispatched, source);
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const result = yield* threads
+        .dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("limit-resume-check"),
+          threadId: ThreadId.make("thread:thread-management:chokepoint"),
+          messageId: MessageId.make("limit-resume-check"),
+          usageLimitContinuationOfRunId: source.id,
+          text: "Continue",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "server",
+        })
+        .pipe(Effect.exit);
+      expect(result._tag).toBe(enabled ? "Success" : "Failure");
+      expect(dispatched).toEqual(enabled ? ["message.dispatch"] : []);
+    }).pipe(Effect.provide(testLayer));
   },
 );
 

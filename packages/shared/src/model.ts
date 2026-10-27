@@ -227,6 +227,19 @@ function getReportedOptionValue(
   return getRawSelectionValueById(reportedSelection.options, id);
 }
 
+export function mergeProviderOptionSelections(input: {
+  readonly current: ReadonlyArray<ProviderOptionSelection> | undefined;
+  readonly descriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  readonly next: ReadonlyArray<ProviderOptionSelection> | undefined;
+}): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const owned = new Set(input.descriptors.map((descriptor) => descriptor.id));
+  const options = [
+    ...(input.current ?? []).filter((option) => !owned.has(option.id)),
+    ...(input.next ?? []).filter((option) => owned.has(option.id)),
+  ];
+  return options.length > 0 ? options : undefined;
+}
+
 export function getProviderOptionStatedValue(
   id: string,
   selection?: ModelSelection | null,

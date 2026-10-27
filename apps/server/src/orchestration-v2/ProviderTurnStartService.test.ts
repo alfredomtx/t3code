@@ -1417,3 +1417,69 @@ for (const previousMessages of [[], ["/compact", " /COMPACT "]]) {
       }),
   );
 }
+
+effectIt.effect.each([false, true])(
+  "launches the saved run selection instead of thread settings when resuming native state=%s",
+  (resume) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({ text: "Continue", failReadsAfterRunning: true });
+      const projection = harness.projection();
+      const run = projection.runs[0]!;
+      const selection = {
+        ...run.modelSelection,
+        model: "task-model",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      };
+      const providerThread = {
+        ...projection.providerThreads[0]!,
+        nativeThreadRef: resume
+          ? {
+              driver: ProviderDriverKind.make("codex"),
+              nativeId: "native-existing",
+              strength: "strong" as const,
+            }
+          : null,
+      };
+      const ensureThread = vi.fn(() => Effect.succeed(providerThread));
+      const resumeThread = vi.fn(() => Effect.succeed(providerThread));
+      harness.open.mockReturnValue(
+        Effect.succeed({
+          driver: providerThread.driver,
+          providerSession: {
+            id: providerThread.providerSessionId,
+            driver: providerThread.driver,
+            providerInstanceId: run.providerInstanceId,
+            status: "ready",
+            cwd: "/tmp/native-account-command",
+            model: selection.model,
+            capabilities: CodexProviderCapabilitiesV2,
+            createdAt: providerThread.createdAt,
+            updatedAt: providerThread.updatedAt,
+            lastError: null,
+          },
+          ensureThread,
+          resumeThread,
+        } as never),
+      );
+      harness.setProjection({
+        ...projection,
+        thread: { ...projection.thread, modelSelection: run.modelSelection },
+        runs: [{ ...run, modelSelection: selection, modelSelectionScope: "turn" }],
+        providerThreads: [providerThread],
+      });
+      yield* harness.start;
+      expect(harness.open).toHaveBeenCalledWith(
+        expect.objectContaining({ modelSelection: selection }),
+      );
+      expect(resume ? resumeThread : ensureThread).toHaveBeenCalledWith(
+        expect.objectContaining({ modelSelection: selection }),
+      );
+      expect(harness.startRootRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          modelSelection: selection,
+          run: expect.objectContaining({ modelSelectionScope: "turn" }),
+        }),
+      );
+      expect(harness.projection().thread.modelSelection).toEqual(run.modelSelection);
+    }),
+);

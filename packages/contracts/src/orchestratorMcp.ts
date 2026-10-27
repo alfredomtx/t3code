@@ -19,6 +19,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  BoundModelSelectionMode,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
@@ -37,6 +38,7 @@ import {
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
+import { ModelSelection } from "./modelSelection.ts";
 import { ProviderOptionSelection, ProviderOptionSelectionValue } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
@@ -572,6 +574,11 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
   prompt: OrchestratorMcpPrompt,
   schedule: OrchestratorMcpSchedule,
   title: Schema.optional(OrchestratorMcpTitle),
+  modelSelection: Schema.optional(ModelSelection),
+  boundModelSelectionMode: Schema.optional(BoundModelSelectionMode).annotate({
+    description:
+      "inherit_thread follows the bound thread. use_task_selection overrides one turn. Omit to keep the saved policy.",
+  }),
   enabled: Schema.optional(Schema.Boolean.annotate({ description: "Default true." })),
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
@@ -599,6 +606,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   enabled: Schema.Boolean,
   projectId: ProjectId,
   boundThreadId: Schema.NullOr(ThreadId),
+  modelSelection: ModelSelection,
+  boundModelSelectionMode: BoundModelSelectionMode,
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
@@ -633,6 +642,11 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   scheduledTaskId: ScheduledTaskId,
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
+  modelSelection: Schema.optional(ModelSelection),
+  boundModelSelectionMode: Schema.optional(BoundModelSelectionMode).annotate({
+    description:
+      "inherit_thread follows the bound thread. use_task_selection overrides one turn. Omit to keep the saved policy.",
+  }),
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),

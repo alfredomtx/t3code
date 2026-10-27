@@ -137,7 +137,11 @@ export function restartContinuationRun(
   if (run.status !== "running" && !preparedContinuation && !settled) return;
   if (restartContinuationBlocked(projection, run, now, settled)) return;
   const liveTurnRequired = !preparedContinuation && !settled;
-  if (projection.thread.providerInstanceId !== run.providerInstanceId) return;
+  if (
+    run.modelSelectionScope !== "turn" &&
+    projection.thread.providerInstanceId !== run.providerInstanceId
+  )
+    return;
   const providerThread = projection.providerThreads.find(
     (thread) => thread.id === run.providerThreadId,
   );
@@ -219,7 +223,11 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       )
     )
       return;
-    if (projection.thread.providerInstanceId !== source.providerInstanceId) return;
+    if (
+      source.modelSelectionScope !== "turn" &&
+      projection.thread.providerInstanceId !== source.providerInstanceId
+    )
+      return;
     // A turn that keeps crashing the server would otherwise restart it forever.
     let chainLength = 0;
     const loopWindowStart =
@@ -290,6 +298,9 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
         },
         attachments: [],
         modelSelection: source.modelSelection,
+        ...(source.modelSelectionScope === undefined
+          ? {}
+          : { modelSelectionScope: source.modelSelectionScope }),
         dispatchMode: { type: "start_immediately" },
         createdBy: "agent",
         creationSource: "server",

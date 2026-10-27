@@ -60,6 +60,7 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/settings/ScheduledTasksSettings.browser.test.tsx",
   "apps/web/src/shortcuts/chatRouteCommands.browser.test.ts",
   "apps/web/src/components/RightPanelTabs.browser.test.tsx",
   "apps/web/src/components/files/BrowserDocumentFrame.browser.test.tsx",
@@ -84,6 +85,12 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
+    "apps/server/src/orchestration-v2/RestartContinuation.test.ts",
+    "apps/server/src/orchestration-v2/ThreadManagementService.test.ts",
+    "apps/server/src/scheduledTasks/ScheduledTaskService.test.ts",
+    "packages/client-runtime/src/state/serverScheduledTasks.test.ts",
+    "packages/contracts/src/scheduledTask.test.ts",
     "apps/web/src/components/preview/openPreviewSession.test.ts",
     "apps/web/src/components/preview/openTerminalLinkInPreview.test.ts",
     "apps/web/src/previewStateStore.test.ts",
