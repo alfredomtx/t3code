@@ -2568,9 +2568,7 @@ export default function ChatView(props: ChatViewProps) {
 
   useChatShortcuts({
     getTimelineScrollableNode: () =>
-      paintOnlyDisplayedTimeline || displayedTimelineKey !== activeThreadKey
-        ? null
-        : getTimelineScrollableNodeStable(),
+      displayedTimelineKey !== activeThreadKey ? null : getTimelineScrollableNodeStable(),
     enabled: activeThreadId !== null && !backgroundThread,
     keybindings,
     scriptKeybindings,

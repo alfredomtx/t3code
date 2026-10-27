@@ -1,20 +1,13 @@
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
-  runAtomCommand,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
   PullRequestFilesViewedResult,
   PullRequestRef,
 } from "@t3tools/contracts";
-import * as Option from "effect/Option";
-import { AsyncResult } from "effect/reactivity";
 
-import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { pullRequestEnvironment } from "~/state/pullRequests";
-
-import { toastManager } from "../ui/toast";
 import {
   revertFileViewedOverlay,
   settleFileViewedOverlay,
@@ -228,30 +221,4 @@ function filesViewedScopeKey({ environmentId, reference }: FilesViewedTarget): s
     reference.repository,
     reference.number,
   ]);
-}
-
-const filesViewedAtom = ({ environmentId, reference }: FilesViewedTarget) =>
-  pullRequestEnvironment.filesViewed({ environmentId, input: reference });
-
-const filesViewedStore = createFilesViewedStore({
-  flushDelayMs: 400,
-  subscribeAnswers: (target, onAnswer) =>
-    appAtomRegistry.subscribe(
-      filesViewedAtom(target),
-      (result) => onAnswer(Option.getOrNull(AsyncResult.value(result))),
-      { immediate: true },
-    ),
-  send: ({ environmentId, reference }, files) =>
-    runAtomCommand(
-      appAtomRegistry,
-      pullRequestEnvironment.setFilesViewed,
-      { environmentId, input: { ...reference, files } },
-      { reportFailure: false },
-    ),
-  refresh: (target) => appAtomRegistry.refresh(filesViewedAtom(target)),
-  reportFailure: () => toastManager.add({ type: "error", title: "Could not update viewed files" }),
-});
-
-export function filesViewedScope(target: FilesViewedTarget): FilesViewedScopeHandle {
-  return filesViewedStore.scope(target);
 }
