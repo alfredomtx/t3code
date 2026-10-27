@@ -1,6 +1,6 @@
 import type { KeybindingCommand } from "@t3tools/contracts";
 
-const PREVIEW_COMMAND_ACTIONS = [
+export const PREVIEW_COMMAND_ACTIONS = [
   ["preview.toggle", "toggle-panel"],
   ["preview.refresh", "refresh"],
   ["preview.focusUrl", "focus-url"],
@@ -11,10 +11,6 @@ const PREVIEW_COMMAND_ACTIONS = [
 
 export const PREVIEW_COMMANDS = PREVIEW_COMMAND_ACTIONS.map(([command]) => command);
 export type PreviewAction = (typeof PREVIEW_COMMAND_ACTIONS)[number][1];
-
-export function previewActionForCommand(command: string): PreviewAction | null {
-  return PREVIEW_COMMAND_ACTIONS.find(([candidate]) => candidate === command)?.[1] ?? null;
-}
 
 const EVENT_NAME = "t3code:preview-action";
 

@@ -60,6 +60,7 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/shortcuts/chatRouteCommands.browser.test.ts",
   "apps/web/src/components/RightPanelTabs.browser.test.tsx",
   "apps/web/src/components/files/BrowserDocumentFrame.browser.test.tsx",
   "apps/web/src/components/preview/PreviewView.browser.test.tsx",
