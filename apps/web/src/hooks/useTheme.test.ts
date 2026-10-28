@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { applySharedThemePreferences, readThemePreference } from "./useTheme";
 
 function createStorage(overrides: Partial<Storage> = {}): Storage {
   const store = new Map<string, string>();
@@ -27,12 +28,11 @@ afterEach(() => {
 });
 
 describe("theme failure handling", () => {
-  it("follows only theme keys and removes values deleted in the main app", async () => {
+  it("follows only theme keys and removes values deleted in the main app", () => {
     const storage = createStorage();
     storage.setItem("private-draft", "preserve");
     storage.setItem("t3code:theme-halves:v1", "old");
     vi.stubGlobal("window", { localStorage: storage });
-    const { applySharedThemePreferences, readThemePreference } = await import("./useTheme");
     applySharedThemePreferences({
       following: true,
       values: { "t3code:theme": "dark", "private-draft": "discard" },

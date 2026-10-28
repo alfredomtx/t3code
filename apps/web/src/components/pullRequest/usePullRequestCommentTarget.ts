@@ -13,7 +13,7 @@ export function usePullRequestCommentTarget<T extends HTMLElement = HTMLElement>
   const requestId = request?.id;
   const matches = isPullRequestCommentTarget(url, request);
   const handled = useEffectEvent((id: string) => onHandled?.(id));
-  // oxlint-disable-next-line t3code/react-effect-budget -- Synchronize a linked comment with browser scrolling and focus after its discussion opens.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Synchronize a linked comment with browser scrolling and focus after its discussion opens.
   useEffect(() => {
     const node = ref.current;
     if (!matches || requestId === undefined || !node) return;

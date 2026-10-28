@@ -308,6 +308,7 @@ export function usePullRequestFilesViewed(options: {
       void drain(lane);
     };
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retain the shared viewed-file writer and release queued work when this review closes.
   useEffect(() => initializeLane(scopeKey), [scopeKey]);
 
   const setViewed = useStableCallback((path: string, viewed: boolean) => {
