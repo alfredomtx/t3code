@@ -3262,6 +3262,7 @@ export const OrchestrationV2Command = Schema.Union([
     ...OrchestrationV2CreationFields,
     commandId: CommandId,
     parentThreadId: ThreadId,
+    destinationProjectId: Schema.optional(ProjectId),
     parentRunId: RunId,
     parentNodeId: NodeId,
     task: TrimmedNonEmptyString,

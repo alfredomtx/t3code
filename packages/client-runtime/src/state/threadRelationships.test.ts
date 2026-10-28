@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
 import {
@@ -21,18 +21,22 @@ describe("thread relationships", () => {
       threads: [
         {
           id: parent,
+          projectId: ProjectId.make("project:coordinator"),
           activityRunStatus: parentStatus,
           status: "cancelled",
           lineage: { parentThreadId: null },
         },
         {
           id: child,
+          projectId: ProjectId.make("project:worker"),
           activityRunStatus: childStatus,
-          lineage: { parentThreadId: parent, relationshipToParent: "fork" },
+          lineage: { parentThreadId: parent, relationshipToParent: "subagent" },
         },
       ] as never,
       projection: null,
     });
+    expect(graph.nodes.get(child)?.thread?.projectId).toBe("project:worker");
+    expect(graph.nodes.get(parent)?.thread?.projectId).toBe("project:coordinator");
     expect(threadRelationshipRowStatus(graph, immediateThreadRelationships(graph, child)[0]!)).toBe(
       parentStatus,
     );

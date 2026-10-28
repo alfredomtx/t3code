@@ -302,21 +302,21 @@ const seedParentWithTerminalTask = (input: {
   });
 
 it.layer(layerTest)("delegated completion delivery repairs", (it) => {
-  it.effect(
-    "interrupting a completion wake disposes both cohorts without reviving them on late results",
-    () =>
+  it.effect.each([false, true])(
+    "interrupting a completion wake disposes both cohorts across projects %s",
+    (crossProject) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const sink = yield* EventSink.EventSinkV2;
         const now = yield* DateTime.now;
-        const threadId = ThreadId.make("stop-wake-parent");
-        const originRunId = RunId.make("stop-wake-origin");
-        const incomingTaskId = NodeId.make("stop-wake-incoming");
+        const threadId = ThreadId.make(`stop-wake-parent-${crossProject}`);
+        const originRunId = RunId.make(`stop-wake-origin-${crossProject}`);
+        const incomingTaskId = NodeId.make(`stop-wake-incoming-${crossProject}`);
         yield* seedParentWithTerminalTask({
           threadId,
-          projectId: ProjectId.make("stop-wake-project"),
+          projectId: ProjectId.make(`stop-wake-project-${crossProject}`),
           runId: originRunId,
-          rootNodeId: NodeId.make("stop-wake-origin-root"),
+          rootNodeId: NodeId.make(`stop-wake-origin-root-${crossProject}`),
           taskId: incomingTaskId,
           deliveryState: "claimed",
           deliveryTaskIds: [incomingTaskId],
@@ -337,7 +337,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           type: "message.dispatch",
           createdBy: "agent",
           creationSource: "server",
-          commandId: CommandId.make("stop-wake-start"),
+          commandId: CommandId.make(`stop-wake-start-${crossProject}`),
           threadId,
           messageId: delivery.messageId,
           text: "Delegated task completed",
@@ -354,12 +354,22 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
           (run) => run.userMessageId === delivery.messageId,
         )!;
+        const destinationProjectId = ProjectId.make("project:stop-wake-worker");
+        if (crossProject) {
+          yield* (yield* ProjectService.ProjectService).create({
+            commandId: CommandId.make(`stop-wake-worker:create-${crossProject}`),
+            projectId: destinationProjectId,
+            title: "Worker",
+            workspaceRoot: "/workspace/stop-wake-worker",
+          });
+        }
         yield* orchestrator.dispatch({
           type: "delegated_task.request",
           createdBy: "agent",
           creationSource: "mcp",
-          commandId: CommandId.make("stop-wake-delegate"),
+          commandId: CommandId.make(`stop-wake-delegate-${crossProject}`),
           parentThreadId: threadId,
+          ...(crossProject ? { destinationProjectId } : {}),
           parentRunId: wake.id,
           parentNodeId: wake.rootNodeId!,
           task: "Do the next round",
@@ -373,7 +383,7 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
         )!;
         yield* orchestrator.dispatch({
           type: "run.interrupt",
-          commandId: CommandId.make("stop-wake-interrupt"),
+          commandId: CommandId.make(`stop-wake-interrupt-${crossProject}`),
           threadId,
           runId: wake.id,
         });
@@ -399,9 +409,9 @@ it.layer(layerTest)("delegated completion delivery repairs", (it) => {
           type: "message.dispatch",
           createdBy: "user",
           creationSource: "web",
-          commandId: CommandId.make("stop-wake-newer-work"),
+          commandId: CommandId.make(`stop-wake-newer-work-${crossProject}`),
           threadId,
-          messageId: MessageId.make("stop-wake-newer-work"),
+          messageId: MessageId.make(`stop-wake-newer-work-${crossProject}`),
           text: "Start unrelated work",
           attachments: [],
           modelSelection,
@@ -2175,7 +2185,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       });
       const child = yield* seedRestartCancelledChild({
         parentThreadId: threadId,
-        projectId,
+        projectId: ProjectId.make("project:result-message-worker"),
         parentRunId: runId,
         rootNodeId,
         name: "result-message-child",
@@ -2952,7 +2962,7 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
                     createdBy: "agent",
                     creationSource: "server",
                     id: childThreadId,
-                    projectId: ProjectId.make(`late-settle-project-${key}`),
+                    projectId: ProjectId.make(`late-settle-worker-${key}`),
                     title: name,
                     providerInstanceId: modelSelection.instanceId,
                     modelSelection,

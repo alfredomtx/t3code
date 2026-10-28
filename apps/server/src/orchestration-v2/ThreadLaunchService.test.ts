@@ -17,6 +17,7 @@ import {
   CommandId,
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
+  EventId,
   MessageId,
   ProjectId,
   ProviderDriverKind,
@@ -267,6 +268,7 @@ function makeHarness(options: HarnessOptions = {}) {
       layerTitleRegeneration,
       layerOutbox,
       layerDatabase,
+      ProjectStore.layer.pipe(Layer.provide(layerDatabase)),
       layerExternalServices,
     ),
     createWorktree,
@@ -1021,9 +1023,99 @@ it.effect("runs a Scratch scheduled task saved with a worktree in its own folder
   }).pipe(Effect.provide(harness.layer));
 });
 
-it.effect.each(["stable", "upstream/release"])(
-  "launches from %s with the fetched commit and remote PR base",
-  (baseRef) =>
+it.effect("prepares a delegated worktree in the destination repository", () =>
+  Effect.gen(function* () {
+    const setup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      runSetup: () =>
+        Deferred.succeed(setup, undefined).pipe(Effect.as({ status: "no-script" as const })),
+    });
+    yield* Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* projects.apply({
+        sequence: 0,
+        eventId: EventId.make("destination:create"),
+        aggregateKind: "project",
+        aggregateId: otherProjectId,
+        occurredAt: otherProject.createdAt,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: { ...otherProject, projectId: otherProjectId },
+      });
+      const parentThreadId = ThreadId.make("delegation:parent");
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("delegation:create"),
+        threadId: parentThreadId,
+        projectId,
+        title: "Coordinator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "parent-only",
+        worktreePath: "/parent-only",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("delegation:start"),
+        threadId: parentThreadId,
+        messageId: MessageId.make("delegation:start"),
+        text: "Coordinate",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parent = yield* threads.getThreadProjection(parentThreadId);
+      const result = yield* threads.dispatch({
+        type: "delegated_task.request",
+        commandId: CommandId.make("delegation:request"),
+        parentThreadId,
+        destinationProjectId: otherProjectId,
+        parentRunId: parent.runs[0]!.id,
+        parentNodeId: parent.runs[0]!.rootNodeId!,
+        task: "Implement in the destination",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        workspaceStrategy: { type: "worktree", baseRef: "destination-sha", startFromOrigin: false },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+      const created = result.storedEvents.find((stored) => stored.event.type === "run.created");
+      assert.equal(created?.event.type, "run.created");
+      if (created?.event.type !== "run.created") return;
+      yield* launches.prepareRun({
+        commandId: CommandId.make("delegation:request"),
+        threadId: created.event.threadId,
+        runId: created.event.payload.id,
+      });
+      yield* Deferred.await(setup);
+      const child = yield* threads.getThreadProjection(created.event.threadId);
+      assert.equal(child.thread.projectId, otherProjectId);
+      assert.equal(child.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.cwd, otherProject.workspaceRoot);
+      assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, "destination-sha");
+      assert.equal(harness.runSetup.mock.calls[0]?.[0]?.projectId, otherProjectId);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect.each([
+  { baseRef: "stable", startFromOrigin: true },
+  { baseRef: "upstream/release", startFromOrigin: true },
+  { baseRef: "HEAD", startFromOrigin: false },
+])(
+  "launches a worktree from $baseRef with startFromOrigin $startFromOrigin and the expected commit",
+  ({ baseRef, startFromOrigin }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const git = yield* GitVcsDriver.GitVcsDriver;
@@ -1074,7 +1166,7 @@ it.effect.each(["stable", "upstream/release"])(
           type: "worktree" as const,
           baseRef,
           branch: "feature",
-          startFromOrigin: true,
+          startFromOrigin,
         };
         yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: workspace });
         const launched = yield* launches.launch(
@@ -1089,7 +1181,7 @@ it.effect.each(["stable", "upstream/release"])(
         assert.equal(projection.thread.worktreePath, worktreePath);
         assert.equal(
           (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
-          remoteHead,
+          startFromOrigin ? remoteHead : localHead,
         );
         const preview = yield* git.getReviewDiffPreview({ cwd: worktreePath });
         const comparisonBase = preview.sources.find(
@@ -1097,7 +1189,7 @@ it.effect.each(["stable", "upstream/release"])(
         )!.baseRef;
         assert.equal(
           (yield* command(worktreePath, ["rev-parse", `${comparisonBase}^{commit}`])).stdout.trim(),
-          remoteHead,
+          startFromOrigin ? remoteHead : localHead,
         );
       }).pipe(Effect.provide(harness.layer));
     }).pipe(

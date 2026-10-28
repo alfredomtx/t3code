@@ -1253,6 +1253,7 @@ const make = Effect.gen(function* () {
 
   const resolveTarget = Effect.fn("OrchestratorMcpService.resolveTarget")(function* (input: {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly projectId: ProjectId;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
@@ -1289,7 +1290,7 @@ const make = Effect.gen(function* () {
         const enabledForProject =
           input.skipProjectEnablementFilter === true ||
           (yield* threadManagement.isProviderInstanceEnabledForProject({
-            projectId: input.parent.thread.projectId,
+            projectId: input.projectId,
             instanceId: candidate.instanceId,
           }));
         if (enabledForProject) {
@@ -2204,15 +2205,6 @@ const make = Effect.gen(function* () {
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
-      if (
-        input.target?.projectId !== undefined &&
-        input.target.projectId !== parent.thread.projectId
-      ) {
-        return yield* failure(
-          "invalid_request",
-          "A local task runs in this thread's project. Omit target.projectId, or pass target.environmentId to run it in that environment's project.",
-        );
-      }
       const parentRun = parent.runs
         .filter(ThreadManagementService.isActiveRun)
         .toSorted((left, right) => right.ordinal - left.ordinal)[0];
@@ -2234,8 +2226,14 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const destinationProjectId = input.target?.projectId ?? parent.thread.projectId;
+      const crossProject = destinationProjectId !== parent.thread.projectId;
+      const destination = isRetryOfAcceptedDelegation
+        ? undefined
+        : yield* requireProject(destinationProjectId);
       const target = yield* resolveTargetRechecking({
         parent,
+        projectId: destinationProjectId,
         target: input.target,
         providers,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
@@ -2251,21 +2249,28 @@ const make = Effect.gen(function* () {
       );
       let workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
       if (input.isolation === "worktree" && !isRetryOfAcceptedDelegation) {
-        const project = yield* requireProject(parent.thread.projectId);
+        const project = destination ?? (yield* requireProject(destinationProjectId));
         const base = yield* gitDriver
           .resolveCommit({
-            cwd: parent.thread.worktreePath ?? project.workspaceRoot,
+            cwd: crossProject
+              ? project.workspaceRoot
+              : (parent.thread.worktreePath ?? project.workspaceRoot),
             revision: "HEAD",
           })
           .pipe(
             Effect.mapError(() =>
-              failure("invalid_request", "Unable to resolve the parent checkout commit."),
+              failure(
+                "invalid_request",
+                crossProject
+                  ? `Isolation "worktree" requires a Git checkout at destination project "${project.title}" (${project.workspaceRoot}).`
+                  : "Unable to resolve the parent checkout commit.",
+              ),
             ),
           );
         // Launch preparation creates the worktree from the project root, so a
         // parent checkout in another repository (such as a Git folder inside
         // Scratch) would hand it a commit it cannot find.
-        if (parent.thread.worktreePath !== null) {
+        if (!crossProject && parent.thread.worktreePath !== null) {
           yield* gitDriver
             .resolveCommit({ cwd: project.workspaceRoot, revision: base.commitSha })
             .pipe(
@@ -2289,6 +2294,7 @@ const make = Effect.gen(function* () {
           creationSource: "mcp",
           commandId,
           parentThreadId: scope.thread.threadId,
+          destinationProjectId,
           parentRunId: parentRun.id,
           parentNodeId: parentRun.rootNodeId,
           task: taskPrompt(input),
@@ -2643,6 +2649,7 @@ const make = Effect.gen(function* () {
                 : null;
               const target = yield* resolveTargetRechecking({
                 parent,
+                projectId: parent.thread.projectId,
                 target:
                   committedThread === null
                     ? request.target
