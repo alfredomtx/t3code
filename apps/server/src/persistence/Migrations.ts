@@ -72,7 +72,10 @@ import Migration0066 from "./Migrations/066_RepairClientSettlementTimestamps.ts"
 import Migration0067 from "./Migrations/067_WebhookDedupe.ts";
 import Migration0068 from "./Migrations/068_ShellStopRequestIndex.ts";
 import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
-import Migration0070 from "./Migrations/070_ScheduledTaskModelSelectionMode.ts";
+import Migration0070 from "./Migrations/070_PeerLinks.ts";
+import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
+import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
+import Migration0073 from "./Migrations/073_ScheduledTaskModelSelectionMode.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -145,7 +148,10 @@ const migrationEntries = [
   [67, "WebhookDedupe", Migration0067],
   [68, "ShellStopRequestIndex", Migration0068],
   [69, "ThreadMessageSearch", Migration0069],
-  [70, "ScheduledTaskModelSelectionMode", Migration0070],
+  [70, "PeerLinks", Migration0070],
+  [71, "PeerLinkFence", Migration0071],
+  [72, "WaitingLinkRequestIndex", Migration0072],
+  [73, "ScheduledTaskModelSelectionMode", Migration0073],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -203,40 +209,54 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
-  const includesV2 =
-    toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
-  const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
-  if (includesV2) {
-    yield* assertV2MigrationsCanRun(toMigrationInclusive);
-  }
-  const executedMigrations = [
-    ...previewMigrations,
-    ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
-  ];
-  const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
-  yield* migrations.length === 0
-    ? Effect.logDebug("Database schema is current")
-    : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
-
   const sql = yield* SqlClient.SqlClient;
-  const recorded = yield* sql<{
-    readonly migration_id: number;
-    readonly name: string;
-  }>`SELECT migration_id, name FROM effect_sql_migrations`;
-  const manifestNames = new Map<number, string>(migrationEntries.map(([id, name]) => [id, name]));
-  const divergent = recorded.flatMap((row) => {
-    const expected = manifestNames.get(row.migration_id);
-    if (expected === undefined) {
-      return [`${row.migration_id}:${row.name} (unknown to this build)`];
-    }
-    return expected === row.name
-      ? []
-      : [`${row.migration_id}:${row.name} (this build: ${expected})`];
-  });
-  if (divergent.length > 0) {
-    yield* Effect.logWarning(
-      "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
-    ).pipe(Effect.annotateLogs({ divergent }));
-  }
-  return executedMigrations;
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      const includesV2 =
+        toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
+      const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
+      if (includesV2) {
+        if (toMigrationInclusive === undefined || toMigrationInclusive >= 70) {
+          const tables =
+            yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+          if (tables.length > 0) {
+            // Published Personal builds used upstream's new id 70 for the task model policy.
+            yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 70 AND name = 'ScheduledTaskModelSelectionMode'`;
+          }
+        }
+        yield* assertV2MigrationsCanRun(toMigrationInclusive);
+      }
+      const executedMigrations = [
+        ...previewMigrations,
+        ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
+      ];
+      const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
+      yield* migrations.length === 0
+        ? Effect.logDebug("Database schema is current")
+        : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+
+      const recorded = yield* sql<{
+        readonly migration_id: number;
+        readonly name: string;
+      }>`SELECT migration_id, name FROM effect_sql_migrations`;
+      const manifestNames = new Map<number, string>(
+        migrationEntries.map(([id, name]) => [id, name]),
+      );
+      const divergent = recorded.flatMap((row) => {
+        const expected = manifestNames.get(row.migration_id);
+        if (expected === undefined) {
+          return [`${row.migration_id}:${row.name} (unknown to this build)`];
+        }
+        return expected === row.name
+          ? []
+          : [`${row.migration_id}:${row.name} (this build: ${expected})`];
+      });
+      if (divergent.length > 0) {
+        yield* Effect.logWarning(
+          "Database migration history diverges from this build; recorded migration ids are skipped, not reconciled by name.",
+        ).pipe(Effect.annotateLogs({ divergent }));
+      }
+      return executedMigrations;
+    }),
+  );
 });

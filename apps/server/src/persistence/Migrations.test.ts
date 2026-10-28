@@ -75,6 +75,38 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  it.effect("upgrades published Personal migration 70 and runs upstream peer migrations", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 69 });
+      yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN bound_model_selection_mode TEXT NOT NULL DEFAULT 'inherit_thread'`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'ScheduledTaskModelSelectionMode')`;
+      yield* runMigrations();
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.lengthOf(yield* sql`SELECT fenced FROM peer_environment_links`, 0);
+      const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(scheduled_tasks)`;
+      assert.strictEqual(
+        columns.filter((column) => column.name === "bound_model_selection_mode").length,
+        1,
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect.each([71, 73])("preserves legacy Personal history when id %s blocks migration", (id) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 69 });
+      yield* sql`ALTER TABLE scheduled_tasks ADD COLUMN bound_model_selection_mode TEXT NOT NULL DEFAULT 'inherit_thread'`;
+      yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'ScheduledTaskModelSelectionMode'), (${id}, 'UnknownMigration')`;
+      const before = yield* history;
+      assert.deepStrictEqual(yield* runMigrations({ toMigrationInclusive: 69 }), []);
+      assert.deepStrictEqual(yield* history, before);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(runMigrations())));
+      assert.deepStrictEqual(yield* history, before);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect.each([30, 54])("still starts with a site-local migration at id %s", (id) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

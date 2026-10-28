@@ -13,7 +13,6 @@ const testState = vi.hoisted(() => ({
   updateServer: vi.fn(),
   toast: vi.fn(),
   clipboard: vi.fn(),
-  continueThreadsAfterServerUpdate: false,
   sessionAtom: null as unknown,
 }));
 
@@ -26,16 +25,6 @@ vi.mock(import("~/hooks/useCopyToClipboard"), async (original) => ({
     },
     isCopied: false,
   })) as never,
-}));
-vi.mock(import("~/hooks/useSettings"), async (original) => ({
-  ...(await original()),
-  useEnvironmentSettings: ((
-    _environmentId: EnvironmentId,
-    selector: (settings: { continueThreadsAfterServerUpdate: boolean }) => unknown,
-  ) =>
-    selector({
-      continueThreadsAfterServerUpdate: testState.continueThreadsAfterServerUpdate,
-    })) as never,
 }));
 vi.mock(import("~/branding"), async (original) => ({
   ...(await original()),
@@ -105,7 +94,6 @@ function setup(): Disposable {
   testState.updateServer.mockReset();
   testState.toast.mockReset();
   testState.clipboard.mockReset();
-  testState.continueThreadsAfterServerUpdate = false;
   sessionAtom = Atom.make<SessionResult>(AsyncResult.success(currentSession));
   testState.sessionAtom = sessionAtom;
   resetConfirmDialogForTests();
@@ -337,33 +325,6 @@ describe("ServerUpdateAction", () => {
       description: "Desktop app relaunched on 0.0.34.",
     });
   });
-
-  it("leaves thread continuation off by default", async () => {
-    using _state = setup();
-    testState.updateServer.mockResolvedValue(success());
-
-    await using screen = await renderAction({ threadContinuation: true });
-    await click(screen, "Update");
-
-    expect(testState.updateServer).toHaveBeenCalledWith({
-      environmentId: "env-test",
-      input: { targetVersion: "0.0.31" },
-    });
-  });
-
-  it("applies the saved thread continuation preference automatically", async () => {
-    using _state = setup();
-    testState.updateServer.mockResolvedValue(success());
-    testState.continueThreadsAfterServerUpdate = true;
-
-    await using screen = await renderAction({ threadContinuation: true });
-    await click(screen, "Update");
-
-    expect(testState.updateServer).toHaveBeenCalledWith({
-      environmentId: "env-test",
-      input: { targetVersion: "0.0.31", continueRunningThreads: true },
-    });
-  });
 });
 
 describe("ServerUpdatesAction", () => {
@@ -373,16 +334,12 @@ describe("ServerUpdatesAction", () => {
       serverLabel: "Laptop",
       selfUpdate: "boot-service",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: true,
     },
     {
       environmentId: "batch-b" as EnvironmentId,
       serverLabel: "Office",
       selfUpdate: "respawn",
       targetVersion: "0.0.31",
-      threadContinuation: true,
-      continueThreadsAfterServerUpdate: false,
     },
     {
       environmentId: "batch-c" as EnvironmentId,

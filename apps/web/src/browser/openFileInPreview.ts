@@ -30,11 +30,7 @@ import {
 } from "~/previewStateStore";
 import { selectSelectedRightPanelSurface, useRightPanelStore } from "~/rightPanelStore";
 
-import {
-  browserDefaultOpenProfileId,
-  browserDefaultOpenViewport,
-  resolveBrowserDefaults,
-} from "./browserDefaults";
+import { resolveBrowserDefaults } from "./browserDefaults";
 
 export const isBrowserPreviewFile = (path: string): boolean =>
   /\.(?:html?|pdf)$/i.test(path.split(/[?#]/, 1)[0] ?? "");
@@ -83,7 +79,7 @@ export async function openUrlInPreview<E>(input: {
     return AsyncResult.failure(Cause.fail(defaults));
   }
   const runtime = previewRuntimeFor(input.threadRef.environmentId);
-  const profileId = input.profileId ?? browserDefaultOpenProfileId(defaults);
+  const profileId = input.profileId ?? defaults.profileId;
   const url = comparablePreviewUrl(input.url);
   const open = async () => {
     const state = readThreadPreviewState(input.threadRef);
@@ -118,7 +114,7 @@ export async function openUrlInPreview<E>(input: {
       input: {
         threadId: input.threadRef.threadId,
         url: input.url,
-        viewport: browserDefaultOpenViewport(defaults),
+        viewport: defaults.viewport,
         profileId,
         ...(runtime === undefined ? {} : { runtime }),
       },

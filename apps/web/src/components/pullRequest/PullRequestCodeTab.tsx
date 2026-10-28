@@ -108,6 +108,7 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import {
+  getFileViewedRange,
   isFileDiffCollapsed,
   isLineInFileDiff,
   setFileDiffCollapsed,
@@ -190,7 +191,7 @@ interface FileViewedToggleState {
   readonly canWrite: boolean;
   readonly isViewed: (path: string) => boolean;
   readonly isStale: (path: string) => boolean;
-  readonly setFileViewed: (fileKey: string, path: string, viewed: boolean) => void;
+  readonly setFileViewed: (fileKey: string, viewed: boolean, extendRange: boolean) => void;
 }
 
 // Context updates viewed toggles without invalidating memoized header portals.
@@ -221,7 +222,13 @@ function FileViewedToggle({
           disabled={!viewedFiles.canWrite}
           aria-label={stale ? "Changed" : "Viewed"}
           checked={viewed}
-          onCheckedChange={(next) => viewedFiles.setFileViewed(fileKey, path, next === true)}
+          onCheckedChange={(next, details) =>
+            viewedFiles.setFileViewed(
+              fileKey,
+              next === true,
+              "shiftKey" in details.event && details.event.shiftKey === true,
+            )
+          }
         />
         {stale ? (
           <Tooltip>
@@ -311,6 +318,7 @@ function PullRequestCodeTab({
     [],
     MarkdownAutoViewedOptOuts,
   );
+  const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [findTests, setFindTests] = useState(false);
   const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
@@ -355,6 +363,7 @@ function PullRequestCodeTab({
   if (stateScopeKey !== scopeKey) {
     setStateScopeKey(scopeKey);
     setActionGeneration((generation) => generation + 1);
+    setLastViewedFileKey(null);
     setDraft(null);
     setSelectedLines(null);
     setFindTests(false);
@@ -510,6 +519,7 @@ function PullRequestCodeTab({
     isStale: isFileViewedStale,
   } = filesViewed;
   const appliedRefreshToken = useRef(refreshToken);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a new refresh token clears loaded slices and refetches the first diff page and viewed files
   useEffect(() => {
     if (appliedRefreshToken.current === refreshToken) return;
     appliedRefreshToken.current = refreshToken;
@@ -521,6 +531,7 @@ function PullRequestCodeTab({
     refreshFilesViewed();
   }, [refreshToken, scopeKey, refreshFirstDiffPage, refreshFilesViewed]);
   const appliedBackgroundRefreshToken = useRef(backgroundRefreshToken);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a background refresh token refetches the first diff page and viewed files while keeping slices
   useEffect(() => {
     if (appliedBackgroundRefreshToken.current === backgroundRefreshToken) return;
     appliedBackgroundRefreshToken.current = backgroundRefreshToken;
@@ -813,7 +824,7 @@ function PullRequestCodeTab({
   const automaticPaths = [...inventoryPaths].filter(
     (path) => isMarkdownPath(path) && !markdownOptOuts.includes(path),
   );
-  // oxlint-disable-next-line t3code/react-effect-budget -- Complete external diff reads before review writes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete external diff reads before review writes.
   useEffect(() => {
     const automatic = markdownDefault === "autoViewed" && commit === null;
     let active = true;
@@ -880,9 +891,17 @@ function PullRequestCodeTab({
   const setFileFold = (fileKey: string, collapsed: boolean) =>
     setFileFolds((current) => setFileDiffCollapsed(fileKey, collapsed, current));
 
-  const setFileViewed = (fileKey: string, path: string, viewed: boolean) => {
-    setViewed(path, viewed);
-    setFileFold(fileKey, viewed);
+  const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
+    const range = getFileViewedRange(
+      annotatedFiles,
+      fileKey,
+      extendRange ? lastViewedFileKey : null,
+    );
+    setLastViewedFileKey(fileKey);
+    for (const file of range) setViewed(file.path, viewed);
+    setFileFolds((current) =>
+      range.reduce((next, file) => setFileDiffCollapsed(file.fileKey, viewed, next), current),
+    );
   };
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
@@ -1551,6 +1570,7 @@ function PullRequestCodeTab({
     answeredRevealNonce.current = revealRequest.nonce;
     revealFile(revealRequest.path);
   });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the code view to a requested file once loaded, or pages forward until it arrives
   useEffect(() => {
     // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
     answerReveal();
