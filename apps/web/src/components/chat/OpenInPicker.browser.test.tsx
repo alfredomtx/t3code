@@ -7,6 +7,8 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   BearerConnectionProfile,
   BearerConnectionTarget,
+  SshConnectionProfile,
+  SshConnectionTarget,
 } from "@t3tools/client-runtime/connection";
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -289,6 +291,38 @@ describe("saved local service editor action", () => {
       expect(state.openUrl).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("remote editor links", () => {
+  it("opens the link from the fallback when the picker is not mounted", async () => {
+    await using fixture = await setup();
+    const { screen, pressOpenFavorite, FavoriteEditorFallback } = fixture;
+    const target = new SshConnectionTarget({
+      environmentId: selected,
+      label: "sol",
+      connectionId: "ssh-sol",
+    });
+    state.remoteInput = {
+      route: {
+        target,
+        profile: Option.some(
+          new SshConnectionProfile({
+            environmentId: selected,
+            label: target.label,
+            connectionId: target.connectionId,
+            target: { alias: "sol", username: null, hostname: "127.0.0.1", port: null },
+          }),
+        ),
+      },
+      remoteOpenTargets: [],
+      isDesktopRenderer: true,
+    };
+    await act(async () => screen.rerender(<FavoriteEditorFallback />));
+
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
+    expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
+    expect(state.run).not.toHaveBeenCalled();
+  });
 });
 
 describe("open in editor announcement", () => {
