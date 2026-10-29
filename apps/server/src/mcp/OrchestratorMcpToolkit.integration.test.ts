@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
   isProviderNativeSubagentThread,
   MessageId,
   type ModelSelection,
@@ -17,6 +18,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -27,6 +29,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import { CodexOrchestratorReplayHarness } from "../orchestration-v2/Adapters/CodexAdapterV2.testkit.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -243,7 +246,21 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
           Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
           Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
-          Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
+          Layer.provide(
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) =>
+                Effect.succeedSome({
+                  id,
+                  title: "MCP replay project",
+                  workspaceRoot: cwd,
+                  defaultModelSelection: null,
+                  scripts: [],
+                  createdAt: "2026-10-01T00:00:00Z",
+                  updatedAt: "2026-10-01T00:00:00Z",
+                  deletedAt: null,
+                }),
+            }),
+          ),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
               Layer.provide(layerMemorySecretStore),
@@ -257,6 +274,35 @@ describe("orchestrator MCP toolkit", () => {
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const server = yield* McpServer.McpServer;
+          const sink = yield* EventSink.EventSinkV2;
+          const now = yield* DateTime.now;
+          const createdAt = DateTime.formatIso(now);
+          yield* sink.commitProjectCommand({
+            commandId: CommandId.make("command:mcp-replay-project:create"),
+            projectId,
+            commandType: "project.create",
+            acceptedAt: now,
+            event: {
+              eventId: EventId.make("event:mcp-replay-project:create"),
+              aggregateKind: "project",
+              aggregateId: projectId,
+              occurredAt: createdAt,
+              commandId: CommandId.make("command:mcp-replay-project:create"),
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              type: "project.created",
+              payload: {
+                projectId,
+                title: "MCP replay project",
+                workspaceRoot: cwd,
+                defaultModelSelection: null,
+                scripts: [],
+                createdAt,
+                updatedAt: createdAt,
+              },
+            },
+          });
           const parentCreate = yield* orchestrator.dispatch({
             type: "thread.create",
             createdBy: "user",
@@ -334,6 +380,7 @@ describe("orchestrator MCP toolkit", () => {
             mode: "async",
             clientRequestId: "delegate-codex-replay-1",
           });
+          expect(delegatedCall.isError, JSON.stringify(delegatedCall.content)).not.toBe(true);
           const delegatedStart = yield* decodeDelegateTaskResult(
             delegatedCall.structuredContent,
           ).pipe(Effect.orDie);
