@@ -90,6 +90,7 @@ function environment() {
   return {
     environmentId,
     label: "Laptop",
+    entry: { target: { _tag: "PrimaryConnectionTarget" } },
     connection: { phase: state.connected ? "connected" : "disconnected" },
     serverConfig: state.connected
       ? {
@@ -125,6 +126,7 @@ vi.mock(import("./SettingsScopeContext"), async (original) => {
 });
 vi.mock(import("../../state/server"), async (original) => {
   const actual = await original();
+  const { AsyncResult } = await import("effect/reactivity");
   const Schema = await import("effect/Schema");
   const { ServerProvider } = await import("@t3tools/contracts");
   const models = [
@@ -203,6 +205,10 @@ vi.mock(import("../../state/server"), async (original) => {
     serverEnvironment: {
       ...actual.serverEnvironment,
       providersValueAtom: () => providers,
+      scheduledTasksLive: () =>
+        Atom.make(
+          AsyncResult.success({ tasks: state.tasksLoaded && state.task ? [state.task] : [] }),
+        ),
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
