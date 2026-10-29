@@ -58,8 +58,8 @@ it("grows past the agent's height to fit the page the client lays out", async ()
   const { container } = screen;
 
   const box = container.firstElementChild as HTMLElement;
-  await expect.poll(() => box.style.height).toBe("2345px");
-  expect(box.querySelector("iframe")?.clientHeight).toBe(2345);
+  await expect.poll(() => box.style.height).toBe("2361px");
+  expect(box.querySelector("iframe")?.clientHeight).toBe(2361);
 });
 
 describe("HtmlRenderFrame", () => {
