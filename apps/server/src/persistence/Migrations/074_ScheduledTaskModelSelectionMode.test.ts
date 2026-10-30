@@ -5,7 +5,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
 
-describe("073_ScheduledTaskModelSelectionMode", () => {
+describe("074_ScheduledTaskModelSelectionMode", () => {
   it.effect.each([false, true])(
     "preserves model and schedule when legacy Personal is %s",
     (legacy) =>
@@ -40,7 +40,7 @@ describe("073_ScheduledTaskModelSelectionMode", () => {
           yield* sql`UPDATE scheduled_tasks SET bound_model_selection_mode = 'use_task_selection'`;
           yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (70, 'ScheduledTaskModelSelectionMode')`;
         }
-        yield* runMigrations({ toMigrationInclusive: 73 });
+        yield* runMigrations({ toMigrationInclusive: 74 });
 
         const rows = yield* sql<{
           bound_model_selection_mode: string;

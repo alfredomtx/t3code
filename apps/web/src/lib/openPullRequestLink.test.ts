@@ -17,7 +17,9 @@ vi.mock("../state/environments", () => ({
 }));
 vi.mock("../rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => new Map() } }));
 vi.mock("../state/server", () => ({ environmentServerConfigsAtom: {} }));
-vi.mock("../state/entities", () => ({ readProjects: () => [] }));
+vi.mock("../state/entities", () => ({ readProjects: () => [], readThreadShell: () => null }));
+vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => vi.fn() }));
+vi.mock("../state/review", () => ({ reviewEnvironment: { diffPreview: vi.fn() } }));
 vi.mock("@t3tools/client-runtime/change-request-links", () => ({
   resolveChangeRequestLinkTarget: () => ({
     project: { id: "project-a", environmentId: EnvironmentId.make("env-1") },
