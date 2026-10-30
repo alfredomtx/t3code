@@ -15,43 +15,52 @@ import { describe, expect, it } from "vite-plus/test";
 import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
-import { isThreadWorking } from "./threadInbox.ts";
+import { createInboxReturnTracker, isThreadWorking } from "./threadInbox.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
 import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
 const environmentId = EnvironmentId.make("environment-v2");
 
 describe("V2 client presentation", () => {
-  it("keeps async questions in Working until the run completes", () => {
-    const runId = RunId.make("run-async-question");
-    const running = {
-      ...v2ThreadShell,
-      snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
-      snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
-      latestRunId: runId,
-      activeRunId: runId,
-      status: "running" as const,
-      pendingRuntimeRequest: {
-        id: RuntimeRequestId.make("request-async-question"),
-        kind: "user_input" as const,
-        createdAt: v2ThreadShell.updatedAt,
-        blocking: false,
-      },
-    };
-    const active = presentThreadShell(environmentId, running);
-    expect(active.hasPendingUserInput).toBe(false);
-    expect(isThreadWorking(active)).toBe(true);
-    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
-
-    const completed = presentThreadShell(environmentId, {
-      ...running,
-      activeRunId: null,
-      status: "completed",
-    });
-    expect(completed.hasPendingUserInput).toBe(true);
-    expect(isThreadWorking(completed)).toBe(false);
-    expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
-  });
+  it.each(["preparing", "queued", "starting", "running", "waiting", "completed"] as const)(
+    "surfaces async questions immediately while the run is %s",
+    (status) => {
+      const runId = RunId.make("run-async-question");
+      const pending = {
+        ...v2ThreadShell,
+        snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
+        snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+        latestRunId: runId,
+        activeRunId: status === "completed" ? null : runId,
+        status,
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request-async-question"),
+          kind: "user_input" as const,
+          createdAt: v2ThreadShell.updatedAt,
+          blocking: false,
+        },
+      };
+      const answered = presentThreadShell(environmentId, {
+        ...pending,
+        pendingRuntimeRequest: null,
+      });
+      const tracker = createInboxReturnTracker();
+      tracker.observe([answered]);
+      const attention = presentThreadShell(environmentId, pending);
+      expect(attention.hasPendingUserInput).toBe(true);
+      expect(attention.runtime).toEqual(answered.runtime);
+      expect(attention.latestRun).toEqual(answered.latestRun);
+      expect(isThreadWorking(attention)).toBe(false);
+      const placement = tracker.observe([attention]);
+      expect(placement.isWorking(attention)).toBe(false);
+      if (status !== "completed") expect(placement.returnedAt(attention)).toBeDefined();
+      expect(canSnooze(attention, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+      expect(effectiveSnoozed(attention, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+      expect(answered.hasPendingUserInput).toBe(false);
+      expect(tracker.observe([answered]).isWorking(answered)).toBe(status !== "completed");
+      tracker.observe(null);
+    },
+  );
 
   it("keeps blocking and legacy questions out of Working", () => {
     for (const capability of [{ blocking: true }, {}]) {
