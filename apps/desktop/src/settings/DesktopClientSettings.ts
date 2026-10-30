@@ -32,9 +32,6 @@ const decodeClientSettingsJson = Effect.fnUntraced(function* (raw: string) {
   );
 });
 const encodeClientSettingsJson = Schema.encodeEffect(ClientSettingsJson);
-const encodePersonalSettingsJson = Schema.encodeEffect(
-  fromLenientJson(Schema.Struct({ collapseRenderedResults: Schema.Boolean })),
-);
 
 export class DesktopClientSettingsReadError extends Schema.TaggedError<DesktopClientSettingsReadError>()(
   "DesktopClientSettingsReadError",
@@ -140,7 +137,6 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   readonly settingsPath: string;
   readonly settings: ClientSettings;
   readonly suffix: string;
-  readonly personalOnly?: boolean;
 }): Effect.fn.Return<void, DesktopClientSettingsWriteError> {
   const targetPath = yield* resolveSymlinkTarget(input.settingsPath).pipe(
     Effect.provideService(FileSystem.FileSystem, input.fileSystem),
@@ -156,13 +152,7 @@ const writeClientSettings = Effect.fnUntraced(function* (input: {
   );
   const directory = input.path.dirname(targetPath);
   const tempPath = `${targetPath}.${process.pid}.${input.suffix}.tmp`;
-  const encoded = yield* (
-    input.personalOnly
-      ? encodePersonalSettingsJson({
-          collapseRenderedResults: input.settings.collapseRenderedResults,
-        })
-      : encodeClientSettingsJson(input.settings)
-  ).pipe(
+  const encoded = yield* encodeClientSettingsJson(input.settings).pipe(
     Effect.mapError(
       (cause) =>
         new DesktopClientSettingsWriteError({
@@ -219,22 +209,18 @@ export const make = Effect.gen(function* () {
     "userdata",
     "client-settings.json",
   );
-  const readSettings = Effect.gen(function* () {
-    const local = yield* readClientSettings(fileSystem, environment.clientSettingsPath);
-    if (!followsMain) return local;
-    const official = yield* readClientSettings(fileSystem, officialPath);
-    if (Option.isNone(official)) {
-      return yield* new DesktopClientSettingsReadError({
-        operation: "read-file",
-        path: officialPath,
-        cause: new Error("Main app preferences are missing."),
-      });
-    }
-    return Option.some({
-      ...official.value,
-      collapseRenderedResults: Option.getOrNull(local)?.collapseRenderedResults ?? true,
-    });
-  });
+  const settingsPath = followsMain ? officialPath : environment.clientSettingsPath;
+  const readSettings = readClientSettings(fileSystem, settingsPath).pipe(
+    Effect.filterOrFail(
+      (settings) => !followsMain || Option.isSome(settings),
+      () =>
+        new DesktopClientSettingsReadError({
+          operation: "read-file",
+          path: settingsPath,
+          cause: new Error("Main app preferences are missing."),
+        }),
+    ),
+  );
   const sharedPreferences = Effect.gen(function* () {
     if (!followsMain) return null;
     const settings = yield* readSettings;
@@ -273,7 +259,7 @@ export const make = Effect.gen(function* () {
           (cause) =>
             new DesktopClientSettingsWriteError({
               operation: "create-temporary-file-name",
-              path: environment.clientSettingsPath,
+              path: settingsPath,
               cause,
             }),
         ),
@@ -281,10 +267,9 @@ export const make = Effect.gen(function* () {
           writeClientSettings({
             fileSystem,
             path,
-            settingsPath: environment.clientSettingsPath,
+            settingsPath,
             settings,
             suffix,
-            personalOnly: followsMain,
           }),
         ),
       );

@@ -75,33 +75,17 @@ let clientSettingsHydrationPromise: Promise<void> | null = null;
 let clientSettingsHydrationGeneration = 0;
 let clientSettingsPersistenceQueue: Promise<void> = Promise.resolve();
 let deferredClientSettingsPatchCount = 0;
-let followsMainPreferences = false;
 
 async function readPersistedClientSettings() {
   const shared =
     typeof window === "undefined"
       ? null
       : await window.desktopBridge?.getPersonalSharedPreferences?.();
-  followsMainPreferences = shared != null;
   applySharedThemePreferences({
-    following: followsMainPreferences,
+    following: shared != null,
     values: shared?.themeValues ?? null,
   });
   return shared?.clientSettings ?? ensureLocalApi().persistence.getClientSettings();
-}
-
-function rejectSharedPreferenceEdit(patch: ClientSettingsPatch) {
-  if (
-    !followsMainPreferences ||
-    Object.keys(patch).every((key) => key === "collapseRenderedResults")
-  )
-    return false;
-  toastManager.add({
-    type: "info",
-    title: "Preferences follow T3 Code Nightly",
-    description: "Change shared preferences in the main app. Return here to apply them.",
-  });
-  return true;
 }
 
 export function refreshClientSettings(): Promise<void> {
@@ -240,7 +224,6 @@ export function persistClientSettingsPatch(
   patch: ClientSettingsPatch,
   persist: (settings: ClientSettings) => Promise<void> = defaultClientSettingsPersistence,
 ): Promise<void> {
-  if (rejectSharedPreferenceEdit(patch)) return Promise.resolve();
   // Patches queued before hydration must publish before newer optimistic patches.
   const deferPatch =
     clientSettingsHydrationStatus !== "ready" || deferredClientSettingsPatchCount > 0;
@@ -255,7 +238,6 @@ export function persistClientSettingsPatch(
         if (clientSettingsHydrationStatus !== "ready") {
           await hydrateClientSettings();
         }
-        if (rejectSharedPreferenceEdit(patch)) return;
         replaceClientSettingsSnapshot({ ...getClientSettingsSnapshot(), ...patch });
       } finally {
         deferredClientSettingsPatchCount -= 1;
@@ -282,13 +264,6 @@ export async function persistClientSettingsUpdate(
     for (;;) {
       const current = getClientSettingsSnapshot();
       const next = update(current);
-      if (
-        followsMainPreferences &&
-        !Equal.equals({ ...current, collapseRenderedResults: next.collapseRenderedResults }, next)
-      ) {
-        rejectSharedPreferenceEdit(next);
-        return current;
-      }
       await persist(next);
       if (getClientSettingsSnapshot() === current) {
         replaceClientSettingsSnapshot(next);
@@ -790,7 +765,6 @@ export function updateClientSettings(patch: ClientSettingsPatch): Promise<void> 
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
-  followsMainPreferences = false;
   applySharedThemePreferences({ following: false, values: null });
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;

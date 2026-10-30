@@ -118,53 +118,51 @@ const withClientSettings = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopClientSettings", () => {
-  it.effect(
-    "follows main preferences without writing them and retains the personal collapse switch",
-    () =>
-      withClientSettings(
-        Effect.gen(function* () {
-          const environment = yield* DesktopEnvironment.DesktopEnvironment;
-          const fs = yield* FileSystem.FileSystem;
-          const service = yield* DesktopClientSettings.DesktopClientSettings;
-          const officialPath = `${environment.homeDirectory}/.t3/userdata/client-settings.json`;
-          yield* fs.makeDirectory(`${environment.homeDirectory}/.t3/userdata`, { recursive: true });
-          const official = JSON.stringify({
-            ...clientSettings,
-            timestampFormat: "12-hour",
-            collapseRenderedResults: true,
-          });
-          yield* fs.writeFileString(officialPath, official);
-          yield* service.set({
-            ...clientSettings,
-            timestampFormat: "24-hour",
-            collapseRenderedResults: false,
-          });
-          assert.equal(yield* fs.readFileString(officialPath), official);
-          assert.deepEqual(JSON.parse(yield* fs.readFileString(environment.clientSettingsPath)), {
-            collapseRenderedResults: false,
-          });
-          const effective = Option.getOrThrow(yield* service.get);
-          assert.equal(effective.timestampFormat, "12-hour");
-          assert.isFalse(effective.collapseRenderedResults);
-          yield* fs.writeFileString(
-            `${officialPath}.next`,
-            JSON.stringify({ timestampFormat: "locale" }),
-          );
-          yield* fs.rename(`${officialPath}.next`, officialPath);
-          const refreshed = Option.getOrThrow(yield* service.get);
-          assert.equal(refreshed.timestampFormat, "locale");
-          assert.isFalse(refreshed.collapseRenderedResults);
-          yield* fs.writeFileString(officialPath, "invalid JSON");
-          assert.equal((yield* Effect.flip(service.get)).operation, "decode-document");
-          assert.isFalse(
-            JSON.parse(yield* fs.readFileString(environment.clientSettingsPath))
-              .collapseRenderedResults,
-          );
-          yield* fs.remove(officialPath);
-          assert.equal((yield* Effect.flip(service.get)).operation, "read-file");
-        }),
-        true,
-      ),
+  it.effect("reads and writes the same preferences as the main app", () =>
+    withClientSettings(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        const service = yield* DesktopClientSettings.DesktopClientSettings;
+        const officialPath = `${environment.homeDirectory}/.t3/userdata/client-settings.json`;
+        yield* fs.makeDirectory(`${environment.homeDirectory}/.t3/userdata`, { recursive: true });
+        const official = JSON.stringify({
+          ...clientSettings,
+          timestampFormat: "12-hour",
+          collapseRenderedResults: true,
+        });
+        yield* fs.writeFileString(officialPath, official);
+        yield* service.set({
+          ...clientSettings,
+          timestampFormat: "24-hour",
+          collapseRenderedResults: false,
+        });
+        const saved = yield* decodeClientSettingsJson(yield* fs.readFileString(officialPath));
+        assert.equal(saved.timestampFormat, "24-hour");
+        assert.isFalse(saved.collapseRenderedResults);
+        assert.isFalse(yield* fs.exists(environment.clientSettingsPath));
+        const effective = Option.getOrThrow(yield* service.get);
+        assert.equal(effective.timestampFormat, "24-hour");
+        assert.isFalse(effective.collapseRenderedResults);
+        yield* fs.writeFileString(
+          `${officialPath}.next`,
+          JSON.stringify({ timestampFormat: "locale" }),
+        );
+        yield* fs.rename(`${officialPath}.next`, officialPath);
+        const refreshed = Option.getOrThrow(yield* service.get);
+        assert.equal(refreshed.timestampFormat, "locale");
+        assert.equal(
+          refreshed.collapseRenderedResults,
+          DEFAULT_CLIENT_SETTINGS.collapseRenderedResults,
+        );
+        yield* fs.writeFileString(officialPath, "invalid JSON");
+        assert.equal((yield* Effect.flip(service.get)).operation, "decode-document");
+        assert.equal(yield* fs.readFileString(officialPath), "invalid JSON");
+        yield* fs.remove(officialPath);
+        assert.equal((yield* Effect.flip(service.get)).operation, "read-file");
+      }),
+      true,
+    ),
   );
   it.effect("returns none when no client settings file exists", () =>
     withClientSettings(

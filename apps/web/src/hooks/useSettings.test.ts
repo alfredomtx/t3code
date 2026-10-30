@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("following main app preferences", () => {
-  it("refreshes followed values, blocks duplicate edits, and keeps the last good snapshot on read failure", async () => {
+  it("edits and refreshes shared values and keeps the last good snapshot on read failure", async () => {
     const shared = vi.fn().mockResolvedValue({
       clientSettings: { ...DEFAULT_CLIENT_SETTINGS, wordWrap: false },
       themeValues: null,
@@ -45,11 +45,14 @@ describe("following main app preferences", () => {
     await ensureClientSettingsHydrated();
     expect(getClientSettings().wordWrap).toBe(false);
     await persistClientSettingsPatch({ wordWrap: true });
-    expect(getClientSettings().wordWrap).toBe(false);
-    expect(persistenceMocks.setClientSettings).not.toHaveBeenCalled();
+    expect(getClientSettings().wordWrap).toBe(true);
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledOnce();
     await persistClientSettingsPatch({ collapseRenderedResults: false });
     expect(getClientSettings().collapseRenderedResults).toBe(false);
-    expect(persistenceMocks.setClientSettings).toHaveBeenCalledOnce();
+    expect(persistenceMocks.setClientSettings).toHaveBeenCalledTimes(2);
+    await persistClientSettingsUpdate((current) => ({ ...current, diffLayout: "split" }));
+    expect(getClientSettings().diffLayout).toBe("split");
+    expect(persistenceMocks.setClientSettings.mock.lastCall?.[0].diffLayout).toBe("split");
     shared.mockResolvedValueOnce({
       clientSettings: {
         ...DEFAULT_CLIENT_SETTINGS,
