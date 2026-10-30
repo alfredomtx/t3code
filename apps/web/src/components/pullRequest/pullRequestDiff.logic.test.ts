@@ -105,29 +105,41 @@ describe("setFileDiffCollapsed", () => {
   });
 });
 
-it("collapses Markdown without marking it viewed and preserves explicit folds", async () => {
-  const { resolveDefaultCollapsed } = await import("./pullRequestReviewDefaults");
-  for (const path of ["README.md", "docs/guide.MDX"]) {
-    const defaults = resolveDefaultCollapsed({
-      path,
-      markdownDefault: "collapsed",
-      globalCollapsed: false,
-      viewed: false,
-      viewedEnabled: true,
-    });
-    expect(defaults).toBe(true);
-    expect(isFileDiffCollapsed(path, null, new Map([[path, false]]), defaults)).toBe(false);
-    expect(isFileDiffCollapsed(path, "expanded", new Map(), defaults)).toBe(false);
-    expect(
-      resolveDefaultCollapsed({
-        path,
-        markdownDefault: "off",
-        globalCollapsed: false,
-        viewed: false,
-        viewedEnabled: true,
-      }),
-    ).toBe(false);
-  }
+it("groups Markdown, tests and source without selecting configs or generated files", async () => {
+  const { reviewFileGroup } = await import("./pullRequestReviewGroups");
+  for (const path of ["README.md", "docs/guide.MDX", "test/readme.markdown"])
+    expect(reviewFileGroup(path)).toBe("markdown");
+  for (const path of [
+    "app.test.ts",
+    "tests/Unit/ThingTest.php",
+    "__mocks__/api.ts",
+    "e2e/login.spec.ts",
+    "src/Widget.ts.snap",
+  ])
+    expect(reviewFileGroup(path)).toBe("tests");
+  for (const path of [
+    "app/Action.php",
+    "src/app.ts",
+    "src/View.tsx",
+    "lib/util.js",
+    "src/styles.scss",
+  ])
+    expect(reviewFileGroup(path)).toBe("source");
+  for (const path of [
+    "config/app.php",
+    "configs/settings.ts",
+    "vite.config.ts",
+    "tsconfig.json",
+    "ci.yml",
+    "settings.yaml",
+    "pnpm-lock.yaml",
+    "generated/client.ts",
+    "README.txt",
+    ".eslintrc.js",
+    "package.json",
+  ])
+    expect(reviewFileGroup(path)).toBeNull();
+  expect(reviewFileGroup("config\\app.php")).toBeNull();
 });
 
 describe("getFileViewedRange", () => {

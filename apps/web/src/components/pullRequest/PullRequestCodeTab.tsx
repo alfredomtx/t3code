@@ -19,7 +19,6 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
-  FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
   MessageSquareOffIcon,
@@ -54,7 +53,6 @@ import {
   canEditPullRequestComment,
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
-import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
   buildFileDiffRenderKey,
@@ -84,7 +82,6 @@ import { useDiffWorkerPool } from "../DiffWorkerPoolProvider";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
-import { useHideTestFiles } from "../diffs/useHideTestFiles";
 import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
@@ -121,14 +118,12 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import {
-  MarkdownReviewDefault,
-  MarkdownAutoViewedOptOuts,
-  MARKDOWN_REVIEW_DEFAULT_KEY,
-  autoViewedOptOutStorageKey,
-  isMarkdownPath,
-  selectTestPaths,
-  resolveDefaultCollapsed,
-} from "./pullRequestReviewDefaults";
+  HiddenReviewFileGroups,
+  REVIEW_FILE_GROUPS,
+  hiddenReviewGroupsStorageKey,
+  reviewFileGroup,
+  type ReviewFileGroup,
+} from "./pullRequestReviewGroups";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import {
   nextPendingReviewCommentId,
@@ -147,7 +142,6 @@ interface ReviewAnnotationGroup {
 type ReviewAnnotation = DiffLineAnnotation<ReviewAnnotationGroup>;
 
 const COMMIT_PAGE_SIZE = 10;
-const isMarkdownReviewDefault = Schema.is(MarkdownReviewDefault);
 
 const PULL_REQUEST_FILE_TREE_STORAGE_KEY = "t3code.pullRequestFileTreeOpen";
 
@@ -312,17 +306,12 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [markdownDefault, setMarkdownDefault] = useLocalStorage<
-    MarkdownReviewDefault,
-    MarkdownReviewDefault
-  >(MARKDOWN_REVIEW_DEFAULT_KEY, "collapsed", MarkdownReviewDefault);
-  const [markdownOptOuts, setMarkdownOptOuts] = useLocalStorage(
-    autoViewedOptOutStorageKey(environmentId, reference),
+  const [hiddenGroups, setHiddenGroups] = useLocalStorage(
+    hiddenReviewGroupsStorageKey(environmentId, reference),
     [],
-    MarkdownAutoViewedOptOuts,
+    HiddenReviewFileGroups,
   );
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
-  const [findTests, setFindTests] = useState(false);
   const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
@@ -334,7 +323,6 @@ function PullRequestCodeTab({
     false,
     Schema.Boolean,
   );
-  const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
   const [selectedLines, setSelectedLines] = useState<{
     id: string;
     range: SelectedLineRange;
@@ -370,7 +358,6 @@ function PullRequestCodeTab({
     setLastViewedFileKey(null);
     setDraft(null);
     setSelectedLines(null);
-    setFindTests(false);
     setFileFolds(new Map());
     setFoldOverride(null);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
@@ -499,21 +486,6 @@ function PullRequestCodeTab({
     environmentId,
     reference,
     enabled: viewedFilesStore !== undefined,
-    automaticScopeKey: scopeKey,
-    isAutomaticEligible: () =>
-      markdownDefault === "autoViewed" && commit === null && inventoryReady,
-    onManualChanges: (changes) => {
-      if (!changes.some((change) => isMarkdownPath(change.path))) return;
-      setMarkdownOptOuts((paths) => {
-        const next = new Set(paths);
-        for (const { path, viewed } of changes) {
-          if (!isMarkdownPath(path)) continue;
-          if (viewed) next.delete(path);
-          else next.add(path);
-        }
-        return [...next];
-      });
-    },
   });
   const {
     setViewed,
@@ -580,18 +552,19 @@ function PullRequestCodeTab({
       parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
     ),
   );
-  const testFileCount = loadedFiles.filter((file) =>
-    isTestChangedFile(resolveFileDiffPath(file)),
-  ).length;
-  // A requested file stays visible so a jump to a hidden test still lands.
-  const files = hideTestFiles
-    ? loadedFiles.filter((file) => {
-        const path = resolveFileDiffPath(file);
-        return path === revealRequest?.path || !isTestChangedFile(path);
-      })
-    : loadedFiles;
-  const hiddenTestFileCount = loadedFiles.length - files.length;
-  const filePaths = files.map((file) => resolveFileDiffPath(file));
+  // Explicit reveals remain reachable even when their group is hidden.
+  const files = loadedFiles.filter((file) => {
+    const path = resolveFileDiffPath(file);
+    const group = reviewFileGroup(path);
+    return (
+      path === revealRequest?.path ||
+      group === null ||
+      !hiddenGroups.includes(group) ||
+      !isFileViewed(path)
+    );
+  });
+  const hiddenFileCount = loadedFiles.length - files.length;
+  const filePaths = loadedFiles.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
       slice.omittedFileStats.map((file) => [file.path, file] as const),
@@ -745,13 +718,7 @@ function PullRequestCodeTab({
         fileKey,
         foldOverride,
         fileFolds,
-        resolveDefaultCollapsed({
-          path,
-          markdownDefault,
-          globalCollapsed: settings.diffFilesCollapsed,
-          viewedEnabled: filesViewedEnabled,
-          viewed: isFileViewed(path),
-        }),
+        settings.diffFilesCollapsed || (filesViewedEnabled && isFileViewed(path)),
       );
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
@@ -817,60 +784,32 @@ function PullRequestCodeTab({
         loadedSlices.every((slice) => slice.inventoryFresh) &&
         ((nextCursor === null && !inventoryReady) ||
           (nextCursor !== null && loadedSlices.some((slice) => slice.cursor === nextCursor)))));
-  const testPaths = inventoryReady ? selectTestPaths(inventoryPaths) : [];
   const synchronizeReview = useEffectEvent(
-    (request: {
-      scopeKey: string;
-      cursor: string | null;
-      next: boolean;
-      refresh: boolean;
-      automaticPaths: ReadonlyArray<string> | null;
-      cancelAutomatic: boolean;
-    }) => {
+    (request: { scopeKey: string; cursor: string | null; next: boolean; refresh: boolean }) => {
       if (request.scopeKey !== scopeKey || request.cursor !== cursor) return;
-      if (request.cancelAutomatic) filesViewed.cancelAutomatic();
       if (request.refresh && !pageRead.requested) {
         setPageRead({ ...pageRead, requested: true });
         diffQuery.refresh();
       }
       if (request.next) loadNextSlice();
-      if (request.automaticPaths !== null)
-        filesViewed.setAutomaticallyViewed(request.automaticPaths);
     },
   );
-  const automaticPaths = [...inventoryPaths].filter(
-    (path) => isMarkdownPath(path) && !markdownOptOuts.includes(path),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete external diff reads before review writes.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Complete external diff reads before category review writes.
   useEffect(() => {
-    const automatic = markdownDefault === "autoViewed" && commit === null;
     let active = true;
     queueMicrotask(() => {
-      if (!active) return;
-      synchronizeReview({
-        scopeKey,
-        cursor,
-        refresh: !pageRead.requested,
-        next: (findTests || automatic) && canLoadNextSlice,
-        automaticPaths: automatic && inventoryReady && filesViewed.ready ? automaticPaths : null,
-        cancelAutomatic: !automatic,
-      });
+      if (active)
+        synchronizeReview({
+          scopeKey,
+          cursor,
+          refresh: !pageRead.requested,
+          next: commit === null && canLoadNextSlice,
+        });
     });
     return () => {
       active = false;
     };
-  }, [
-    findTests,
-    markdownDefault,
-    commit,
-    scopeKey,
-    cursor,
-    pageRead.requested,
-    canLoadNextSlice,
-    inventoryReady,
-    automaticPaths,
-    filesViewed.ready,
-  ]);
+  }, [commit, scopeKey, cursor, pageRead.requested, canLoadNextSlice]);
   const isCurrentScope = useStableCallback(
     (key: string, generation: number) => key === scopeKey && generation === actionGeneration,
   );
@@ -899,10 +838,14 @@ function PullRequestCodeTab({
         : {}),
     });
   };
-  const setTestsViewed = async (viewed: boolean) => {
-    if (!inventoryReady || !filesViewed.ready) return;
-    const result = await filesViewed.setManyViewed(testPaths.map((path) => ({ path, viewed })));
-    if (isCurrentScope(scopeKey, actionGeneration)) reportViewedResult(result);
+  const setGroupViewed = async (group: ReviewFileGroup, viewed: boolean) => {
+    if (commit !== null || !inventoryReady || !filesViewed.ready) return;
+    const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === group);
+    if (!viewed) setHiddenGroups((groups) => groups.filter((value) => value !== group));
+    const result = await filesViewed.setManyViewed(paths.map((path) => ({ path, viewed })));
+    if (!isCurrentScope(scopeKey, actionGeneration)) return;
+    if (viewed) setHiddenGroups((groups) => [...new Set([...groups, group])]);
+    reportViewedResult(result);
   };
 
   const setFileFold = (fileKey: string, collapsed: boolean) =>
@@ -1219,7 +1162,7 @@ function PullRequestCodeTab({
     setSelectedLines(null);
   };
   const toolbar = (
-    <div className="@container flex h-10 min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border/60 bg-background px-4 text-xs text-muted-foreground">
+    <div className="@container flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-background px-4 py-1 text-xs text-muted-foreground">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {orderedCommits.length > 0 ? (
           <DropdownMenu>
@@ -1273,15 +1216,11 @@ function PullRequestCodeTab({
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
-          {hiddenTestFileCount > 0 ? (
-            <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
-              {hiddenTestFileCount} test {hiddenTestFileCount === 1 ? "file" : "files"} hidden
-            </Button>
-          ) : null}
-          {filesViewed.enabled && files.length > 0 ? (
+          {hiddenFileCount > 0 ? <span className="shrink-0">{hiddenFileCount} hidden</span> : null}
+          {filesViewed.enabled && loadedFiles.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
-                {filePaths.filter(isFileViewed).length} / {files.length}
+                {filePaths.filter(isFileViewed).length} / {loadedFiles.length}
               </span>
               <span className="truncate">
                 {viewedFilesStore === "environment" ? `viewed in ${APP_BASE_NAME}` : "viewed"}
@@ -1359,75 +1298,47 @@ function PullRequestCodeTab({
           ) : null}
         </PullRequestMetaLine>
       </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={<Button size="sm" variant="ghost" />}
-            aria-label="Markdown review default"
-          >
-            Markdown
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuRadioGroup
-              value={markdownDefault}
-              onValueChange={(value) => {
-                if (isMarkdownReviewDefault(value)) {
-                  filesViewed.resetAutomaticAttempts();
-                  setMarkdownDefault(value);
-                }
-              }}
-            >
-              <DropdownMenuRadioItem value="collapsed" closeOnClick>
-                Start collapsed
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="autoViewed" disabled={!filesViewed.ready} closeOnClick>
-                Mark viewed automatically
-              </DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="off" closeOnClick>
-                No special default
-              </DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-            {markdownDefault === "autoViewed" && commit !== null ? (
-              <DropdownMenuItem disabled>Auto Viewed requires All commits</DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <DropdownMenu
-          onOpenChange={(open) => {
-            if (open) setFindTests(true);
-          }}
+      <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1">
+        <div
+          className="flex shrink-0 items-center gap-3"
+          aria-label="Mark file groups viewed and hide them"
         >
-          <DropdownMenuTrigger
-            render={<Button size="sm" variant="ghost" />}
-            aria-label="Test file actions"
-          >
-            {inventoryReady
-              ? `Tests (${testPaths.length})`
-              : findTests && !inventoryUnavailable
-                ? "Finding test files..."
-                : "Find all tests"}
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem
-              disabled={!inventoryReady || !filesViewed.ready || testPaths.length === 0}
-              onClick={() => void setTestsViewed(true)}
-            >
-              Mark all tests viewed
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!inventoryReady || !filesViewed.ready || testPaths.length === 0}
-              onClick={() => void setTestsViewed(false)}
-            >
-              Unmark all tests
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled>Viewed marks apply to the whole PR</DropdownMenuItem>
-            {inventoryUnavailable ? (
-              <DropdownMenuItem onClick={() => diffQuery.refresh()}>
-                Inventory unavailable. Retry
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          {REVIEW_FILE_GROUPS.map(({ id, label }) => {
+            const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === id);
+            const hidden = hiddenGroups.includes(id);
+            const allViewed = paths.length > 0 && paths.every(isFileViewed);
+            return (
+              <Tooltip key={id}>
+                <TooltipTrigger
+                  render={<label className="flex items-center gap-1.5 whitespace-nowrap" />}
+                >
+                  <Checkbox
+                    checked={hidden && allViewed}
+                    indeterminate={hidden && !allViewed}
+                    disabled={
+                      commit !== null || !inventoryReady || !filesViewed.ready || paths.length === 0
+                    }
+                    onCheckedChange={(checked) => void setGroupViewed(id, checked)}
+                  />
+                  <span>
+                    {label}
+                    <span aria-hidden>{inventoryReady ? ` (${paths.length})` : ""}</span>
+                  </span>
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">
+                  {commit !== null
+                    ? "Switch to All commits to mark a file group viewed"
+                    : "Check to mark viewed and hide in this PR. Uncheck to show and unmark."}
+                </TooltipPopup>
+              </Tooltip>
+            );
+          })}
+          {inventoryUnavailable ? (
+            <Button size="xs" variant="link" onClick={() => diffQuery.refresh()}>
+              Retry file groups
+            </Button>
+          ) : null}
+        </div>
         <DropdownMenu>
           <Tooltip>
             <TooltipTrigger
@@ -1558,26 +1469,6 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {testFileCount > 0 ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Toggle
-                  aria-label="Hide test files"
-                  variant="ghost"
-                  size="sm"
-                  pressed={hideTestFiles}
-                  onPressedChange={(pressed) => setHideTestFiles(Boolean(pressed))}
-                />
-              }
-            >
-              <FlaskConicalOffIcon className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipPopup side="top">
-              {hideTestFiles ? "Show test files" : "Hide test files"}
-            </TooltipPopup>
-          </Tooltip>
-        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -1650,7 +1541,11 @@ function PullRequestCodeTab({
   if (items.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
+        {hiddenFileCount > 0
+          ? "All loaded files are hidden. Uncheck a group to show and unmark its files."
+          : commit === null
+            ? `This ${term} has no file changes.`
+            : "This commit has no file changes."}
       </p>,
     );
   }

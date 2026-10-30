@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import { RegistryContext } from "@effect/atom-react";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
 import {
@@ -8,7 +9,6 @@ import {
   type PullRequestDiffResult,
   type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
-import { page, userEvent } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
@@ -175,7 +175,6 @@ function setup(
   options: {
     patch?: PullRequestDiffResult;
     changedFiles?: number;
-    mode?: "collapsed" | "autoViewed" | "off";
   } = {},
 ) {
   diffCommits.length = 0;
@@ -214,23 +213,15 @@ function setup(
     );
     return { _tag: "Success" };
   });
-  const key = "t3.pullRequests.reviewDefaults.markdown";
-  const saved = window.localStorage.getItem(key);
-  window.localStorage.setItem(key, JSON.stringify(options.mode ?? "collapsed"));
-  stack.defer(() =>
-    saved === null ? window.localStorage.removeItem(key) : window.localStorage.setItem(key, saved),
-  );
-  const optOutKeys = Object.keys(window.localStorage).filter((key) =>
-    key.startsWith("t3.pullRequests.reviewDefaults.optOuts:"),
-  );
-  const savedOptOuts = optOutKeys.map((key) => [key, window.localStorage.getItem(key)] as const);
-  for (const key of optOutKeys) window.localStorage.removeItem(key);
+  const groupKeys = () =>
+    Object.keys(window.localStorage).filter((key) =>
+      key.startsWith("t3.pullRequests.hiddenReviewGroups:"),
+    );
+  const savedGroups = groupKeys().map((key) => [key, window.localStorage.getItem(key)] as const);
+  for (const key of groupKeys()) window.localStorage.removeItem(key);
   stack.defer(() => {
-    for (const key of Object.keys(window.localStorage).filter((key) =>
-      key.startsWith("t3.pullRequests.reviewDefaults.optOuts:"),
-    ))
-      window.localStorage.removeItem(key);
-    for (const [key, value] of savedOptOuts)
+    for (const key of groupKeys()) window.localStorage.removeItem(key);
+    for (const [key, value] of savedGroups)
       if (value !== null) window.localStorage.setItem(key, value);
   });
   registry.set(
@@ -346,36 +337,67 @@ function patch(paths: string[], nextCursor: string | null = null): PullRequestDi
   };
 }
 
-it("starts Markdown collapsed without a Viewed write and persists the selector", async () => {
-  using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
+it("marks and hides Markdown only when its PR checkbox is checked", async () => {
+  using fixture = setup(
+    { files: [], truncated: false },
+    { patch: patch(["README.md", "app.ts"]), changedFiles: 2 },
+  );
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
-  await expect
-    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
-    .toBeVisible();
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
   expect(command).not.toHaveBeenCalled();
-  await screen.getByRole("button", { name: "Markdown review default" }).click();
-  await page.getByRole("menuitemradio", { name: "No special default" }).click();
+  await screen.getByRole("checkbox", { name: "Markdown" }).click();
+  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+  expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "README.md", viewed: true }]);
+  await expect.element(screen.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await screen.getByRole("checkbox", { name: "Markdown" }).click();
+  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
+  expect(command.mock.calls[1]?.[0].input.files).toEqual([{ path: "README.md", viewed: false }]);
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+});
+
+it.each([
+  { group: "Tests", selected: "tests/ThingTest.php", excluded: "app/Thing.php" },
+  { group: "Source", selected: "app/Thing.php", excluded: "config/app.php" },
+])(
+  "marks and hides $group without including other groups or config",
+  async ({ group, selected, excluded }) => {
+    using fixture = setup(
+      { files: [], truncated: false },
+      { patch: patch([selected, excluded, "ci.yaml"]), changedFiles: 3 },
+    );
+    await using screen = await render(fixture.tab(0), { container: sizedContainer() });
+    await expect.element(screen.getByRole("checkbox", { name: group, exact: true })).toBeEnabled();
+    await screen.getByRole("checkbox", { name: group, exact: true }).click();
+    await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+    expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: selected, viewed: true }]);
+    await expect.element(screen.getByText(selected, { exact: true })).not.toBeInTheDocument();
+    await expect.element(screen.getByText(excluded, { exact: true })).toBeInTheDocument();
+    await expect.element(screen.getByText("ci.yaml", { exact: true })).toBeInTheDocument();
+  },
+);
+
+it("does not inherit the old automatic Markdown preference", async () => {
+  using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
+  const key = "t3.pullRequests.reviewDefaults.markdown";
+  using _preference = vi.spyOn(Storage.prototype, "getItem").mockImplementation((keyToRead) => {
+    return keyToRead === key ? '"autoViewed"' : null;
+  });
+  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
   await expect
     .element(screen.getByRole("button", { name: "Collapse diff", exact: true }))
     .toBeVisible();
-  expect(window.localStorage.getItem("t3.pullRequests.reviewDefaults.markdown")).toBe('"off"');
   expect(command).not.toHaveBeenCalled();
 });
 
-it("finds tests on later pages and in known omitted paths before enabling actions", async () => {
+it("waits for later and omitted files, then applies the complete group", async () => {
   using fixture = setup(
     { files: [], truncated: false },
     { patch: patch(["a.ts"], "page2"), changedFiles: 3 },
   );
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
-  await screen.getByRole("button", { name: "Test file actions" }).click();
-  await expect
-    .element(page.getByRole("menuitem", { name: "Mark all tests viewed", exact: true }))
-    .toBeDisabled();
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Finding test files...");
+  await expect.element(screen.getByRole("checkbox", { name: "Tests", exact: true })).toBeDisabled();
   await act(() =>
     fixture.registry.set(
       diffPagesAtom,
@@ -391,238 +413,125 @@ it("finds tests on later pages and in known omitted paths before enabling action
       ]),
     ),
   );
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Tests (2)");
-  await expect
-    .element(page.getByRole("menuitem", { name: "Inventory unavailable. Retry" }))
-    .not.toBeInTheDocument();
-  await page.getByRole("menuitem", { name: "Mark all tests viewed", exact: true }).click();
+  await expect.element(screen.getByRole("checkbox", { name: "Tests", exact: true })).toBeEnabled();
+  await screen.getByRole("checkbox", { name: "Tests", exact: true }).click();
   await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
   expect(command.mock.calls[0]?.[0].input.files).toEqual([
     { path: "later.test.ts", viewed: true },
     { path: "tests/omitted.ts", viewed: true },
   ]);
+  await expect.element(screen.getByRole("checkbox", { name: "Tests", exact: true })).toBeEnabled();
+  await expect.element(screen.getByRole("checkbox", { name: "Tests", exact: true })).toBeChecked();
 });
 
 it.each([
-  { name: "truncated", page: { ...patch(["a.test.ts"]), truncated: true }, count: 1 },
-  { name: "count mismatch", page: patch(["a.test.ts"]), count: 2 },
+  { name: "truncated commit", first: { ...patch(["a.test.ts"]), truncated: true }, count: 1 },
+  { name: "count mismatch", first: patch(["a.test.ts"]), count: 2 },
   {
     name: "raw",
-    page: { patch: "unstructured response", truncated: false, nextCursor: null },
+    first: { patch: "unstructured response", truncated: false, nextCursor: null },
     count: 1,
   },
-  { name: "cursor cycle", page: patch(["a.test.ts"], "page2"), count: 2 },
-])("refuses a $name inventory", async ({ name, page: first, count }) => {
+  { name: "cursor cycle", first: patch(["a.test.ts"], "page2"), count: 2 },
+])("never writes a $name inventory", async ({ name, first, count }) => {
   using fixture = setup({ files: [], truncated: false }, { patch: first, changedFiles: count });
   if (name === "cursor cycle")
     fixture.registry.set(diffPagesAtom, new Map([["page2", patch(["b.test.ts"], "page2")]]));
   await using screen = await render(
-    fixture.tab(0, { selectedCommitOid: name === "truncated" ? "commit" : null }),
+    fixture.tab(0, { selectedCommitOid: name === "truncated commit" ? "commit" : null }),
     { container: sizedContainer() },
   );
-  await screen.getByRole("button", { name: "Test file actions" }).click();
-  await expect
-    .element(page.getByRole("menuitem", { name: "Inventory unavailable. Retry" }))
-    .toBeVisible();
-  await expect
-    .element(page.getByRole("menuitem", { name: "Mark all tests viewed", exact: true }))
-    .toBeDisabled();
+  await expect.element(screen.getByRole("checkbox", { name: "Tests", exact: true })).toBeDisabled();
   expect(command).not.toHaveBeenCalled();
 });
 
-it("auto Viewed skips viewed and Changed Markdown and never runs in a commit scope", async () => {
-  using fixture = setup(
-    {
-      files: [
-        { path: "seen.md", state: "viewed" },
-        { path: "changed.md", state: "dismissed" },
-      ],
-      truncated: false,
-    },
-    { patch: patch(["seen.md", "changed.md", "new.mdx"]), changedFiles: 3, mode: "autoViewed" },
-  );
-  await using screen = await render(fixture.tab(0, { selectedCommitOid: "commit" }), {
-    container: sizedContainer(),
-  });
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Tests (0)");
-  expect(command).not.toHaveBeenCalled();
-  await screen.rerender(fixture.tab(0));
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-  expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "new.mdx", viewed: true }]);
-  await screen.rerender(fixture.tab(0));
-  expect(command).toHaveBeenCalledTimes(1);
-});
-
-it("preserves a manual Markdown opt-out across remount, mode and commit changes", async () => {
-  using fixture = setup(
-    { files: [{ path: "README.md", state: "viewed" }], truncated: false },
-    { patch: patch(["README.md"]), mode: "autoViewed" },
-  );
-  await using first = await render(fixture.tab(0), { container: sizedContainer() });
-  await expect.element(first.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
-  const checkbox = first.getByRole("checkbox", { name: "Viewed" }).element();
-  if (!(checkbox instanceof HTMLElement)) throw new Error("Expected checkbox element");
-  checkbox.focus();
-  await userEvent.keyboard(" ");
-  expect(window.localStorage.getItem("t3.pullRequests.reviewDefaults.markdown")).toBe(
-    '"autoViewed"',
-  );
-  await first.unmount();
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+it("persists hiding for this PR without applying it to another PR or writing on mount", async () => {
+  using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
+  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
+  await screen.getByRole("checkbox", { name: "Markdown" }).click();
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeChecked();
+  await screen.unmount();
   await using second = await render(fixture.tab(0), { container: sizedContainer() });
-  await expect.element(second.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
-  await second.rerender(fixture.tab(0, { selectedCommitOid: "commit" }));
-  await second.rerender(fixture.tab(0));
-  await second.getByRole("button", { name: "Markdown review default" }).click();
-  await page.getByRole("menuitemradio", { name: "No special default" }).click();
-  await second.getByRole("button", { name: "Markdown review default" }).click();
-  await page.getByRole("menuitemradio", { name: "Mark viewed automatically" }).click();
-  await expect.element(second.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
-  expect(command).toHaveBeenCalledTimes(1);
-});
-
-it("waits for complete inventory and a successful Viewed read before auto marking", async () => {
-  using fixture = setup(null, {
-    patch: patch(["a.ts"], "page2"),
-    changedFiles: 2,
-    mode: "autoViewed",
-  });
-  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Find all tests");
-  expect(command).not.toHaveBeenCalled();
-  await act(() => fixture.registry.set(diffPagesAtom, new Map([["page2", patch(["README.md"])]])));
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Tests (0)");
-  expect(command).not.toHaveBeenCalled();
-  await act(() =>
-    fixture.registry.set(filesViewedState, AsyncResult.success({ files: [], truncated: false })),
-  );
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-  expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "README.md", viewed: true }]);
-});
-
-it("keeps per-PR opt-outs separate from another PR", async () => {
-  using fixture = setup(
-    { files: [], truncated: false },
-    { patch: patch(["README.md"]), mode: "autoViewed" },
-  );
-  const { autoViewedOptOutStorageKey } = await import("./pullRequestReviewDefaults");
-  window.localStorage.setItem(
-    autoViewedOptOutStorageKey(EnvironmentId.make("environment"), detail),
-    JSON.stringify(["README.md"]),
-  );
-  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
-  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).not.toBeChecked();
-  expect(command).not.toHaveBeenCalled();
-  await screen.rerender(
+  await expect.element(second.getByRole("checkbox", { name: "Markdown" })).toBeChecked();
+  await expect.element(second.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await second.rerender(
     fixture.tab(0, { reference: { ...detail, number: 2 }, detail: { ...detail, number: 2 } }),
   );
-  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
-  expect(command.mock.calls[0]?.[0].input.number).toBe(2);
+  await expect.element(second.getByRole("checkbox", { name: "Markdown" })).not.toBeChecked();
+  await expect.element(second.getByText("README.md", { exact: true })).toBeInTheDocument();
+  expect(command).toHaveBeenCalledTimes(1);
 });
 
-it("shows a settled first-page failure and recovers through the inventory Retry action", async () => {
+it("keeps failed and later Changed files visible and lets explicit reveals show hidden files", async () => {
+  using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
+  command.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("Test write failed")) });
+  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
+  await screen.getByRole("checkbox", { name: "Markdown" }).click();
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await act(() =>
+    fixture.registry.set(
+      filesViewedState,
+      AsyncResult.success({ files: [{ path: "README.md", state: "viewed" }], truncated: false }),
+    ),
+  );
+  await expect.element(screen.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await screen.rerender(fixture.tab(0, { revealRequest: { path: "README.md", nonce: 1 } }));
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await screen.rerender(fixture.tab(0));
+  await act(() =>
+    fixture.registry.set(
+      filesViewedState,
+      AsyncResult.success({ files: [{ path: "README.md", state: "dismissed" }], truncated: false }),
+    ),
+  );
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("checkbox", { name: "Markdown" }))
+    .toHaveAttribute("aria-checked", "mixed");
+  expect(command).toHaveBeenCalledTimes(1);
+});
+
+it("recovers a failed inventory through Retry file groups", async () => {
   using fixture = setup({ files: [], truncated: false });
   fixture.registry.set(diffFailure, "Diff read failed");
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
-  await screen.getByRole("button", { name: "Test file actions" }).click();
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Find all tests");
-  await page.getByRole("menuitem", { name: "Inventory unavailable. Retry" }).click();
+  await screen.getByRole("button", { name: "Retry file groups" }).click();
   await act(() => fixture.registry.set(diffFailure, null));
-  await expect
-    .element(screen.getByRole("button", { name: "Test file actions" }))
-    .toHaveTextContent("Tests (0)");
-  await screen.getByRole("button", { name: "Test file actions" }).click();
-  await expect
-    .element(page.getByRole("menuitem", { name: "Inventory unavailable. Retry" }))
-    .not.toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Source" })).toBeEnabled();
   expect(command).not.toHaveBeenCalled();
 });
 
-it("keeps the Markdown preference editable and persisted while Personal follows Nightly", async () => {
-  using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
-  const { __resetClientSettingsPersistenceForTests, ensureClientSettingsHydrated } =
-    await import("~/hooks/useSettings");
-  try {
-    vi.stubGlobal("desktopBridge", {
-      getPersonalSharedPreferences: async () => ({
-        clientSettings: getClientSettings(),
-        themeValues: {},
-      }),
-    });
-    __resetClientSettingsPersistenceForTests();
-    await ensureClientSettingsHydrated();
-    await using first = await render(fixture.tab(0), { container: sizedContainer() });
-    await first.getByRole("button", { name: "Markdown review default" }).click();
-    await page.getByRole("menuitemradio", { name: "No special default" }).click();
-    await first.unmount();
-    await using second = await render(fixture.tab(0), { container: sizedContainer() });
-    await second.getByRole("button", { name: "Markdown review default" }).click();
-    await expect
-      .element(page.getByRole("menuitemradio", { name: "No special default" }))
-      .toHaveAttribute("aria-checked", "true");
-    expect(window.localStorage.getItem("t3.pullRequests.reviewDefaults.markdown")).toBe('"off"');
-    expect(command).not.toHaveBeenCalled();
-  } finally {
-    __resetClientSettingsPersistenceForTests();
-    vi.unstubAllGlobals();
-  }
-});
-
 it.each(["headSha", "updatedAt"] as const)(
-  "does not certify retained old-head pages before a replacement read with unchanged refresh tokens using %s",
+  "rejects retained old-head inventory using %s",
   async (generationField) => {
     using fixture = setup(
       { files: [], truncated: false },
-      { patch: patch(["old.md", "old.test.ts"]), changedFiles: 2 },
+      { patch: patch(["old.md"]), changedFiles: 1 },
     );
     await using screen = await render(
-      fixture.tab(0, {
-        detail: { ...detail, changedFiles: 2, [generationField]: "2026-09-01T01:00:00Z" },
-      }),
+      fixture.tab(0, { detail: { ...detail, [generationField]: "2026-09-01T01:00:00Z" } }),
       { container: sizedContainer() },
     );
-    await expect
-      .element(screen.getByRole("button", { name: "Test file actions" }))
-      .toHaveTextContent("Tests (1)");
+    await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
     const retained = fixture.registry.get(diffAtom);
-    if (!AsyncResult.isSuccess(retained)) throw new Error("Expected successful cached diff");
+    if (!AsyncResult.isSuccess(retained)) throw new Error("Expected cached diff");
     await act(() => fixture.registry.set(heldDiffRead, retained));
     await screen.rerender(
-      fixture.tab(0, {
-        detail: { ...detail, changedFiles: 2, [generationField]: "2026-09-01T02:00:00Z" },
-      }),
+      fixture.tab(0, { detail: { ...detail, [generationField]: "2026-09-01T02:00:00Z" } }),
     );
-    await expect
-      .element(screen.getByRole("button", { name: "Test file actions" }))
-      .toHaveTextContent("Find all tests");
-    await screen.getByRole("button", { name: "Test file actions" }).click();
-    await expect
-      .element(page.getByRole("menuitem", { name: "Mark all tests viewed", exact: true }))
-      .toBeDisabled();
-    await userEvent.keyboard("{Escape}");
-    await screen.getByRole("button", { name: "Markdown review default" }).click();
-    await page.getByRole("menuitemradio", { name: "Mark viewed automatically" }).click();
+    await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeDisabled();
     expect(command).not.toHaveBeenCalled();
     await act(() => {
-      fixture.registry.set(firstDiffData, patch(["new.md", "new.test.ts"]));
+      fixture.registry.set(firstDiffData, patch(["new.md"]));
       fixture.registry.set(heldDiffRead, null);
     });
+    await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
+    await screen.getByRole("checkbox", { name: "Markdown" }).click();
     await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
     expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "new.md", viewed: true }]);
-    await screen.getByRole("button", { name: "Test file actions" }).click();
-    await page.getByRole("menuitem", { name: "Mark all tests viewed", exact: true }).click();
-    await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
-    expect(command.mock.calls[1]?.[0].input.files).toEqual([{ path: "new.test.ts", viewed: true }]);
   },
 );
 
