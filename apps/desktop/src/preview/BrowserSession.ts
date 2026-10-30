@@ -28,6 +28,12 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
 
+const LOCAL_NETWORK_PERMISSIONS: ReadonlySet<string> = new Set([
+  "local-network-access",
+  "local-network",
+  "loopback-network",
+]);
+
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
   "about:",
   "blob:",
@@ -251,6 +257,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
       (answer) => callback(answer === true),
     );
   };
+  const resetNetworkPermissions = new Map<string, () => void>();
   const sessionsRef = yield* SynchronizedRef.make<ReadonlyMap<string, Session>>(new Map());
 
   const getPartition = Effect.fn("BrowserSession.getPartition")(function* (
@@ -312,6 +319,56 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               },
             );
           };
+          let networkDecisions = new Map<string, boolean>();
+          const pendingNetworkRequests = new Map<string, Array<(granted: boolean) => void>>();
+          resetNetworkPermissions.set(partition, () => {
+            networkDecisions = new Map();
+          });
+          const confirmLocalNetwork = (
+            requester: WebContents,
+            permission: string,
+            rawUrl: string | undefined,
+            callback: (granted: boolean) => void,
+          ): void => {
+            const origin = permissionOrigin(rawUrl);
+            if (origin === null || !origin.startsWith("https://")) {
+              callback(false);
+              return;
+            }
+            const key = `${permission}:${origin}`;
+            const remembered = networkDecisions.get(key);
+            if (remembered !== undefined) {
+              callback(remembered);
+              return;
+            }
+            const pending = pendingNetworkRequests.get(key);
+            if (pending !== undefined) {
+              pending.push(callback);
+              return;
+            }
+            pendingNetworkRequests.set(key, [callback]);
+            const decisions = networkDecisions;
+            promptPermission(
+              requester,
+              {
+                buttons: ["Allow", "Block"],
+                message:
+                  permission === "loopback-network"
+                    ? `${truncateForPrompt(origin)} wants to connect to apps on this device`
+                    : `${truncateForPrompt(origin)} wants to connect to the local network`,
+                detail:
+                  "Allow only sites you trust. Your choice lasts until you quit the app or clear this browser profile's cookies.",
+              },
+              (answer) => {
+                // Clearing site data while a prompt is open must not restore the old grant.
+                const current = decisions === networkDecisions;
+                if (current && answer !== undefined) decisions.set(key, answer);
+                const callbacks = pendingNetworkRequests.get(key) ?? [];
+                pendingNetworkRequests.delete(key);
+                for (const complete of callbacks) complete(current && answer === true);
+              },
+            );
+          };
           // Rewriting Electron's native User-Agent makes Turnstile fail integrity checks with error 600010.
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
@@ -331,14 +388,41 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 );
                 return;
               }
+              if (LOCAL_NETWORK_PERMISSIONS.has(permission)) {
+                confirmLocalNetwork(webContents, permission, details.requestingUrl, callback);
+                return;
+              }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((_webContents, permission, requestingOrigin) =>
-            permission === "clipboard-read"
-              ? clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true
-              : ALLOWED_PREVIEW_PERMISSIONS.has(permission),
-          );
+          browserSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+            if (permission === "clipboard-read") {
+              return clipboardReadDecisions.get(permissionOrigin(requestingOrigin) ?? "") === true;
+            }
+            if (LOCAL_NETWORK_PERMISSIONS.has(permission)) {
+              const origin = permissionOrigin(requestingOrigin);
+              const key = `${permission}:${origin ?? ""}`;
+              const remembered = networkDecisions.get(key);
+              if (remembered !== undefined) return remembered;
+              if (pendingNetworkRequests.has(key)) return false;
+              if (webContents !== null && !webContents.isDestroyed() && origin !== null) {
+                // Permission queries can stop sign-in before a request; retry only the same page after Allow.
+                const pageUrl = webContents.getURL();
+                confirmLocalNetwork(webContents, permission, requestingOrigin, (granted) => {
+                  if (
+                    granted &&
+                    !webContents.isDestroyed() &&
+                    webContents.getURL() === pageUrl &&
+                    permissionOrigin(pageUrl) === origin
+                  ) {
+                    webContents.reload();
+                  }
+                });
+              }
+              return false;
+            }
+            return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+          });
           const next = new Map(sessions);
           next.set(partition, browserSession);
           return [browserSession, next] as const;
@@ -361,6 +445,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
+      for (const [partition] of selectSessions(sessions, partitions)) {
+        resetNetworkPermissions.get(partition)?.();
+      }
       yield* Effect.forEach(
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>

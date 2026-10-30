@@ -1,7 +1,9 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Layer from "effect/Layer";
+import * as Fiber from "effect/Fiber";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { fromPartition, sessions } = vi.hoisted(() => ({
@@ -267,6 +269,172 @@ describe("BrowserSession", () => {
       assert.isFalse(checkClipboard("https://blocked.test"));
       assert.isTrue(checkClipboard("https://allowed.test"));
       assert.strictEqual(showMessageBox.mock.calls.length, 2);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "asks for local app access on the first request and scopes the answer to its permission, origin and profile",
+    () =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("network-a");
+        yield* browserSessions.getSession("network-a");
+        const browserSession = sessions.get(partition);
+        assert.isDefined(browserSession);
+        const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const checkHandler = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+        const request = (permission: string, requestingUrl: string) =>
+          Effect.callback<boolean>((resume) => {
+            requestHandler(
+              null,
+              permission,
+              (granted: boolean) => resume(Effect.succeed(granted)),
+              {
+                requestingUrl,
+                isMainFrame: true,
+              },
+            );
+          });
+        const origin = "https://sso.example.test";
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValue(0);
+        for (const permission of ["local-network-access", "local-network", "loopback-network"]) {
+          assert.isFalse(checkHandler(null, permission, origin, {}));
+          assert.isTrue(yield* request(permission, `${origin}/sign-in?sensitive=value`));
+          assert.isTrue(checkHandler(null, permission, origin, {}));
+          assert.isTrue(yield* request(permission, `${origin}/other`));
+          assert.isFalse(checkHandler(null, permission, "https://other.test", {}));
+        }
+        assert.strictEqual(showMessageBox.mock.calls.length, 3);
+        assert.isFalse(
+          showMessageBox.mock.calls.some(([options]) => options.message.includes("sensitive")),
+        );
+        assert.deepStrictEqual(showMessageBox.mock.calls[0]?.[0].buttons, ["Allow", "Block"]);
+        assert.strictEqual(showMessageBox.mock.calls[0]?.[0].defaultId, 1);
+        const otherPartition = yield* browserSessions.getPartition("network-b");
+        yield* browserSessions.getSession("network-b");
+        const otherCheck =
+          sessions.get(otherPartition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+        assert.isFalse(otherCheck(null, "loopback-network", origin, {}));
+        yield* browserSessions.clearCookies([partition]);
+        assert.isFalse(checkHandler(null, "loopback-network", origin, {}));
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "remembers a local network denial and never prompts for opaque or insecure origins",
+    () =>
+      Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const partition = yield* browserSessions.getPartition("network-denied");
+        yield* browserSessions.getSession("network-denied");
+        const requestHandler =
+          sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const request = (requestingUrl: string) =>
+          Effect.callback<boolean>((resume) => {
+            requestHandler(
+              null,
+              "loopback-network",
+              (granted: boolean) => resume(Effect.succeed(granted)),
+              {
+                requestingUrl,
+                isMainFrame: true,
+              },
+            );
+          });
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValue(1);
+        assert.isFalse(yield* request("https://blocked.test/a"));
+        assert.isFalse(yield* request("https://blocked.test/b"));
+        for (const url of [
+          "file:///tmp/test",
+          "data:text/html,x",
+          "invalid",
+          "http://untrusted.test/",
+        ]) {
+          assert.isFalse(yield* request(url));
+        }
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect(
+    "shares one prompt for concurrent requests and revokes a pending grant when cookies are cleared",
+    () =>
+      Effect.gen(function* () {
+        const shown = yield* Deferred.make<void>();
+        const answer = yield* Deferred.make<number>();
+        const dialog = Layer.succeed(ElectronDialog.ElectronDialog, {
+          pickFolder: () => Effect.die("unused"),
+          pickFiles: () => Effect.die("unused"),
+          showMessageBox: () =>
+            Deferred.succeed(shown, undefined).pipe(
+              Effect.andThen(Deferred.await(answer)),
+              Effect.map((response) => ({ response, checkboxChecked: false })),
+            ),
+          showErrorBox: () => Effect.void,
+        });
+        yield* Effect.gen(function* () {
+          const browserSessions = yield* BrowserSession.BrowserSession;
+          const partition = yield* browserSessions.getPartition("network-pending");
+          yield* browserSessions.getSession("network-pending");
+          const browserSession = sessions.get(partition);
+          assert.isDefined(browserSession);
+          const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
+          const results: boolean[] = [];
+          const finished = Effect.callback<void>((resume) => {
+            const complete = (granted: boolean) => {
+              results.push(granted);
+              if (results.length === 2) resume(Effect.void);
+            };
+            requestHandler(null, "loopback-network", complete, {
+              requestingUrl: "https://sso.test/first",
+              isMainFrame: true,
+            });
+            requestHandler(null, "loopback-network", complete, {
+              requestingUrl: "https://sso.test/second",
+              isMainFrame: true,
+            });
+          });
+          const fiber = yield* Effect.forkChild(finished);
+          yield* Deferred.await(shown);
+          yield* browserSessions.clearCookies([partition]);
+          yield* Deferred.succeed(answer, 0);
+          yield* Fiber.join(fiber);
+          assert.deepStrictEqual(results, [false, false]);
+          const check = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
+          assert.isFalse(check(null, "loopback-network", "https://sso.test", {}));
+        }).pipe(
+          Effect.provide(
+            BrowserSession.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, dialog))),
+          ),
+        );
+      }),
+  );
+
+  it.effect("asks on a preflight permission query and retries the same page after Allow", () =>
+    Effect.gen(function* () {
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const partition = yield* browserSessions.getPartition("network-query");
+      yield* browserSessions.getSession("network-query");
+      const check = sessions.get(partition)?.setPermissionCheckHandler.mock.calls[0]?.[0];
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValue(0);
+      let reloads = 0;
+      yield* Effect.callback<void>((resume) => {
+        const requester = {
+          isDestroyed: () => false,
+          getURL: () => "https://sso.test/sign-in",
+          reload: () => {
+            reloads++;
+            resume(Effect.void);
+          },
+        };
+        assert.isFalse(check(requester, "loopback-network", "https://sso.test", {}));
+      });
+      assert.strictEqual(reloads, 1);
+      assert.isTrue(check(null, "loopback-network", "https://sso.test", {}));
+      assert.strictEqual(showMessageBox.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
   );
 

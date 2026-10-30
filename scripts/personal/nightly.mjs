@@ -97,6 +97,7 @@ async function requiredTests() {
     "apps/web/src/keybindings.test.ts",
     "apps/web/src/components/settings/KeybindingsSettings.logic.test.ts",
     "apps/desktop/src/preview/Manager.test.ts",
+    "apps/desktop/src/preview/BrowserSession.test.ts",
     "apps/web/src/timestampFormat.test.ts",
     "apps/web/src/remoteOpen.test.ts",
     "apps/web/src/components/chat/OpenInPicker.logic.test.ts",
