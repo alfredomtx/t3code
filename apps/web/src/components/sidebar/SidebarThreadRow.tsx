@@ -1106,26 +1106,18 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               onKeyDown={(event) => event.stopPropagation()}
               onClick={handlePinClick}
               className={cn(
-                "group/unpin inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
+                "inline-flex cursor-pointer items-center rounded-sm text-muted-foreground/65 outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring",
                 !props.isPinned &&
                   "opacity-0 group-hover/sidebar-row:opacity-100 group-focus-within/sidebar-row:opacity-100 pointer-coarse:opacity-100",
               )}
             />
           }
         >
-          <PinIcon
-            aria-hidden
-            className={cn(
-              "size-3 shrink-0",
-              props.isPinned && "group-hover/unpin:hidden group-focus-visible/unpin:hidden",
-            )}
-          />
           {props.isPinned ? (
-            <PinOffIcon
-              aria-hidden
-              className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
-            />
-          ) : null}
+            <PinOffIcon aria-hidden className="size-3 shrink-0" />
+          ) : (
+            <PinIcon aria-hidden className="size-3 shrink-0" />
+          )}
         </TooltipTrigger>
         <TooltipPopup>{props.isPinned ? "Unpin thread" : "Pin thread"}</TooltipPopup>
       </Tooltip>
