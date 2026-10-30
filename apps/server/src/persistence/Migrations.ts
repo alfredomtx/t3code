@@ -75,7 +75,8 @@ import Migration0069 from "./Migrations/069_ThreadMessageSearch.ts";
 import Migration0070 from "./Migrations/070_PeerLinks.ts";
 import Migration0071 from "./Migrations/071_PeerLinkFence.ts";
 import Migration0072 from "./Migrations/072_WaitingLinkRequestIndex.ts";
-import Migration0073 from "./Migrations/073_ScheduledTaskModelSelectionMode.ts";
+import Migration0073 from "./Migrations/073_ActiveTurnItemIndexes.ts";
+import Migration0074 from "./Migrations/074_ScheduledTaskModelSelectionMode.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -151,7 +152,8 @@ const migrationEntries = [
   [70, "PeerLinks", Migration0070],
   [71, "PeerLinkFence", Migration0071],
   [72, "WaitingLinkRequestIndex", Migration0072],
-  [73, "ScheduledTaskModelSelectionMode", Migration0073],
+  [73, "ActiveTurnItemIndexes", Migration0073],
+  [74, "ScheduledTaskModelSelectionMode", Migration0074],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -220,8 +222,12 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
           const tables =
             yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
           if (tables.length > 0) {
-            // Published Personal builds used upstream's new id 70 for the task model policy.
-            yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = 70 AND name = 'ScheduledTaskModelSelectionMode'`;
+            // Published Personal builds used ids 70 and 73 for the task model policy.
+            for (const id of [70, 73]) {
+              if (toMigrationInclusive === undefined || toMigrationInclusive >= id) {
+                yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = ${id} AND name = 'ScheduledTaskModelSelectionMode'`;
+              }
+            }
           }
         }
         yield* assertV2MigrationsCanRun(toMigrationInclusive);
