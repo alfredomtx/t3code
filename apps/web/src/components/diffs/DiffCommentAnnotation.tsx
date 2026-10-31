@@ -10,6 +10,7 @@ interface DiffCommentSecondaryAction {
   readonly label: string;
   readonly icon?: ReactNode;
   readonly allowEmpty?: boolean;
+  readonly submitOnShortcut?: boolean;
   readonly onAction: (text: string) => void;
 }
 
@@ -109,12 +110,16 @@ export function DiffCommentAnnotation({
           }
           if (isCommentSubmitShortcut(event, trimmedText, pending)) {
             event.preventDefault();
-            onComment(trimmedText);
+            event.stopPropagation();
+            if (secondaryAction?.submitOnShortcut) secondaryAction.onAction(trimmedText);
+            else onComment(trimmedText);
           }
         }}
       />
       <div className="mt-1.5 flex items-center gap-1">
-        <span className="mr-auto text-3xs text-muted-foreground/70">⌘/Ctrl Enter to send</span>
+        <span className="mr-auto text-3xs text-muted-foreground/70">
+          ⌘/Ctrl Enter to {secondaryAction?.submitOnShortcut ? secondaryAction.label : "send"}
+        </span>
         <Button variant="ghost-muted" size="xs" onClick={onCancel}>
           Cancel
         </Button>

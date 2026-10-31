@@ -178,6 +178,7 @@ function setup(
   } = {},
 ) {
   diffCommits.length = 0;
+  const scrollScopeKey = expect.getState().currentTestName ?? "fixture";
   const stack = new DisposableStack();
   const settings = getClientSettings();
   __setClientSettingsForTests({ ...settings, diffFilesCollapsed: false });
@@ -233,6 +234,7 @@ function setup(
     tab: (refreshToken: number, props: Partial<Parameters<typeof PullRequestCodeTab>[0]> = {}) => (
       <RegistryContext.Provider value={registry}>
         {tab(refreshToken, {
+          scrollScopeKey,
           detail: { ...detail, changedFiles: options.changedFiles ?? 1 },
           ...props,
         })}
@@ -337,7 +339,7 @@ function patch(paths: string[], nextCursor: string | null = null): PullRequestDi
   };
 }
 
-it("marks and hides Markdown only when its PR checkbox is checked", async () => {
+it("marks and collapses Markdown while keeping its header visible", async () => {
   using fixture = setup(
     { files: [], truncated: false },
     { patch: patch(["README.md", "app.ts"]), changedFiles: 2 },
@@ -348,7 +350,10 @@ it("marks and hides Markdown only when its PR checkbox is checked", async () => 
   await screen.getByRole("checkbox", { name: "Markdown" }).click();
   await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
   expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "README.md", viewed: true }]);
-  await expect.element(screen.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toBeVisible();
   await screen.getByRole("checkbox", { name: "Markdown" }).click();
   await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(2));
   expect(command.mock.calls[1]?.[0].input.files).toEqual([{ path: "README.md", viewed: false }]);
@@ -359,7 +364,7 @@ it.each([
   { group: "Tests", selected: "tests/ThingTest.php", excluded: "app/Thing.php" },
   { group: "Source", selected: "app/Thing.php", excluded: "config/app.php" },
 ])(
-  "marks and hides $group without including other groups or config",
+  "marks and collapses $group without including other groups or config",
   async ({ group, selected, excluded }) => {
     using fixture = setup(
       { files: [], truncated: false },
@@ -370,7 +375,7 @@ it.each([
     await screen.getByRole("checkbox", { name: group, exact: true }).click();
     await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
     expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: selected, viewed: true }]);
-    await expect.element(screen.getByText(selected, { exact: true })).not.toBeInTheDocument();
+    await expect.element(screen.getByText(selected, { exact: true })).toBeInTheDocument();
     await expect.element(screen.getByText(excluded, { exact: true })).toBeInTheDocument();
     await expect.element(screen.getByText("ci.yaml", { exact: true })).toBeInTheDocument();
   },
@@ -445,7 +450,7 @@ it.each([
   expect(command).not.toHaveBeenCalled();
 });
 
-it("persists hiding for this PR without applying it to another PR or writing on mount", async () => {
+it("retains Viewed defaults on remount without hiding files or writing on mount", async () => {
   using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
   await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
@@ -454,7 +459,10 @@ it("persists hiding for this PR without applying it to another PR or writing on 
   await screen.unmount();
   await using second = await render(fixture.tab(0), { container: sizedContainer() });
   await expect.element(second.getByRole("checkbox", { name: "Markdown" })).toBeChecked();
-  await expect.element(second.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await expect.element(second.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await act(() =>
+    fixture.registry.set(filesViewedState, AsyncResult.success({ files: [], truncated: false })),
+  );
   await second.rerender(
     fixture.tab(0, { reference: { ...detail, number: 2 }, detail: { ...detail, number: 2 } }),
   );
@@ -463,7 +471,7 @@ it("persists hiding for this PR without applying it to another PR or writing on 
   expect(command).toHaveBeenCalledTimes(1);
 });
 
-it("keeps failed and later Changed files visible and lets explicit reveals show hidden files", async () => {
+it("keeps failed and later Changed files visible", async () => {
   using fixture = setup({ files: [], truncated: false }, { patch: patch(["README.md"]) });
   command.mockResolvedValue({ _tag: "Failure", cause: Cause.fail(new Error("Test write failed")) });
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
@@ -477,7 +485,7 @@ it("keeps failed and later Changed files visible and lets explicit reveals show 
       AsyncResult.success({ files: [{ path: "README.md", state: "viewed" }], truncated: false }),
     ),
   );
-  await expect.element(screen.getByText("README.md", { exact: true })).not.toBeInTheDocument();
+  await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
   await screen.rerender(fixture.tab(0, { revealRequest: { path: "README.md", nonce: 1 } }));
   await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
   await screen.rerender(fixture.tab(0));
@@ -488,9 +496,7 @@ it("keeps failed and later Changed files visible and lets explicit reveals show 
     ),
   );
   await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
-  await expect
-    .element(screen.getByRole("checkbox", { name: "Markdown" }))
-    .toHaveAttribute("aria-checked", "mixed");
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).not.toBeChecked();
   expect(command).toHaveBeenCalledTimes(1);
 });
 
@@ -628,4 +634,85 @@ it("never requests the diff of a selected commit the pull request no longer has"
     .element(screen.getByRole("button", { name: "Diff scope: All commits" }))
     .toBeVisible();
   expect(diffCommits).not.toContain("gone");
+});
+
+it("marks the hovered file viewed with macOS Option+V and keeps its collapsed header", async () => {
+  using fixture = setup({ files: [], truncated: false });
+  await using screen = await render(fixture.tab(0), { container: sizedContainer() });
+  const header = screen.getByText("a.ts", { exact: true });
+  await expect.element(header).toBeVisible();
+  await screen.getByRole("button", { name: "Collapse diff", exact: true }).hover();
+  await act(() =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "v",
+        code: "KeyV",
+        altKey: true,
+        repeat: true,
+        bubbles: true,
+      }),
+    ),
+  );
+  expect(command).not.toHaveBeenCalled();
+  const overlay = document.createElement("div");
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  document.body.append(overlay);
+  try {
+    await act(() =>
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "v", code: "KeyV", altKey: true, bubbles: true }),
+      ),
+    );
+    expect(command).not.toHaveBeenCalled();
+  } finally {
+    overlay.remove();
+  }
+  await act(() =>
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "√", code: "KeyV", altKey: true, bubbles: true }),
+    ),
+  );
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed", exact: true })).toBeChecked();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toBeVisible();
+  await expect.element(header).toBeVisible();
+  await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
+});
+
+it("restores a scrolled PR after the viewer unmounts for another thread", async () => {
+  const lines = Array.from({ length: 200 }, (_, index) => `+line${index}`).join("\n");
+  using fixture = setup(
+    { files: [{ path: "long.ts", state: "viewed" }], truncated: false },
+    {
+      patch: {
+        patch: `diff --git a/long.ts b/long.ts\n--- a/long.ts\n+++ b/long.ts\n@@ -0,0 +1,200 @@\n${lines}\n`,
+        truncated: false,
+        nextCursor: null,
+      },
+    },
+  );
+  const firstContainer = pagedContainer();
+  await using first = await render(fixture.tab(0, { scrollScopeKey: "return-to-thread" }), {
+    container: firstContainer,
+  });
+  await expect.element(first.getByText("long.ts", { exact: true })).toBeVisible();
+  await first.getByRole("button", { name: "Expand diff", exact: true }).click();
+  const scroller = firstContainer.querySelector(".diff-render-surface");
+  if (!(scroller instanceof HTMLElement)) throw new Error("Expected diff scroller");
+  await vi.waitFor(() => expect(scroller.scrollHeight).toBeGreaterThan(1500));
+  await act(() => {
+    scroller.scrollTop = 900;
+    scroller.dispatchEvent(new Event("scroll"));
+  });
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(700));
+  await first.unmount();
+  const secondContainer = pagedContainer();
+  await using _second = await render(fixture.tab(0, { scrollScopeKey: "return-to-thread" }), {
+    container: secondContainer,
+  });
+  await vi.waitFor(() =>
+    expect(secondContainer.querySelector(".diff-render-surface")?.scrollTop).toBeGreaterThan(700),
+  );
 });

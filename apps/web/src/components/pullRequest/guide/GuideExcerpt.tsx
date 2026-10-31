@@ -331,6 +331,7 @@ function ExcerptDiff({
                   ? {
                       secondaryAction: {
                         label: "Ask agent",
+                        submitOnShortcut: true,
                         onAction: (text: string) => askAgent(text),
                       },
                     }

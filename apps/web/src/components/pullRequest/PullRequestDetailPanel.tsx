@@ -1860,6 +1860,8 @@ export function PullRequestDetailPanel({
                 >
                   <PullRequestCodeTab
                     scrollerRef={scrollerRefs.code}
+                    scrollScopeKey={JSON.stringify(threadRef)}
+                    shortcutsEnabled={shortcutsEnabled && tab === "code"}
                     onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     reference={reference}

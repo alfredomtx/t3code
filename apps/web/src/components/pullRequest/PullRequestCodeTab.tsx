@@ -1,9 +1,13 @@
+import { TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR } from "../chat/composerFocusRedirect";
+import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
+import { isEditableFocused } from "~/lib/editableFocus";
+import { createPullRequestCodeScroll } from "./pullRequestCodeScroll";
 import {
   capitalizeTerm,
   sourceControlClients,
 } from "@t3tools/client-runtime/source-control-clients";
 import type { CodeViewItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
-import type { CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
+import type { CodeViewHandle, CodeViewAnnotationArgs, CodeViewDiffItem } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
   PullRequestDetailView,
@@ -118,9 +122,7 @@ import {
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import {
-  HiddenReviewFileGroups,
   REVIEW_FILE_GROUPS,
-  hiddenReviewGroupsStorageKey,
   reviewFileGroup,
   type ReviewFileGroup,
 } from "./pullRequestReviewGroups";
@@ -268,6 +270,8 @@ export interface PullRequestAgentSelectionInput {
 
 function PullRequestCodeTab({
   scrollerRef,
+  scrollScopeKey = "",
+  shortcutsEnabled = true,
   environmentId,
   reference,
   detail,
@@ -283,6 +287,8 @@ function PullRequestCodeTab({
   revealRequest = null,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
+  scrollScopeKey?: string;
+  shortcutsEnabled?: boolean;
   environmentId: EnvironmentId;
   reference: PullRequestRef;
   detail: PullRequestDetailView;
@@ -306,11 +312,6 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
-  const [hiddenGroups, setHiddenGroups] = useLocalStorage(
-    hiddenReviewGroupsStorageKey(environmentId, reference),
-    [],
-    HiddenReviewFileGroups,
-  );
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
   const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
@@ -348,6 +349,14 @@ function PullRequestCodeTab({
     commit,
     detail.headSha ?? detail.updatedAt,
   ]);
+  const scrollKey = JSON.stringify([scrollScopeKey, scopeKey]);
+  const [scrollState, setScrollState] = useState(() => ({
+    key: scrollKey,
+    value: createPullRequestCodeScroll(scrollKey),
+  }));
+  if (scrollState.key !== scrollKey)
+    setScrollState({ key: scrollKey, value: createPullRequestCodeScroll(scrollKey) });
+  const codeViewer = useRef<CodeViewHandle<ReviewAnnotationGroup, undefined> | null>(null);
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   const [stateScopeKey, setStateScopeKey] = useState(scopeKey);
@@ -552,18 +561,7 @@ function PullRequestCodeTab({
       parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
     ),
   );
-  // Explicit reveals remain reachable even when their group is hidden.
-  const files = loadedFiles.filter((file) => {
-    const path = resolveFileDiffPath(file);
-    const group = reviewFileGroup(path);
-    return (
-      path === revealRequest?.path ||
-      group === null ||
-      !hiddenGroups.includes(group) ||
-      !isFileViewed(path)
-    );
-  });
-  const hiddenFileCount = loadedFiles.length - files.length;
+  const files = loadedFiles;
   const filePaths = loadedFiles.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
@@ -718,7 +716,8 @@ function PullRequestCodeTab({
         fileKey,
         foldOverride,
         fileFolds,
-        settings.diffFilesCollapsed || (filesViewedEnabled && isFileViewed(path)),
+        (settings.diffFilesCollapsed || (filesViewedEnabled && isFileViewed(path))) &&
+          scrollState.value.expandedFileId !== fileKey,
       );
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
@@ -841,10 +840,17 @@ function PullRequestCodeTab({
   const setGroupViewed = async (group: ReviewFileGroup, viewed: boolean) => {
     if (commit !== null || !inventoryReady || !filesViewed.ready) return;
     const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === group);
-    if (!viewed) setHiddenGroups((groups) => groups.filter((value) => value !== group));
     const result = await filesViewed.setManyViewed(paths.map((path) => ({ path, viewed })));
     if (!isCurrentScope(scopeKey, actionGeneration)) return;
-    if (viewed) setHiddenGroups((groups) => [...new Set([...groups, group])]);
+    setFileFolds((current) =>
+      annotatedFiles.reduce(
+        (next, file) =>
+          reviewFileGroup(file.path) === group && isFileViewed(file.path) === viewed
+            ? setFileDiffCollapsed(file.fileKey, viewed, next)
+            : next,
+        current,
+      ),
+    );
     reportViewedResult(result);
   };
 
@@ -863,6 +869,72 @@ function PullRequestCodeTab({
       range.reduce((next, file) => setFileDiffCollapsed(file.fileKey, viewed, next), current),
     );
   };
+  const pointer = useRef<{ x: number; y: number } | null>(null);
+  const markHoveredFile = useStableCallback((event: KeyboardEvent) => {
+    if (
+      !shortcutsEnabled ||
+      event.defaultPrevented ||
+      event.repeat ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.getModifierState("AltGraph") ||
+      isEditableFocused() ||
+      document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR) !== null ||
+      !filesViewed.canWrite ||
+      !filesViewed.ready
+    )
+      return;
+    if (
+      !matchesKeybindingShortcut(
+        event,
+        { key: "v", altKey: true, ctrlKey: false, metaKey: false, shiftKey: false, modKey: false },
+        navigator.platform,
+      )
+    )
+      return;
+    const point = pointer.current;
+    if (!point) return;
+    const hit = document.elementFromPoint(point.x, point.y);
+    const item = codeViewer.current
+      ?.getInstance()
+      ?.getRenderedItems()
+      .find(
+        (item) =>
+          hit !== null &&
+          item.element.contains(hit) &&
+          item.element.checkVisibility({ checkVisibilityCSS: true }),
+      );
+    if (!item || item.type !== "diff") return;
+    event.preventDefault();
+    event.stopPropagation();
+    scrollState.value.cancel();
+    setFileViewed(item.id, true, false);
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the hovered-file shortcut outside the focused control
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      pointer.current =
+        event.pointerType === "touch" ? null : { x: event.clientX, y: event.clientY };
+    };
+    const clear = () => {
+      pointer.current = null;
+    };
+    const keydown = (event: KeyboardEvent) => markHoveredFile(event);
+    window.addEventListener("pointermove", move);
+    window.addEventListener("blur", clear);
+    window.addEventListener("keydown", keydown, true);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("blur", clear);
+      window.removeEventListener("keydown", keydown, true);
+    };
+  }, [markHoveredFile, pointer]);
+  const attachCodeViewer = useStableCallback(
+    (viewer: CodeViewHandle<ReviewAnnotationGroup, undefined> | null) => {
+      codeViewer.current = viewer;
+      codeViewReveal.attach(viewer);
+    },
+  );
   const fileViewedToggle = {
     enabled: filesViewedEnabled,
     canWrite: filesViewed.canWrite,
@@ -875,6 +947,7 @@ function PullRequestCodeTab({
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
     setFileFold(item.id, false);
+    scrollState.value.cancel();
     codeViewReveal.request(item.id);
   };
 
@@ -1002,6 +1075,12 @@ function PullRequestCodeTab({
     );
   };
 
+  const restoreCodeScroll = useStableCallback(() => {
+    const viewer = codeViewer.current?.getInstance();
+    if (viewer && inventoryReady && revealRequest == null) scrollState.value.restore(viewer);
+    codeViewReveal.flush();
+  });
+
   const diffViewOptions = {
     diffStyle: diffLayout === "split" ? ("split" as const) : ("unified" as const),
     lineDiffType: "none" as const,
@@ -1015,7 +1094,7 @@ function PullRequestCodeTab({
     enableLineSelection: canSelectLines && draft === null,
     onGutterUtilityClick: beginComment,
     onLineSelectionEnd: beginComment,
-    onPostRender: codeViewReveal.flush,
+    onPostRender: restoreCodeScroll,
   };
 
   const runThreadCommand = async (
@@ -1118,6 +1197,7 @@ function PullRequestCodeTab({
             ? {
                 secondaryAction: {
                   label: "Add to agent",
+                  submitOnShortcut: true,
                   onAction: (text: string) =>
                     finishSelection(draft, text, (comment) =>
                       onAddToAgentSelection({ comment, request: text }),
@@ -1216,7 +1296,6 @@ function PullRequestCodeTab({
             {files.length} {files.length === 1 ? "file" : "files"}
             {nextCursor === null ? "" : "+"}
           </span>
-          {hiddenFileCount > 0 ? <span className="shrink-0">{hiddenFileCount} hidden</span> : null}
           {filesViewed.enabled && loadedFiles.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
@@ -1299,13 +1378,9 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1">
-        <div
-          className="flex shrink-0 items-center gap-3"
-          aria-label="Mark file groups viewed and hide them"
-        >
+        <div className="flex shrink-0 items-center gap-3" aria-label="Mark file groups viewed">
           {REVIEW_FILE_GROUPS.map(({ id, label }) => {
             const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === id);
-            const hidden = hiddenGroups.includes(id);
             const allViewed = paths.length > 0 && paths.every(isFileViewed);
             return (
               <Tooltip key={id}>
@@ -1313,8 +1388,8 @@ function PullRequestCodeTab({
                   render={<label className="flex items-center gap-1.5 whitespace-nowrap" />}
                 >
                   <Checkbox
-                    checked={hidden && allViewed}
-                    indeterminate={hidden && !allViewed}
+                    checked={allViewed}
+                    indeterminate={!allViewed && paths.some(isFileViewed)}
                     disabled={
                       commit !== null || !inventoryReady || !filesViewed.ready || paths.length === 0
                     }
@@ -1328,7 +1403,7 @@ function PullRequestCodeTab({
                 <TooltipPopup side="bottom">
                   {commit !== null
                     ? "Switch to All commits to mark a file group viewed"
-                    : "Check to mark viewed and hide in this PR. Uncheck to show and unmark."}
+                    : "Check to mark viewed and collapse. Uncheck to mark unviewed and expand."}
                 </TooltipPopup>
               </Tooltip>
             );
@@ -1541,11 +1616,7 @@ function PullRequestCodeTab({
   if (items.length === 0 && nextCursor === null) {
     return withToolbar(
       <p className="px-4 py-5 text-sm text-muted-foreground">
-        {hiddenFileCount > 0
-          ? "All loaded files are hidden. Uncheck a group to show and unmark its files."
-          : commit === null
-            ? `This ${term} has no file changes.`
-            : "This commit has no file changes."}
+        {commit === null ? `This ${term} has no file changes.` : "This commit has no file changes."}
       </p>,
     );
   }
@@ -1643,7 +1714,8 @@ function PullRequestCodeTab({
             <StyledDiffCodeView<ReviewAnnotationGroup>
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
-              viewerRef={codeViewReveal.attach}
+              viewerRef={attachCodeViewer}
+              onScroll={scrollState.value.save}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}

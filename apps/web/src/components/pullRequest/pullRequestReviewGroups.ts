@@ -1,12 +1,8 @@
-import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { classifyChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import * as Schema from "effect/Schema";
 
-import { pullRequestReviewKey } from "./pullRequestReviewStore";
-
 export const ReviewFileGroup = Schema.Literals(["markdown", "tests", "source"]);
 export type ReviewFileGroup = typeof ReviewFileGroup.Type;
-export const HiddenReviewFileGroups = Schema.Array(ReviewFileGroup);
 export const REVIEW_FILE_GROUPS = [
   { id: "markdown", label: "Markdown" },
   { id: "tests", label: "Tests" },
@@ -29,11 +25,4 @@ export function reviewFileGroup(path: string): ReviewFileGroup | null {
   )
     return "source";
   return null;
-}
-
-export function hiddenReviewGroupsStorageKey(
-  environmentId: EnvironmentId,
-  reference: PullRequestRef,
-) {
-  return `t3.pullRequests.hiddenReviewGroups:${JSON.stringify([environmentId, pullRequestReviewKey(reference)])}`;
 }
