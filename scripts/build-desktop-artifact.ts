@@ -2843,7 +2843,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       },
       identity: null,
       notarize: false,
-      protocols: [{ name: PERSONAL_DESKTOP.productName, schemes: [PERSONAL_DESKTOP.scheme] }],
+      protocols: [
+        { name: PERSONAL_DESKTOP.productName, schemes: [PERSONAL_DESKTOP.scheme, "t3code"] },
+      ],
       ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
       ...(macPasskeySigning
         ? {

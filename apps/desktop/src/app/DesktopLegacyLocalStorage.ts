@@ -5,12 +5,12 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 
-import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { readChromiumLocalStorage } from "./chromiumLocalStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 
-/** Reads the V1 profile without opening it in Chromium, even while V1 runs. */
+/** Preserves Personal's saved connections and drafts when restoring the supported renderer origin. */
 export class DesktopLegacyLocalStorage extends Context.Service<
   DesktopLegacyLocalStorage,
   {
@@ -20,8 +20,7 @@ export class DesktopLegacyLocalStorage extends Context.Service<
   }
 >()("@t3tools/desktop/app/DesktopLegacyLocalStorage") {}
 
-const MARKER_FILE_NAME = "v1-local-storage-imported";
-const V1_PROFILE_NAMES = ["T3 Code (Alpha)", "t3code"];
+const MARKER_FILE_NAME = "personal-origin-local-storage-imported";
 
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -30,35 +29,6 @@ const make = Effect.gen(function* () {
   const items = yield* Ref.make(Option.none<Readonly<Record<string, string>>>());
   const markerPath = yield* Ref.make(Option.none<string>());
 
-  /** Newest file mtime in a directory; appending to a log leaves the directory's own mtime alone. */
-  const newestFileMtime = Effect.fn("DesktopLegacyLocalStorage.newestFileMtime")(
-    function* (directory: string) {
-      let newest = 0;
-      for (const name of yield* fs.readDirectory(directory)) {
-        const info = yield* fs.stat(path.join(directory, name)).pipe(Effect.option);
-        if (Option.isNone(info)) continue;
-        const mtime = Option.match(info.value.mtime, {
-          onNone: () => 0,
-          onSome: (date) => date.getTime(),
-        });
-        newest = Math.max(newest, mtime);
-      }
-      return newest;
-    },
-    (effect, _directory) => effect.pipe(Effect.option),
-  );
-
-  const findV1LocalStorage = Effect.gen(function* () {
-    let newest: { readonly directory: string; readonly mtime: number } | null = null;
-    for (const name of V1_PROFILE_NAMES) {
-      const directory = path.join(environment.appDataDirectory, name, "Local Storage", "leveldb");
-      const mtime = yield* newestFileMtime(directory);
-      if (Option.isNone(mtime)) continue;
-      if (newest === null || mtime.value > newest.mtime) newest = { directory, mtime: mtime.value };
-    }
-    return newest?.directory ?? null;
-  });
-
   const writeMarker = Effect.gen(function* () {
     const marker = yield* Ref.get(markerPath);
     if (Option.isNone(marker)) return;
@@ -66,7 +36,7 @@ const make = Effect.gen(function* () {
       .writeFileString(marker.value, "")
       .pipe(
         Effect.catch((error) =>
-          Effect.logWarning("Could not record the V1 Local Storage import", error),
+          Effect.logWarning("Could not record the Personal storage import", error),
         ),
       );
   });
@@ -76,19 +46,19 @@ const make = Effect.gen(function* () {
     const marker = path.join(userDataPath, MARKER_FILE_NAME);
     if (yield* fs.exists(marker).pipe(Effect.orElseSucceed(() => true))) return;
     yield* Ref.set(markerPath, Option.some(marker));
-    const directory = yield* findV1LocalStorage;
-    if (directory === null) return yield* writeMarker;
-    const origin = ElectronProtocol.getDesktopUrl(false).replace(/\/$/, "");
+    const directory = path.join(userDataPath, "Local Storage", "leveldb");
+    if (!(yield* fs.exists(directory).pipe(Effect.orElseSucceed(() => false)))) return;
+    const origin = `${PERSONAL_DESKTOP.scheme}://app`;
     const read = yield* readChromiumLocalStorage(directory, origin).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.tapError((error) =>
-        Effect.logWarning("Could not read V1 Local Storage; will retry next launch", error),
+        Effect.logWarning("Could not read Personal storage. The next launch will retry.", error),
       ),
       Effect.option,
     );
     if (Option.isNone(read)) return;
-    yield* Effect.logInfo("V1 Local Storage ready to import", {
+    yield* Effect.logInfo("Personal storage ready to import", {
       directory,
       keys: read.value.size,
     });

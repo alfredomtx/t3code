@@ -1,4 +1,3 @@
-import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -14,8 +13,8 @@ import * as Scope from "effect/Scope";
 import * as Electron from "electron";
 
 export const DESKTOP_HOST = "app";
-const DESKTOP_PRODUCTION_SCHEME = PERSONAL_DESKTOP.scheme;
-const DESKTOP_DEVELOPMENT_SCHEME = PERSONAL_DESKTOP.developmentScheme;
+const DESKTOP_PRODUCTION_SCHEME = "t3code";
+const DESKTOP_DEVELOPMENT_SCHEME = "t3code-dev";
 
 export function getDesktopScheme(isDevelopment: boolean): string {
   return isDevelopment ? DESKTOP_DEVELOPMENT_SCHEME : DESKTOP_PRODUCTION_SCHEME;

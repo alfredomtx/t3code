@@ -79,7 +79,7 @@ export async function verifyArtifact({
     NodeAssert.equal(info.CFBundleDisplayName, identity.productName);
     NodeAssert.deepEqual(
       info.CFBundleURLTypes.flatMap((entry) => entry.CFBundleURLSchemes),
-      [identity.scheme],
+      [identity.scheme, "t3code"],
     );
     NodeAssert.ok(
       !info.CFBundleDocumentTypes,

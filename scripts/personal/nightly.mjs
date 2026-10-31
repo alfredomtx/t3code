@@ -126,6 +126,8 @@ async function requiredTests() {
     "packages/shared/src/codexAuthHandoff.test.ts",
     "packages/shared/src/promptLinks.test.ts",
     "apps/desktop/src/app/DesktopUserData.test.ts",
+    "apps/desktop/src/app/DesktopClerk.test.ts",
+    "apps/desktop/src/app/DesktopLegacyLocalStorage.test.ts",
     "apps/desktop/src/app/DesktopEnvironment.test.ts",
     "apps/desktop/src/app/DesktopAppIdentity.test.ts",
     "apps/desktop/src/electron/ElectronProtocol.test.ts",

@@ -981,7 +981,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         { name: "T3 Code", schemes: ["t3code", "t3code-dev"] },
       ]);
       assert.deepStrictEqual((mac.mac as Record<string, unknown>).protocols, [
-        { name: "T3 Code Personal", schemes: ["t3code-personal"] },
+        { name: "T3 Code Personal", schemes: ["t3code-personal", "t3code"] },
       ]);
       const macInfo = (mac.mac as { extendInfo: Record<string, unknown> }).extendInfo;
       assert.strictEqual(macInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac, true);
@@ -2044,7 +2044,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       assert.equal(mac.provisioningProfile, "/tmp/t3code.provisionprofile");
       assert.match(String(mac.sign), /[\\/]scripts[\\/]sign-macos\.ts$/);
       assert.deepStrictEqual(mac.protocols, [
-        { name: "T3 Code Personal", schemes: ["t3code-personal"] },
+        { name: "T3 Code Personal", schemes: ["t3code-personal", "t3code"] },
       ]);
     }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
   );

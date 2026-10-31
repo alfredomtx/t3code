@@ -159,6 +159,10 @@ describe("DesktopClerk", () => {
         "on:open-url",
         "createClerkBridge",
       ]);
+      assert.deepEqual(createClerkBridgeMock.mock.calls.at(-1)?.[0].renderer, {
+        scheme: isDevelopment ? "t3code-dev" : "t3code",
+        host: "app",
+      });
     },
   );
 
@@ -311,13 +315,13 @@ it.effect(
       assert.equal(event.preventDefault.mock.calls.length, 0);
       listeners.get("second-instance")!({}, [
         "t3",
-        "t3code-personal-dev://app/settings/providers?instanceId=work&code=never-forward",
+        "t3code-dev://app/settings/providers?instanceId=work&code=never-forward",
       ]);
       yield* Effect.promise(() => revealed.promise);
       assert.deepEqual(loadURL.mock.calls, [
-        ["t3code-personal-dev://app/settings/providers?instanceId=work"],
+        ["t3code-dev://app/settings/providers?instanceId=work"],
       ]);
-      listeners.get("open-url")!(event, "t3code-personal-dev://app/welcome#agents:machine-id");
+      listeners.get("open-url")!(event, "t3code-dev://app/welcome#agents:machine-id");
       assert.equal(event.preventDefault.mock.calls.length, 1);
     }).pipe(
       Effect.scoped,
