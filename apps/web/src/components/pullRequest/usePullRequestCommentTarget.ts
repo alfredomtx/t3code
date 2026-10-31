@@ -1,4 +1,5 @@
 import { useEffect, useEffectEvent, useRef } from "react";
+import { observeResize } from "~/lib/observeResize";
 import {
   isPullRequestCommentTarget,
   type PullRequestCommentRequest,
@@ -17,6 +18,19 @@ export function usePullRequestCommentTarget<T extends HTMLElement = HTMLElement>
   useEffect(() => {
     const node = ref.current;
     if (!matches || requestId === undefined || !node) return;
+    const ancestors: Element[] = [];
+    for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+      ancestors.push(parent);
+      if (parent.classList.contains("scrollbar-gutter-both")) break;
+    }
+    let acknowledged = false;
+    const stopObserving = observeResize(ancestors, () => {
+      node.scrollIntoView({ block: "center", inline: "nearest" });
+      if (!acknowledged) {
+        acknowledged = true;
+        handled(requestId);
+      }
+    });
     node.scrollIntoView({ block: "center", inline: "nearest" });
     node.focus({ preventScroll: true });
     if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
@@ -24,7 +38,7 @@ export function usePullRequestCommentTarget<T extends HTMLElement = HTMLElement>
         duration: 2000,
       });
     }
-    handled(requestId);
+    return stopObserving;
   }, [matches, requestId]);
   return ref;
 }

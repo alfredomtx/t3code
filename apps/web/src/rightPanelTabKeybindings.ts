@@ -11,7 +11,7 @@ import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
 import {
   getLocalStorageItem,
-  subscribeLocalStorage,
+  subscribeLocalStorageKey,
   useLocalStorage,
 } from "./hooks/useLocalStorage";
 
@@ -40,7 +40,7 @@ function readTabKeybindings() {
 }
 
 export const rightPanelTabKeybindingsAtom = Atom.make((get) => {
-  get.addFinalizer(subscribeLocalStorage(STORAGE_KEY, () => get.setSelf(readTabKeybindings())));
+  get.addFinalizer(subscribeLocalStorageKey(STORAGE_KEY, () => get.setSelf(readTabKeybindings())));
   return readTabKeybindings();
 });
 

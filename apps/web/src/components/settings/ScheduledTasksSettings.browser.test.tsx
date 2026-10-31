@@ -44,6 +44,11 @@ const task: ScheduledTask = {
   boundModelSelectionMode: "inherit_thread",
 };
 
+const threadFamilyRead = {
+  snapshotSequence: 1,
+  threads: [{ id: ThreadId.make("older-thread"), title: "Fix login bug" }],
+};
+
 const state = vi.hoisted(() => ({
   connected: true,
   tasksLoaded: true,
@@ -220,7 +225,10 @@ vi.mock(import("../../state/server"), async (original) => {
 vi.mock(import("../../state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((request: unknown) => ({
-    data: request === null ? null : { tasks: state.tasksLoaded && state.task ? [state.task] : [] },
+    data:
+      request === null || request === threadFamilyRead
+        ? request
+        : { tasks: state.tasksLoaded && state.task ? [state.task] : [] },
     error: null,
     isPending: false,
     refresh: vi.fn(),
@@ -233,6 +241,7 @@ vi.mock(import("../../state/environments"), async (original) => ({
 }));
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
+  useThreadShell: (() => null) as never,
   useProjects: (() => [{ id: projectId, environmentId, title: "Project" }]) as never,
 }));
 vi.mock(import("../../hooks/useSettings"), async (original) => ({
@@ -256,6 +265,10 @@ vi.mock(import("../../state/threads"), async (original) => {
   const { EMPTY_ENVIRONMENT_THREAD_STATE } = await import("@t3tools/client-runtime/state/threads");
   return {
     ...(await original()),
+    threadFamilies: {
+      ...(await original()).threadFamilies,
+      familyAtom: (() => threadFamilyRead) as never,
+    },
     useEnvironmentThread: (() => {
       useSyncExternalStore(
         (listener) => {
@@ -333,8 +346,9 @@ describe("ScheduledTasksSettings", () => {
   });
 
   it("keeps a linked task's unsaved edits across a disconnect and reconnect", async () => {
-    setup();
+    setup({ ...task, threadId: ThreadId.make("older-thread") });
     await using screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
     const name = page.getByRole("dialog").getByRole("textbox", { name: "Name" });
     await expect.element(name).toHaveValue("Review issues");
     await userEvent.fill(name, "Review stale issues");
@@ -413,7 +427,7 @@ it("clears stale options when switching the model", async () => {
   await userEvent.click(
     page.getByRole("dialog").getByRole("button", { name: "Test model", exact: true }),
   );
-  await userEvent.click(page.getByText("Other model", { exact: true }));
+  await userEvent.click(page.getByRole("option", { name: /Other model/ }));
   await userEvent.click(page.getByRole("button", { name: "Save task" }));
   expect(state.inputs[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.5" });
 });
