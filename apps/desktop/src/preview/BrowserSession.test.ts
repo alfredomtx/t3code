@@ -161,24 +161,25 @@ describe("BrowserSession", () => {
       assert.isFunction(requestHandler);
       assert.isFunction(checkHandler);
 
+      const requestingUrl = "http://localhost:3000/";
       const requestAllows = (permission: string): boolean => {
         let granted: boolean | undefined;
-        requestHandler(null, permission, (value: boolean) => {
-          granted = value;
-        });
+        requestHandler(
+          null,
+          permission,
+          (value: boolean) => {
+            granted = value;
+          },
+          { requestingUrl, isMainFrame: true },
+        );
         assert.isDefined(granted);
         return granted;
       };
 
-      for (const permission of [
-        "clipboard-sanitized-write",
-        "geolocation",
-        "fullscreen",
-        "loopback-network",
-      ]) {
+      for (const permission of ["clipboard-sanitized-write", "geolocation", "fullscreen"]) {
         assert.isTrue(requestAllows(permission), `request handler should allow ${permission}`);
         assert.isTrue(
-          checkHandler(null, permission) as boolean,
+          checkHandler(null, permission, requestingUrl, {}) as boolean,
           `check handler should allow ${permission}`,
         );
       }
@@ -192,10 +193,11 @@ describe("BrowserSession", () => {
         "midi",
         "local-network",
         "local-network-access",
+        "loopback-network",
       ]) {
         assert.isFalse(requestAllows(permission), `request handler should deny ${permission}`);
         assert.isFalse(
-          checkHandler(null, permission) as boolean,
+          checkHandler(null, permission, requestingUrl, {}) as boolean,
           `check handler should deny ${permission}`,
         );
       }
