@@ -631,7 +631,7 @@ describe("PreviewManager", () => {
           const send = vi.fn();
           const reload = vi.fn();
           Object.assign(preview.webContents, {
-            hostWebContents: { isDestroyed: () => false, send },
+            hostWebContents: { isDestroyed: () => false, send, focus: vi.fn() },
             reload,
           });
           fromId.mockReturnValue(preview.webContents);
