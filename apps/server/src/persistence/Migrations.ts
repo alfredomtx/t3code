@@ -1,7 +1,10 @@
 import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
-import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
+import {
+  planV2PreviewMigration,
+  reconcileV2PreviewMigration,
+} from "./reconcileV2PreviewMigration.ts";
 
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -177,22 +180,56 @@ const makeMigrationLoader = (throughId?: number) =>
 
 const FIRST_V2_MIGRATION_ID = 55;
 
-// Migrators skip ids up to the highest recorded; reject collisions that would skip V2 schema.
-const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function* (
+// Published Personal ids remain stable; official builds omitted the task model policy at 74.
+export function planMigrationHistory(
+  recorded: ReadonlyArray<readonly [number, string]>,
   throughId?: number,
 ) {
-  const sql = yield* SqlClient.SqlClient;
-  const tables = yield* sql`
-    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
-  `;
-  if (tables.length === 0) return;
-  const recorded = yield* sql<{
-    readonly migration_id: number;
-    readonly name: string;
-  }>`SELECT migration_id, name FROM effect_sql_migrations`;
-  const latestRecordedId = Math.max(0, ...recorded.map((row) => row.migration_id));
-  const recordedNames = new Map(recorded.map((row) => [row.migration_id, row.name]));
-  const skipped = migrationEntries.flatMap(([id, name]) => {
+  const preview = planV2PreviewMigration(recorded);
+  if (preview.legacyId !== undefined && !preview.valid) {
+    return {
+      legacyPersonalIds: [],
+      officialTail: false,
+      skipped: ["unexpected V2 preview migrations"],
+    };
+  }
+  if (preview.legacyId !== undefined && preview.valid) {
+    recorded = recorded.map(([id, name]) =>
+      name === "OrchestrationV2"
+        ? [55, name]
+        : name === "RemoveRedundantProjectionIndexes"
+          ? [56, name]
+          : [id, name],
+    );
+  }
+  const legacyPersonalIds = recorded.flatMap(([id, name]) =>
+    (id === 70 || id === 73) &&
+    name === "ScheduledTaskModelSelectionMode" &&
+    (throughId === undefined || throughId >= id)
+      ? [id]
+      : [],
+  );
+  const officialTail =
+    (throughId === undefined || throughId >= 74) &&
+    recorded.some(
+      ([id, name]) => id === 74 && name === "ExcludeAttachmentPlaceholdersFromSearch",
+    ) &&
+    recorded
+      .filter(([id]) => id >= 74)
+      .every(
+        ([id, name]) =>
+          id <= 77 &&
+          migrationManifest.some(
+            ([personalId, personalName]) => personalId === id + 1 && personalName === name,
+          ),
+      );
+  const normalized = recorded
+    .filter(([id]) => !legacyPersonalIds.includes(id))
+    .map(([id, name]) => [officialTail && id >= 74 ? id + 1 : id, name] as const);
+  if (officialTail) normalized.push([74, "ScheduledTaskModelSelectionMode"]);
+  const latestRecordedId = Math.max(0, ...normalized.map(([id]) => id));
+  const recordedNames = new Map(normalized);
+  const skipped = migrationManifest.flatMap(([id, name]) => {
     if (
       id < FIRST_V2_MIGRATION_ID ||
       id > latestRecordedId ||
@@ -200,14 +237,43 @@ const assertV2MigrationsCanRun = Effect.fn("assertV2MigrationsCanRun")(function*
     )
       return [];
     const recordedName = recordedNames.get(id);
-    if (recordedName === name) return [];
-    return [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
+    return recordedName === name ? [] : [`${id}_${name} (recorded: ${recordedName ?? "nothing"})`];
   });
-  if (skipped.length === 0) return;
-  return yield* new Migrator.MigrationError({
-    kind: "BadState",
-    message: `This database's migration history would skip required schema migrations: ${skipped.join(", ")}. The migrator skips every id up to the highest recorded id (${latestRecordedId}), regardless of name. It was probably written by a different build. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
-  });
+  return { legacyPersonalIds, officialTail, skipped };
+}
+
+const reconcileMigrationHistory = Effect.fn("reconcileMigrationHistory")(function* (
+  throughId?: number,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const tables =
+    yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
+  if (tables.length === 0) return [];
+  const recorded = yield* sql<{
+    readonly migration_id: number;
+    readonly name: string;
+  }>`SELECT migration_id, name FROM effect_sql_migrations`;
+  const plan = planMigrationHistory(
+    recorded.map(({ migration_id, name }) => [migration_id, name]),
+    throughId,
+  );
+  if (plan.skipped.length > 0) {
+    return yield* new Migrator.MigrationError({
+      kind: "BadState",
+      message: `This database's migration history would skip required schema migrations: ${plan.skipped.join(", ")}. Start the build that wrote it, or report this migration history so an upgrade path can be added.`,
+    });
+  }
+  for (const id of plan.legacyPersonalIds) {
+    yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = ${id} AND name = 'ScheduledTaskModelSelectionMode'`;
+  }
+  if (!plan.officialTail) return [];
+  yield* Migration0074;
+  for (const row of recorded.toSorted((a, b) => b.migration_id - a.migration_id)) {
+    if (row.migration_id < 74) continue;
+    yield* sql`UPDATE effect_sql_migrations SET migration_id = ${row.migration_id + 1} WHERE migration_id = ${row.migration_id}`;
+  }
+  yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (74, 'ScheduledTaskModelSelectionMode')`;
+  return [[74, "ScheduledTaskModelSelectionMode"]] as const;
 });
 
 const run = Migrator.make({});
@@ -225,23 +291,12 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
       const includesV2 =
         toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
       const previewMigrations = includesV2 ? yield* reconcileV2PreviewMigration() : [];
-      if (includesV2) {
-        if (toMigrationInclusive === undefined || toMigrationInclusive >= 70) {
-          const tables =
-            yield* sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'`;
-          if (tables.length > 0) {
-            // Published Personal builds used ids 70 and 73 for the task model policy.
-            for (const id of [70, 73]) {
-              if (toMigrationInclusive === undefined || toMigrationInclusive >= id) {
-                yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id = ${id} AND name = 'ScheduledTaskModelSelectionMode'`;
-              }
-            }
-          }
-        }
-        yield* assertV2MigrationsCanRun(toMigrationInclusive);
-      }
+      const compatibleMigrations = includesV2
+        ? yield* reconcileMigrationHistory(toMigrationInclusive)
+        : [];
       const executedMigrations = [
         ...previewMigrations,
+        ...compatibleMigrations,
         ...(yield* run({ loader: makeMigrationLoader(toMigrationInclusive) })),
       ];
       const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);

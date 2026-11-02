@@ -8,6 +8,10 @@ import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { migrationManifest, runMigrations } from "./Migrations.ts";
+import ExcludeAttachmentPlaceholders from "./Migrations/075_ExcludeAttachmentPlaceholdersFromSearch.ts";
+import SubagentDeliveryState from "./Migrations/076_SubagentDeliveryState.ts";
+import ProjectPinArchive from "./Migrations/077_ProjectionProjectsPinArchive.ts";
+import RepairSettledOverride from "./Migrations/078_RepairBooleanSettledOverride.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -29,6 +33,39 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
+  it.effect.each([74, 75, 76, 77])(
+    "upgrades official history through %s without repeating schema changes",
+    (head) =>
+      Effect.gen(function* () {
+        const sql = yield* SqlClient.SqlClient;
+        yield* runMigrations({ toMigrationInclusive: 73 });
+        const official = [
+          [74, "ExcludeAttachmentPlaceholdersFromSearch", ExcludeAttachmentPlaceholders],
+          [75, "SubagentDeliveryState", SubagentDeliveryState],
+          [76, "ProjectionProjectsPinArchive", ProjectPinArchive],
+          [77, "RepairBooleanSettledOverride", RepairSettledOverride],
+        ] as const;
+        for (const [id, name, migration] of official) {
+          if (id > head) break;
+          yield* migration;
+          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+        }
+        yield* runMigrations();
+        assert.deepStrictEqual(yield* history, migrationManifest);
+        assert.deepStrictEqual(yield* runMigrations(), []);
+        const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(scheduled_tasks)`;
+        assert.strictEqual(
+          columns.filter(({ name }) => name === "bound_model_selection_mode").length,
+          1,
+        );
+        assert.lengthOf(
+          yield* sql`SELECT completion_delivery_state FROM orchestration_v2_projection_subagents`,
+          0,
+        );
+        assert.lengthOf(yield* sql`SELECT pinned_at, archived_at FROM projection_projects`, 0);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses to start when another migration took a V2 id", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -78,7 +115,7 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect.each([70, 73])(
+  it.effect.each([70, 73, 74])(
     "upgrades published Personal migration %s and runs upstream migrations",
     (id) =>
       Effect.gen(function* () {

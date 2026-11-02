@@ -52,6 +52,33 @@ it.layer(NodeServices.layer)("service preflight database", (it) => {
       expect(preflight().status).toBe("ready");
       expect(databaseMigrationHead(databasePath)).toBe(BUILD_MIGRATION_HEAD);
 
+      db.exec("DELETE FROM effect_sql_migrations WHERE migration_id >= 54");
+      insert.run(54, "OrchestrationV2");
+      insert.run(55, "RemoveRedundantProjectionIndexes");
+      expect(preflight().status).toBe("ready");
+      insert.run(56, "UnexpectedPreviewMigration");
+      expect(preflight().status).toBe("blocked");
+      db.exec("DELETE FROM effect_sql_migrations WHERE migration_id >= 54");
+      for (const [id, name] of migrationManifest) {
+        if (id >= 54) insert.run(id, name);
+      }
+
+      db.exec("DELETE FROM effect_sql_migrations WHERE migration_id >= 74");
+      for (const [id, name] of migrationManifest) {
+        if (id >= 75) insert.run(id - 1, name);
+      }
+      expect(preflight().status).toBe("ready");
+      db.exec("DELETE FROM effect_sql_migrations WHERE migration_id >= 74");
+      for (const [id, name] of migrationManifest) {
+        if (id >= 74) insert.run(id, name);
+      }
+
+      db.exec("UPDATE effect_sql_migrations SET name = 'UnknownSchema' WHERE migration_id = 74");
+      expect(preflight().status).toBe("blocked");
+      db.exec(
+        "UPDATE effect_sql_migrations SET name = 'ScheduledTaskModelSelectionMode' WHERE migration_id = 74",
+      );
+
       const newerId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
       insert.run(newerId, "FromNightly");
       db.close();
