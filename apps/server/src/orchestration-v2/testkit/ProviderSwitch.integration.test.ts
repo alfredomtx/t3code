@@ -1219,21 +1219,34 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
-  it.live.each(["native", "legacy"] as const)(
+  it.live.each(["native", "legacy", "unsupported Codex history"] as const)(
     "starts a replacement native thread as new after the resume fallback with %s attempts",
     (attempts) =>
       Effect.scoped(
         Effect.gen(function* () {
           const cwd = yield* checkpointWorkspace("resume-fallback-native-turns");
+          const unsupportedHistory = attempts === "unsupported Codex history";
+          const selection = unsupportedHistory ? CODEX_MODEL_SELECTION : CLAUDE_MODEL_SELECTION;
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const failResumeOnce = yield* Ref.make(false);
           const generation = yield* Ref.make(0);
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeTestAdapter({
-              instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-              driver: CLAUDE_DRIVER,
-              capabilities: ClaudeProviderCapabilitiesV2,
-              modelSelection: CLAUDE_MODEL_SELECTION,
+              instanceId: selection.instanceId,
+              driver: unsupportedHistory ? CODEX_DRIVER : CLAUDE_DRIVER,
+              capabilities: unsupportedHistory
+                ? CodexProviderCapabilitiesV2
+                : ClaudeProviderCapabilitiesV2,
+              modelSelection: selection,
+              ...(unsupportedHistory
+                ? {
+                    failedRunOrdinals: new Set([1]),
+                    failure: makeProviderFailure({
+                      code: "subscription_sharing_unsupported_capability",
+                      message: "ChatGPT sharing rejected the conversation history.",
+                    }),
+                  }
+                : {}),
               responseByRunOrdinal: {},
               capturedTurns,
               failResumeOnce,
@@ -1253,7 +1266,7 @@ describe("orchestration v2 provider switching", () => {
                 creationSource: "web",
                 text: `Request ${ordinal}`,
                 attachments: [],
-                modelSelection: CLAUDE_MODEL_SELECTION,
+                modelSelection: selection,
                 dispatchMode: { type: "start_immediately" },
               });
               yield* orchestrator.streamStoredEvents.pipe(
@@ -1268,7 +1281,7 @@ describe("orchestration v2 provider switching", () => {
               yield* worker.drain();
               assert.equal(
                 (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
-                "completed",
+                unsupportedHistory && ordinal === 1 ? "failed" : "completed",
               );
             });
             yield* orchestrator.dispatch({
@@ -1279,7 +1292,7 @@ describe("orchestration v2 provider switching", () => {
               createdBy: "user",
               creationSource: "web",
               title: "Resume fallback",
-              modelSelection: CLAUDE_MODEL_SELECTION,
+              modelSelection: selection,
               runtimeMode: "full-access",
               interactionMode: "default",
               branch: null,
@@ -1313,7 +1326,7 @@ describe("orchestration v2 provider switching", () => {
                 ),
               });
             }
-            yield* Ref.set(failResumeOnce, true);
+            yield* Ref.set(failResumeOnce, !unsupportedHistory);
             yield* runToCompletion(2);
             yield* runToCompletion(3);
 
@@ -1321,6 +1334,10 @@ describe("orchestration v2 provider switching", () => {
             assert.equal(turns.length, 3);
             assert.equal(yield* Ref.get(generation), 2);
             assert.notEqual(turns[1]?.nativeThreadId, turns[0]?.nativeThreadId);
+            if (unsupportedHistory) {
+              assert.include(turns[1]?.text ?? "", "Request 1");
+              assert.include(turns[1]?.text ?? "", "Request 2");
+            }
             assert.isAbove(turns[1]?.providerTurnOrdinal ?? 0, 1);
             assert.isFalse(turns[1]?.nativeThreadHasTurns);
             assert.equal(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);

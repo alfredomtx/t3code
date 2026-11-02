@@ -1249,15 +1249,28 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        const previousRun = projection.runs.findLast(
+          (source) => source.ordinal < run.ordinal && source.providerThreadId === providerThread.id,
+        );
+        const incompatibleHistory =
+          session.driver === "codex" &&
+          previousRun?.status === "failed" &&
+          (yield* projectionStore.getTurnStartHistory(input.threadId, [previousRun.id])).some(
+            (item) =>
+              item.type === "error" &&
+              item.failure.code === "subscription_sharing_unsupported_capability",
+          );
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || incompatibleHistory
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: incompatibleHistory
+                    ? "ChatGPT sharing rejected the native conversation history"
+                    : "Uncertain native history injection",
                 }),
               )
             : session.resumeThread({
@@ -1327,11 +1340,13 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery
-            ? "uncertain_history_delivery"
-            : resumed._tag === "Success"
-              ? "handoff_budget_exhausted"
-              : "resume_failed",
+          reason: incompatibleHistory
+            ? "incompatible_native_history"
+            : uncertainDelivery
+              ? "uncertain_history_delivery"
+              : resumed._tag === "Success"
+                ? "handoff_budget_exhausted"
+                : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(

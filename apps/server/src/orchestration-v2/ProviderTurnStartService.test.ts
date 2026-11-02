@@ -924,15 +924,21 @@ function makeLocalCommandHarness(input: {
                   (m.text.trim().toLowerCase() !== "/compact" || m.attachments.length > 0),
               ),
             }),
-          getTurnStartHistory: () =>
-            input.sideChat !== undefined
-              ? Effect.succeed([])
-              : Effect.fail(
-                  new ProjectionStore.ProjectionStoreReadError({
-                    threadId,
-                    cause: input.historyReadFailureAfterFallback,
-                  }),
-                ),
+          getTurnStartHistory: (_threadId, runIds) =>
+            runIds !== undefined
+              ? Effect.succeed(
+                  projection.turnItems.filter(
+                    (item) => item.runId !== null && runIds.includes(item.runId),
+                  ),
+                )
+              : input.sideChat !== undefined
+                ? Effect.succeed([])
+                : Effect.fail(
+                    new ProjectionStore.ProjectionStoreReadError({
+                      threadId,
+                      cause: input.historyReadFailureAfterFallback,
+                    }),
+                  ),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
           open,
