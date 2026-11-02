@@ -339,18 +339,37 @@ function patch(paths: string[], nextCursor: string | null = null): PullRequestDi
   };
 }
 
-it("marks and collapses Markdown while keeping its header visible", async () => {
+it("marks and collapses Markdown immediately while showing a pending save", async () => {
   using fixture = setup(
     { files: [], truncated: false },
     { patch: patch(["README.md", "app.ts"]), changedFiles: 2 },
   );
+  const savedCommand = command.getMockImplementation()!;
+  let finishSave = () => {};
+  const save = new Promise<void>((resolve) => {
+    finishSave = resolve;
+  });
+  command.mockImplementation(async (input) => {
+    await save;
+    return savedCommand(input);
+  });
   await using screen = await render(fixture.tab(0), { container: sizedContainer() });
   await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
   expect(command).not.toHaveBeenCalled();
   await screen.getByRole("checkbox", { name: "Markdown" }).click();
   await vi.waitFor(() => expect(command).toHaveBeenCalledTimes(1));
   expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "README.md", viewed: true }]);
+  await expect.element(screen.getByRole("status", { name: "Saving Markdown" })).toBeVisible();
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeDisabled();
   await expect.element(screen.getByText("README.md", { exact: true })).toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toBeVisible();
+  await act(() => finishSave());
+  await expect
+    .element(screen.getByRole("status", { name: "Saving Markdown" }))
+    .not.toBeInTheDocument();
+  await expect.element(screen.getByRole("checkbox", { name: "Markdown" })).toBeEnabled();
   await expect
     .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
     .toBeVisible();

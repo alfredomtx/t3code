@@ -317,6 +317,10 @@ function PullRequestCodeTab({
   const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
+  const [pendingViewedGroup, setPendingViewedGroup] = useState<ReviewFileGroup | null>(null);
+  const pendingViewedGroupLabel = REVIEW_FILE_GROUPS.find(
+    ({ id }) => id === pendingViewedGroup,
+  )?.label;
   const diffLayout = settings.diffLayout;
   const [wordWrap, setWordWrap] = useState(settings.wordWrap);
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(settings.diffIgnoreWhitespace);
@@ -366,6 +370,7 @@ function PullRequestCodeTab({
     setStateScopeKey(scopeKey);
     setActionGeneration((generation) => generation + 1);
     setLastViewedFileKey(null);
+    setPendingViewedGroup(null);
     setDraft(null);
     setSelectedLines(null);
     setFileFolds(new Map());
@@ -839,20 +844,31 @@ function PullRequestCodeTab({
     });
   };
   const setGroupViewed = async (group: ReviewFileGroup, viewed: boolean) => {
-    if (commit !== null || !inventoryReady || !filesViewed.ready) return;
+    if (commit !== null || !inventoryReady || !filesViewed.ready || pendingViewedGroup !== null)
+      return;
     const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === group);
-    const result = await filesViewed.setManyViewed(paths.map((path) => ({ path, viewed })));
-    if (!isCurrentScope(scopeKey, actionGeneration)) return;
+    setPendingViewedGroup(group);
     setFileFolds((current) =>
       annotatedFiles.reduce(
         (next, file) =>
-          reviewFileGroup(file.path) === group && isFileViewed(file.path) === viewed
+          reviewFileGroup(file.path) === group
             ? setFileDiffCollapsed(file.fileKey, viewed, next)
             : next,
         current,
       ),
     );
-    reportViewedResult(result);
+    try {
+      const result = await filesViewed.setManyViewed(paths.map((path) => ({ path, viewed })));
+      if (isCurrentScope(scopeKey, actionGeneration)) reportViewedResult(result);
+    } catch (error) {
+      if (isCurrentScope(scopeKey, actionGeneration))
+        toastManager.add({
+          type: "error",
+          title: "Could not save viewed files",
+          description: error instanceof Error ? error.message : String(error),
+        });
+    }
+    if (isCurrentScope(scopeKey, actionGeneration)) setPendingViewedGroup(null);
   };
 
   const setFileFold = (fileKey: string, collapsed: boolean) =>
@@ -1379,7 +1395,11 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1">
-        <div className="flex shrink-0 items-center gap-3" aria-label="Mark file groups viewed">
+        <div
+          className="flex shrink-0 items-center gap-3"
+          aria-label="Mark file groups viewed"
+          aria-busy={pendingViewedGroup !== null}
+        >
           {REVIEW_FILE_GROUPS.map(({ id, label }) => {
             const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === id);
             const allViewed = paths.length > 0 && paths.every(isFileViewed);
@@ -1392,7 +1412,11 @@ function PullRequestCodeTab({
                     checked={allViewed}
                     indeterminate={!allViewed && paths.some(isFileViewed)}
                     disabled={
-                      commit !== null || !inventoryReady || !filesViewed.ready || paths.length === 0
+                      commit !== null ||
+                      !inventoryReady ||
+                      !filesViewed.ready ||
+                      pendingViewedGroup !== null ||
+                      paths.length === 0
                     }
                     onCheckedChange={(checked) => void setGroupViewed(id, checked)}
                   />
@@ -1409,6 +1433,11 @@ function PullRequestCodeTab({
               </Tooltip>
             );
           })}
+          {pendingViewedGroup !== null ? (
+            <span role="status" aria-label={`Saving ${pendingViewedGroupLabel}`}>
+              Saving {pendingViewedGroupLabel}…
+            </span>
+          ) : null}
           {inventoryUnavailable ? (
             <Button size="xs" variant="link" onClick={() => diffQuery.refresh()}>
               Retry file groups
