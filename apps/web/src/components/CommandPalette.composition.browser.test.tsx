@@ -13,6 +13,7 @@ vi.mock("@effect/atom-react", async (original) => ({
     atom === primaryServerKeybindingsAtom ? DEFAULT_RESOLVED_KEYBINDINGS : [],
 }));
 vi.mock("../hooks/useTheme", () => ({
+  applySharedThemePreferences: () => {},
   useRenderedAppearance: () => "light",
   useTheme: () => ({ theme: "t3-chat", resolvedTheme: "light", appearanceMode: "light" }),
 }));

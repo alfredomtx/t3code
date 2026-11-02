@@ -34,6 +34,10 @@ function recordEffect(action: string) {
   state.completed.resolve();
 }
 
+vi.mock("../components/chat/threadJiraTicketState", () => ({
+  openJiraTicketDialog: vi.fn(),
+  supportsThreadJiraTickets: () => true,
+}));
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,

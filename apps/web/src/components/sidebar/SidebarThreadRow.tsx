@@ -2,6 +2,7 @@ import { ThreadHoverCard, ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
 import { discardComposerDraft } from "../../lib/discardComposerDraft";
 import { requestCustomSnooze } from "../CustomSnoozeDialog";
+import { ThreadJiraTicketBadge } from "../chat/ThreadJiraTicket";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { useDeadlinePassed } from "~/hooks/useDeadline";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/client-runtime/thread-pull-requests";
@@ -1144,6 +1145,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     !thread.branch &&
     !showsScratchMachine &&
     prBadge === null &&
+    thread.linkedJiraTicket == null &&
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
@@ -1169,6 +1171,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       )}
       {terminalStatusIcon}
       {prBadge}
+      {thread.linkedJiraTicket ? (
+        <ThreadJiraTicketBadge
+          threadRef={threadRef}
+          ticket={thread.linkedJiraTicket}
+          onActivate={() => {
+            if (!props.isRouteThread) onThreadActivate(threadRef);
+          }}
+        />
+      ) : null}
       {diff ? (
         <span className="shrink-0 font-mono">
           <span className="text-diff-addition-foreground">+{formatDiffCount(diff.insertions)}</span>{" "}

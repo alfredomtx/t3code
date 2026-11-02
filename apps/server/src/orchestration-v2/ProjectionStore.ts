@@ -1519,6 +1519,7 @@ export function threadShellFromProjection(
     interactionMode: projection.thread.interactionMode,
     branch: projection.thread.branch,
     worktreePath: projection.thread.worktreePath,
+    linkedJiraTicket: projection.thread.linkedJiraTicket ?? null,
     pullRequests: threadPullRequestsOf(projection.thread),
     ...(projection.thread.linkedPullRequest === undefined
       ? {}
@@ -1801,6 +1802,7 @@ function shellFromState(input: {
     branch: input.state.thread.branch,
     worktreePath: input.state.thread.worktreePath,
     pullRequests: threadPullRequestsOf(input.state.thread),
+    linkedJiraTicket: input.state.thread.linkedJiraTicket ?? null,
     ...(input.state.thread.linkedPullRequest === undefined
       ? {}
       : { linkedPullRequest: input.state.thread.linkedPullRequest }),

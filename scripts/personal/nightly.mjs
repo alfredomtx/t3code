@@ -60,6 +60,7 @@ function run(
 const git = (...parameters) => run("git", parameters).output;
 const gh = (...parameters) => run("gh", parameters).output;
 const browserTests = [
+  "apps/web/src/components/chat/ThreadJiraTicket.browser.test.tsx",
   "apps/web/src/components/settings/ScheduledTasksSettings.browser.test.tsx",
   "apps/web/src/shortcuts/chatRouteCommands.browser.test.ts",
   "apps/web/src/components/RightPanelTabs.browser.test.tsx",
@@ -86,6 +87,9 @@ const browserTests = [
 ];
 async function requiredTests() {
   const fixed = [
+    "packages/contracts/src/threadJiraTicket.test.ts",
+    "apps/server/src/mcp/toolkits/orchestrator/tools.test.ts",
+    "apps/server/src/orchestration-v2/Orchestrator.control-reads.test.ts",
     "apps/server/src/orchestration-v2/runtimeLayer.test.ts",
     "apps/server/src/orchestration-v2/RestartContinuation.test.ts",
     "apps/server/src/orchestration-v2/ThreadManagementService.test.ts",

@@ -17,6 +17,7 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "link-jira"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -88,6 +89,7 @@ export interface ThreadActionMenuState {
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
+    readonly jiraTickets?: boolean;
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
@@ -165,6 +167,9 @@ export function buildThreadActionMenuItems(
                 ],
               },
         ]
+      : []),
+    ...(state.supports.jiraTickets
+      ? [{ id: "link-jira" as const, label: "Link or unlink Jira ticket", icon: "link" }]
       : []),
     { id: "rename", label: "Rename thread", icon: "pencil", separatorBefore: true },
     ...(state.supports.titleRegeneration

@@ -1,6 +1,7 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
   type ThreadLinkedPullRequest,
+  type ThreadLinkedJiraTicket,
   CommandId,
   CheckpointId,
   CheckpointScopeId,
@@ -133,6 +134,7 @@ export interface UpdateThreadMetadataInput extends ThreadCommandInput {
   readonly branch?: string | null;
   readonly worktreePath?: string | null;
   readonly regenerateTitle?: boolean;
+  readonly linkedJiraTicket?: ThreadLinkedJiraTicket | null;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly expectedEmpty?: boolean;
 }
@@ -615,6 +617,7 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
       input.branch !== undefined ||
       input.worktreePath !== undefined ||
       input.regenerateTitle !== undefined ||
+      input.linkedJiraTicket !== undefined ||
       input.linkedPullRequest !== undefined ||
       input.limitRecovery !== undefined
     ) {
@@ -628,6 +631,9 @@ export const updateThreadMetadata = Effect.fn("EnvironmentCommands.updateThreadM
         ...(input.worktreePath === undefined ? {} : { worktreePath: input.worktreePath }),
         ...(input.expectedEmpty === true ? { expectedEmpty: true } : {}),
         ...(input.regenerateTitle === undefined ? {} : { regenerateTitle: input.regenerateTitle }),
+        ...(input.linkedJiraTicket === undefined
+          ? {}
+          : { linkedJiraTicket: input.linkedJiraTicket }),
         ...(input.linkedPullRequest === undefined
           ? {}
           : { linkedPullRequest: input.linkedPullRequest }),

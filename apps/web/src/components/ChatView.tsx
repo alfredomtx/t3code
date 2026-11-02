@@ -171,6 +171,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import { threadPullRequestPanelTarget } from "./pullRequest/pullRequestDetail.logic";
+import { JiraTicketDialogHost } from "./chat/ThreadJiraTicket";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { GuestPendingMessages } from "./chat/GuestShareControls";
 import { useDeviceState } from "~/state/device";
@@ -4004,7 +4005,12 @@ export default function ChatView(props: ChatViewProps) {
       ) : null}
 
       <RevertConfirmHost threadKey={routeThreadKey} onConfirm={onConfirmRevertStable} />
-      {embedded ? null : <LinkPullRequestDialogHost />}
+      {embedded ? null : (
+        <>
+          <LinkPullRequestDialogHost />
+          <JiraTicketDialogHost />
+        </>
+      )}
       <ThreadVisitWatermark threadRef={routeThreadRef} />
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>

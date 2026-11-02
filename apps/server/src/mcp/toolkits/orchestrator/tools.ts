@@ -251,7 +251,7 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
 
 const ThreadUpdateTool = Tool.make("t3_thread_update", {
   description:
-    "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
+    "Rename a thread (`action:'rename'` with `title`), regenerate its title, or attach one Jira ticket. Use `action:'link_jira'` with `jiraTicket:{key,url}` containing the canonical HTTPS /browse/KEY-123 URL and matching key. This replaces the previous ticket. Use `action:'unlink_jira'` to remove it. Jira is not modified. Omit `threadId` for this thread. Workspace and branch cannot change here.",
   // Keeps the input's action/field check, which rebuilding the struct would drop.
   parameters: ThreadMetadataMcpUpdateInput.mapFields(
     Struct.assign({ environmentId: OrchestratorMcpEnvironmentTarget }),

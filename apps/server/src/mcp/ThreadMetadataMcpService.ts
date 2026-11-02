@@ -72,6 +72,14 @@ function metadataCommand(input: {
         threadId: input.threadId,
         title: input.update.title!,
       };
+    case "link_jira":
+    case "unlink_jira":
+      return {
+        type: "thread.metadata.update",
+        commandId: input.commandId,
+        threadId: input.threadId,
+        linkedJiraTicket: input.update.action === "link_jira" ? input.update.jiraTicket! : null,
+      };
     case "regenerate_title":
       return {
         type: "thread.metadata.update",
@@ -88,7 +96,7 @@ function resultFromThread(input: {
   readonly sequence: number;
   readonly thread: Pick<
     OrchestrationV2AppThread,
-    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "updatedAt"
+    "id" | "title" | "titleRegeneration" | "linkedPullRequest" | "linkedJiraTicket" | "updatedAt"
   >;
 }): ThreadMetadataMcpUpdateResult {
   return {
@@ -104,6 +112,7 @@ function resultFromThread(input: {
             requestId: input.thread.titleRegeneration.requestId,
             startedAt: DateTime.formatIso(input.thread.titleRegeneration.startedAt),
           },
+    linkedJiraTicket: input.thread.linkedJiraTicket ?? null,
     linkedPullRequest: input.thread.linkedPullRequest ?? null,
     updatedAt: DateTime.formatIso(input.thread.updatedAt),
   };

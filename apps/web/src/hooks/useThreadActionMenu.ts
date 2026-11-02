@@ -1,3 +1,7 @@
+import {
+  openJiraTicketDialog,
+  supportsThreadJiraTickets,
+} from "../components/chat/threadJiraTicketState";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
@@ -129,6 +133,7 @@ export function useThreadActionMenu(input: {
         snooze: configLoaded,
         pinning: configLoaded,
         titleRegeneration: configLoaded,
+        jiraTickets: supportsThreadJiraTickets(threadRef.environmentId),
       };
       const isRegeneratingTitle = thread.titleRegeneration != null;
       const snoozePresets = resolveSnoozePresets(now, timestampFormat, threadRef.environmentId);
@@ -242,6 +247,9 @@ export function useThreadActionMenu(input: {
           await reportFailure("Failed to update auto-settle", () =>
             setThreadAutoSettle(threadRef, action === "auto-settle:enabled"),
           );
+          return;
+        case "link-jira":
+          openJiraTicketDialog(threadRef);
           return;
         case "rename":
           onStartRename();

@@ -800,6 +800,7 @@ function listItemFromShell(
     model: shell.modelSelection.model,
     runtimeMode: shell.runtimeMode,
     interactionMode: shell.interactionMode,
+    linkedJiraTicket: shell.linkedJiraTicket ?? null,
     linkedPullRequest: shell.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(shell.pullRequests),
     ...threadSettlement(shell),
@@ -835,6 +836,7 @@ function threadDetail(
     model: projection.thread.modelSelection.model,
     runtimeMode: projection.thread.runtimeMode,
     interactionMode: projection.thread.interactionMode,
+    linkedJiraTicket: projection.thread.linkedJiraTicket ?? null,
     linkedPullRequest: projection.thread.linkedPullRequest ?? null,
     pullRequests: threadPullRequests(projection.thread.pullRequests),
     titleRegeneration:

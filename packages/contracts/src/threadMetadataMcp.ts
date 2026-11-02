@@ -7,6 +7,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import { ThreadLinkedJiraTicket } from "./threadJiraTicket.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 
@@ -40,19 +41,26 @@ const ThreadMetadataClientRequestId = TrimmedNonEmptyString.check(Schema.isMaxLe
   )
   .annotate({ description: "Stable idempotency key to reuse when retrying this mutation." });
 
-export const ThreadMetadataMcpAction = Schema.Literals(["rename", "regenerate_title"]);
+export const ThreadMetadataMcpAction = Schema.Literals([
+  "rename",
+  "regenerate_title",
+  "link_jira",
+  "unlink_jira",
+]);
 export type ThreadMetadataMcpAction = typeof ThreadMetadataMcpAction.Type;
 
 export const ThreadMetadataMcpUpdateInput = Schema.Struct({
   threadId: Schema.optional(ThreadId),
   action: ThreadMetadataMcpAction,
   title: Schema.optional(ThreadMetadataTitle),
+  jiraTicket: Schema.optional(ThreadLinkedJiraTicket),
   clientRequestId: Schema.optional(ThreadMetadataClientRequestId),
 }).check(
   Schema.makeFilter((input) =>
-    (input.action === "rename") === (input.title !== undefined)
+    (input.action === "rename") === (input.title !== undefined) &&
+    (input.action === "link_jira") === (input.jiraTicket !== undefined)
       ? true
-      : "rename requires title; regenerate_title does not accept one.",
+      : "rename requires only title; link_jira requires only jiraTicket; other actions accept neither.",
   ),
 );
 export type ThreadMetadataMcpUpdateInput = typeof ThreadMetadataMcpUpdateInput.Type;
@@ -64,6 +72,7 @@ export const ThreadMetadataMcpUpdateResult = Schema.Struct({
   sequence: NonNegativeInt,
   title: Schema.String,
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),
+  linkedJiraTicket: Schema.optional(Schema.NullOr(ThreadLinkedJiraTicket)),
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   updatedAt: IsoDateTime,
 });

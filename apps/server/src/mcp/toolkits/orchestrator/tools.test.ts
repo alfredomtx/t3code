@@ -22,6 +22,12 @@ it("refuses a t3_thread_update whose fields do not fit its action", () => {
     OrchestratorToolkit.tools.t3_thread_update.parametersSchema,
   );
   expect(Exit.isFailure(decode({ action: "rename" }))).toBe(true);
+  const jiraTicket = { key: "CRM-123", url: "https://jira.example.com/browse/CRM-123" };
+  expect(Exit.isSuccess(decode({ action: "link_jira", jiraTicket }))).toBe(true);
+  expect(Exit.isSuccess(decode({ action: "unlink_jira" }))).toBe(true);
+  expect(Exit.isFailure(decode({ action: "link_jira" }))).toBe(true);
+  expect(Exit.isFailure(decode({ action: "unlink_jira", jiraTicket }))).toBe(true);
+  expect(Exit.isFailure(decode({ action: "rename", title: "New", jiraTicket }))).toBe(true);
   expect(Exit.isFailure(decode({ action: "regenerate_title", title: "New" }))).toBe(true);
   expect(Exit.isSuccess(decode({ action: "rename", title: "New", environmentId: undefined }))).toBe(
     true,

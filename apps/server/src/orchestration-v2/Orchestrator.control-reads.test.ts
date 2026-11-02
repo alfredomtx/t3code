@@ -1571,3 +1571,57 @@ it.effect("dispatch records the command outcome and its duration", () =>
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect(
+  "persists one Jira ticket per thread, replaces it and unlinks it without changing other metadata",
+  () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const threadId = ThreadId.make("thread:jira-link");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-jira-link"),
+        threadId,
+        projectId: ProjectId.make("project:jira-link"),
+        title: "Ticket work",
+        modelSelection,
+        branch: null,
+        worktreePath: null,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const linkedPullRequest = {
+        projectId: ProjectId.make("project:jira-link"),
+        repository: "acme/app",
+        number: 7,
+        url: "https://github.com/acme/app/pull/7",
+      };
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("jira-preserve-pr"),
+        threadId,
+        linkedPullRequest,
+      });
+      const first = { key: "CRM-123", url: "https://jira.example.com/browse/CRM-123" };
+      const second = { key: "CRM-124", url: "https://jira.example.com/browse/CRM-124" };
+      for (const [index, linkedJiraTicket] of [first, second, null].entries()) {
+        const command = {
+          type: "thread.metadata.update" as const,
+          commandId: CommandId.make(`jira-link-${index}`),
+          threadId,
+          linkedJiraTicket,
+        };
+        yield* orchestrator.dispatch(command);
+        yield* orchestrator.dispatch(command);
+        const projection = yield* projections.getThreadProjection(threadId);
+        const shell = yield* projections.getThreadShell(threadId);
+        assert.deepEqual(projection.thread.linkedJiraTicket, linkedJiraTicket);
+        assert.deepEqual(shell?.linkedJiraTicket, linkedJiraTicket);
+        assert.equal(projection.thread.title, "Ticket work");
+        assert.deepEqual(projection.thread.linkedPullRequest, linkedPullRequest);
+      }
+    }).pipe(Effect.provide(layerTest)),
+);

@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ThreadLinkedJiraTicket } from "./threadJiraTicket.ts";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 
 import { AuthMcpClientAccess } from "./auth.ts";
@@ -367,6 +368,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   model: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  linkedJiraTicket: Schema.optional(Schema.NullOr(ThreadLinkedJiraTicket)),
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   settled: Schema.Boolean,
@@ -438,6 +440,7 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   model: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  linkedJiraTicket: Schema.optional(Schema.NullOr(ThreadLinkedJiraTicket)),
   linkedPullRequest: Schema.NullOr(ThreadLinkedPullRequest),
   pullRequests: Schema.optional(Schema.Array(OrchestratorMcpThreadPullRequest)),
   titleRegeneration: Schema.NullOr(ThreadTitleRegeneration),

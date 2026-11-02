@@ -2,6 +2,7 @@ import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2Pe
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
+  ThreadLinkedJiraTicket,
   EnvironmentId,
   MessageId,
   OrchestrationProjectShell,
@@ -183,6 +184,7 @@ export interface EnvironmentThreadShell {
   readonly pinOrderKey: string | null;
   readonly activeOrderKey: string | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
+  readonly linkedJiraTicket?: ThreadLinkedJiraTicket | null;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
   /**
@@ -292,6 +294,7 @@ export function presentThreadShell(
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     pullRequests: threadPullRequestsOf(thread),
+    linkedJiraTicket: thread.linkedJiraTicket ?? null,
     linkedPullRequest: thread.linkedPullRequest ?? null,
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,

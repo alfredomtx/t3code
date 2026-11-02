@@ -76,6 +76,7 @@ import {
   PinOffIcon,
   SquarePenIcon,
   TextSearchIcon,
+  TicketIcon,
   UserPlusIcon,
 } from "lucide-react";
 import { openThreadFind } from "./chat/threadFindStore";
@@ -242,6 +243,7 @@ import {
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFilePicker } from "./files/ProjectFilePicker";
+import { openJiraTicketDialog } from "./chat/threadJiraTicketState";
 import { openLinkPullRequestDialog } from "./pullRequest/LinkPullRequestDialog";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
@@ -1396,6 +1398,24 @@ function OpenCommandPaletteDialog(props: {
       icon: <PullRequestGlyph.link className={ITEM_ICON_CLASS} />,
       run: async () => {
         useRightPanelStore.getState().open(threadRef, "pull-requests");
+      },
+    });
+  }
+
+  if (
+    activeThread !== null &&
+    activeThreadServerConfig?.environment.capabilities.threadJiraTickets === true &&
+    readEnvironmentScope(activeThread.environmentId, AuthOrchestrationOperateScope)
+  ) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    actionItems.push({
+      kind: "action",
+      value: "action:link-jira",
+      searchTerms: ["jira", "ticket", "issue", "link", "unlink"],
+      title: "Link or unlink Jira ticket",
+      icon: <TicketIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        openJiraTicketDialog(threadRef);
       },
     });
   }
