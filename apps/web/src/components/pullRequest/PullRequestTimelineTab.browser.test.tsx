@@ -115,12 +115,12 @@ it("reveals and focuses a reply inside a resolved review thread and repeats navi
   await using screen = await render(tab("first", handled));
   await expect.element(screen.getByText("The linked reply")).toBeVisible();
   await vi.waitFor(() => expect(document.activeElement?.textContent).toContain("The linked reply"));
-  expect(handled).toHaveBeenCalledWith("first");
+  await vi.waitFor(() => expect(handled).toHaveBeenCalledWith("first"));
   const target = screen.getByText("The linked reply").element().closest("article")!;
   target.blur();
   await screen.rerender(tab("second", handled));
   await vi.waitFor(() => expect(document.activeElement).toBe(target));
-  expect(handled).toHaveBeenCalledWith("second");
+  await vi.waitFor(() => expect(handled).toHaveBeenCalledWith("second"));
 });
 
 it("opens a collapsed ordinary comment group for an issue comment link", async () => {
