@@ -101,7 +101,10 @@ function environment() {
       ? {
           environment: {
             platform: "linux",
-            capabilities: { scheduledTaskTurnModelSelection: state.supportsPolicy },
+            capabilities: {
+              scheduledTaskTurnModelSelection: state.supportsPolicy,
+              oneTimeSchedules: true,
+            },
           },
         }
       : null,

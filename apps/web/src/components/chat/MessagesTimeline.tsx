@@ -474,17 +474,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const [minimapStripMap] = useState(() => new Map<string, HTMLSpanElement>());
   const [disclosureToggleSettling, setDisclosureToggleSettling] = useState(false);
   const disclosureAnchorKeyRef = useRef<string | null>(null);
+  const releaseBootstrapScrollRef = useRef<(() => void) | null>(null);
+  const bootstrappedScrollNodes = useRef(new WeakSet<HTMLElement>());
   const disclosureSettleFrameRef = useRef<number | null>(null);
   const disclosureSettleSecondFrameRef = useRef<number | null>(null);
   const normalizedFindQuery = findQuery.trim();
   const findActive = findExpanded;
-
-  const disclosurePinsEndRef = useRef(false);
-  const pinDisclosureToEnd = () => {
-    if (!disclosurePinsEndRef.current) return;
-    const element = listRef.current?.getScrollableNode();
-    if (element) element.scrollTop = element.scrollHeight;
-  };
 
   const scheduleDisclosureSettle = () => {
     if (disclosureSettleFrameRef.current !== null) {
@@ -494,10 +489,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       cancelAnimationFrame(disclosureSettleSecondFrameRef.current);
     }
     disclosureSettleFrameRef.current = requestAnimationFrame(() => {
-      pinDisclosureToEnd();
       disclosureSettleSecondFrameRef.current = requestAnimationFrame(() => {
-        pinDisclosureToEnd();
-        disclosurePinsEndRef.current = false;
         disclosureAnchorKeyRef.current = null;
         setDisclosureToggleSettling(false);
         disclosureSettleFrameRef.current = null;
@@ -506,13 +498,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
 
-  const suspendEndScrollMaintenanceForDisclosure = (
-    anchorKey: string | null,
-    collapsed = false,
-  ) => {
+  const suspendEndScrollMaintenanceForDisclosure = (anchorKey: string | null) => {
+    const scrollNode = listRef.current?.getScrollableNode();
+    if (scrollNode) bootstrappedScrollNodes.current.add(scrollNode);
+    releaseBootstrapScrollRef.current?.();
+    releaseBootstrapScrollRef.current = null;
     disclosureAnchorKeyRef.current = anchorKey;
-    disclosurePinsEndRef.current =
-      !collapsed && resolveTimelineIsAtEnd(listRef.current?.getState()) === true;
     setDisclosureToggleSettling(true);
     scheduleDisclosureSettle();
   };
@@ -521,11 +512,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
   useLayoutEffect(() => {
     if (previousCollapsePreference.current === collapseRenderedResults) return;
     previousCollapsePreference.current = collapseRenderedResults;
-    suspendEndScrollMaintenanceForDisclosure(null, collapseRenderedResults);
+    suspendEndScrollMaintenanceForDisclosure(null);
   });
 
   const shouldRestoreVisibleContentPosition = (row: MessagesTimelineRow) => {
-    if (disclosurePinsEndRef.current) return false;
     const disclosureAnchorKey = disclosureAnchorKeyRef.current;
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
@@ -805,8 +795,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onManualNavigation: navigateTimeline,
   });
   const [findListReady, setFindListReady] = useState(false);
-  const releaseBootstrapScrollRef = useRef<(() => void) | null>(null);
-  const bootstrappedScrollNodes = useRef(new WeakSet<HTMLElement>());
   const followsBootstrapEnd = useStableCallback(
     (scrollNode: HTMLElement) =>
       liveFollowEnabled &&
@@ -828,7 +816,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       void settleListScroll(
         list,
         measuredEndOffset,
-        () => !scrollNode.isConnected || !followsBootstrapEnd(scrollNode),
+        () =>
+          bootstrappedScrollNodes.current.has(scrollNode) ||
+          !scrollNode.isConnected ||
+          !followsBootstrapEnd(scrollNode),
       ).then(finishBootstrap);
     } else finishBootstrap();
     onCitationListLoad();
@@ -1000,8 +991,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
+    if (disclosureAnchorKeyRef.current !== null) {
       scheduleDisclosureSettle();
     }
     scheduleMinimapRefresh();

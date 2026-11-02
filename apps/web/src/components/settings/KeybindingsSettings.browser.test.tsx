@@ -2,8 +2,9 @@ import { EnvironmentId, type ResolvedKeybindingsConfig } from "@t3tools/contract
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { page, userEvent, type Locator } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
+import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 
 const state = vi.hoisted(() => ({
   connected: true,
@@ -120,7 +121,7 @@ it("saves a custom tab chord locally without asking an older backend to recogniz
       resolveShortcutCommand(
         { key: "K", code: "KeyK", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true },
         resolved,
-        { context: { rightPanelOpen: true } },
+        { context: { rightPanelOpen: true, editableFocus: false } },
       ),
     ).toBe("rightPanel.nextTab");
     await screen.unmount();
@@ -181,4 +182,73 @@ it("re-enables Save when a When editor closes on an expression it could not pars
 
   await expect.element(expression).toHaveValue("terminalFocus");
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+// The modal dialog's inert layer swallows pointer events in this harness, so drive the DOM.
+async function activate(locator: Locator, action: "click" | "focus") {
+  await expect.element(locator).toBeVisible();
+  (locator.element() as HTMLElement)[action]();
+}
+
+const existingField = page.getByRole("textbox", { name: "Keybinding for Sidebar: Toggle" });
+const existingPill = page.getByRole("button", { name: /^Edit shortcut for Sidebar: Toggle:/ });
+const newField = page.getByRole("textbox", { name: "Keybinding for new keybinding" });
+
+describe("Esc in a shortcut recorder", () => {
+  it.each<{
+    name: string;
+    field: Locator;
+    open: () => Promise<void>;
+    expectReset: () => Promise<void>;
+  }>([
+    {
+      name: "existing binding",
+      field: existingField,
+      open: () => activate(existingPill, "click"),
+      expectReset: async () => {
+        await expect.element(existingField).not.toBeInTheDocument();
+        await expect.element(existingPill).toHaveFocus();
+        await expect.element(page.getByRole("button", { name: "Save" })).not.toBeInTheDocument();
+      },
+    },
+    {
+      name: "new binding",
+      field: newField,
+      open: async () => {
+        await activate(page.getByRole("button", { name: "Add keybinding" }), "click");
+        await activate(newField, "focus");
+      },
+      expectReset: async () => {
+        await expect.element(newField).toHaveValue("");
+        await expect.element(newField).toHaveAttribute("placeholder", "Unassigned");
+      },
+    },
+  ])("leaves the $name field without closing Settings", async ({ field, open, expectReset }) => {
+    setup();
+    const onOpenChange = vi.fn();
+    await using _screen = await render(
+      <Dialog open onOpenChange={onOpenChange}>
+        <DialogPopup>
+          <DialogTitle>Settings</DialogTitle>
+          <KeybindingsSettingsPanel />
+        </DialogPopup>
+      </Dialog>,
+    );
+
+    await open();
+    await userEvent.keyboard("{Control>}k{/Control}");
+    await expect.element(field).not.toHaveValue("");
+    await userEvent.tab();
+    await activate(field, "focus");
+    await expect.element(field).toHaveAttribute("placeholder", "Press shortcut");
+
+    await userEvent.keyboard("{Escape}");
+
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(document.activeElement?.matches("[data-keybinding-capture]")).toBe(false);
+    await expectReset();
+
+    await userEvent.keyboard("{Escape}");
+    expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
+  });
 });

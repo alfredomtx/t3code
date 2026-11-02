@@ -61,9 +61,29 @@ describe("V2 client presentation", () => {
       tracker.observe(null);
     },
   );
+  it("an async question blocks snooze and wakes a snoozed thread", () => {
+    const runId = RunId.make("run-async-question");
+    const running = {
+      ...v2ThreadShell,
+      snoozedAt: DateTime.makeUnsafe("2026-06-19T23:59:00.000Z"),
+      snoozedUntil: DateTime.makeUnsafe("2026-06-20T01:00:00.000Z"),
+      latestRunId: runId,
+      activeRunId: runId,
+      status: "running" as const,
+      pendingRuntimeRequest: {
+        id: RuntimeRequestId.make("request-async-question"),
+        kind: "user_input" as const,
+        createdAt: v2ThreadShell.updatedAt,
+        blocking: false,
+      },
+    };
+    const active = presentThreadShell(environmentId, running);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+    expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+  });
 
-  it("keeps blocking and legacy questions out of Working", () => {
-    for (const capability of [{ blocking: true }, {}]) {
+  it("moves a running thread with any question out of Working", () => {
+    for (const capability of [{ blocking: false }, { blocking: true }, {}]) {
       const shell = presentThreadShell(environmentId, {
         ...v2ThreadShell,
         latestRunId: RunId.make("run-blocking-question"),
