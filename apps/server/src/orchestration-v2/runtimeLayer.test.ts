@@ -5338,6 +5338,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             }),
             Scheduler.layer,
             NodeServices.layer,
+            NodeCrypto.layer,
             SqlitePersistence.layerMemory,
           ),
         ),

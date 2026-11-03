@@ -425,7 +425,9 @@ describe("BrowserSession", () => {
           assert.isFalse(check(null, "loopback-network", "https://sso.test", {}));
         }).pipe(
           Effect.provide(
-            BrowserSession.layer.pipe(Layer.provide(Layer.merge(NodeServices.layer, dialog))),
+            BrowserSession.layer.pipe(
+              Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, dialog)),
+            ),
           ),
         );
       }),

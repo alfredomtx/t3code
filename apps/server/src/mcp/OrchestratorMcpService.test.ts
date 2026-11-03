@@ -1878,6 +1878,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               registry,
               settingsLayer,
               NodeServices.layer,
+              NodeCrypto.layer,
               providerRegistryLayer([
                 providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
               ]),
