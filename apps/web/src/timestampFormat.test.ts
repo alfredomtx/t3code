@@ -1,8 +1,10 @@
-import { expect, it } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 import {
   formatRelativeTimeLabel,
   msUntilRelativeTimeChange,
   relativeTimeElapsedMs,
+  formatDayAwareTimestamp,
+  formatUpcomingTimestamp,
 } from "./timestampFormat";
 
 const timestamp = "2026-10-23T12:00:00.000Z";
@@ -35,4 +37,21 @@ it("keeps invalid dates absent and future dates clamped with bounded wakeups", (
   expect(formatRelativeTimeLabel(timestamp, instant - 5000, "seconds")).toBe("0s ago");
   expect(msUntilRelativeTimeChange(timestamp, instant - 5000, "seconds")).toBe(6000);
   expect(msUntilRelativeTimeChange(timestamp, instant - 10 ** 12, "seconds")).toBe(86_400_000);
+});
+
+describe("timestamps in an explicit time zone", () => {
+  const now = Date.parse("2026-07-01T23:00:00.000Z");
+  const zone = "America/New_York";
+
+  it("picks relative days from the calendar in that zone", () => {
+    expect(formatUpcomingTimestamp("2026-07-02T00:30:00.000Z", "12-hour", now, zone)).not.toMatch(
+      /tomorrow/,
+    );
+    expect(formatUpcomingTimestamp("2026-07-02T05:30:00.000Z", "12-hour", now, zone)).toMatch(
+      /^tomorrow at /,
+    );
+    expect(formatDayAwareTimestamp("2026-07-01T03:30:00.000Z", "12-hour", now, zone)).toMatch(
+      /^yesterday at /,
+    );
+  });
 });
