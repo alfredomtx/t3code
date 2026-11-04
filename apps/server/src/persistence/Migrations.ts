@@ -85,6 +85,7 @@ import Migration0076 from "./Migrations/076_SubagentDeliveryState.ts";
 import Migration0077 from "./Migrations/077_ProjectionProjectsPinArchive.ts";
 import Migration0078 from "./Migrations/078_RepairBooleanSettledOverride.ts";
 import Migration0079 from "./Migrations/079_DropOrchestrationEventCorrelationIndex.ts";
+import Migration0080 from "./Migrations/080_DelegatedRecoveryIndexes.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -167,6 +168,7 @@ const migrationEntries = [
   [77, "ProjectionProjectsPinArchive", Migration0077],
   [78, "RepairBooleanSettledOverride", Migration0078],
   [79, "DropOrchestrationEventCorrelationIndex", Migration0079],
+  [80, "DelegatedRecoveryIndexes", Migration0080],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -220,7 +222,7 @@ export function planMigrationHistory(
       .filter(([id]) => id >= 74)
       .every(
         ([id, name]) =>
-          id <= 78 &&
+          id <= 79 &&
           migrationManifest.some(
             ([personalId, personalName]) => personalId === id + 1 && personalName === name,
           ),
