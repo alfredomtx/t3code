@@ -112,8 +112,10 @@ async function inputFiles(root, directory = "") {
   })) {
     if (["node_modules", ".git"].includes(entry.name)) continue;
     const file = directory ? `${directory}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) files.push(...(await inputFiles(root, file)));
-    else files.push(file);
+    if (entry.isDirectory()) {
+      if (file === ".repos") continue;
+      files.push(...(await inputFiles(root, file)));
+    } else files.push(file);
   }
   return files;
 }

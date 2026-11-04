@@ -111,6 +111,21 @@ NodeTest.test("build inputs reject hidden environment files and symlinks", () =>
     await NodeFSP.writeFile(NodePath.join(root, ".env.example"), "public defaults");
     await NodeFSP.writeFile(NodePath.join(root, "node_modules/ignored/.env"), "dependency");
     await assertBuildEnvironment(root);
+    await NodeFSP.mkdir(NodePath.join(root, ".repos/reference"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(root, ".repos/reference/.env"), "reference only");
+    await NodeFSP.symlink("missing", NodePath.join(root, ".repos/reference/skill"));
+    await assertBuildEnvironment(root);
+    await NodeFSP.rm(NodePath.join(root, ".repos"), { recursive: true });
+    await NodeFSP.symlink("apps", NodePath.join(root, ".repos"));
+    await NodeAssert.rejects(assertBuildEnvironment(root), /linked input: \.repos/u);
+    await NodeFSP.rm(NodePath.join(root, ".repos"));
+    await NodeFSP.mkdir(NodePath.join(root, "apps/web/.repos"));
+    await NodeFSP.writeFile(NodePath.join(root, "apps/web/.repos/.env"), "build input");
+    await NodeAssert.rejects(assertBuildEnvironment(root), /environment input/u);
+    await NodeFSP.rm(NodePath.join(root, "apps/web/.repos"), { recursive: true });
+    await NodeFSP.symlink(".env.example", NodePath.join(root, "linked-input"));
+    await NodeAssert.rejects(assertBuildEnvironment(root), /linked input: linked-input/u);
+    await NodeFSP.rm(NodePath.join(root, "linked-input"));
     await NodeFSP.symlink(".env.example", NodePath.join(root, ".env"));
     await NodeAssert.rejects(assertBuildEnvironment(root));
   }),
