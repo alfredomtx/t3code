@@ -10,6 +10,7 @@ import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { trimmedString } from "./DesktopConfig.ts";
@@ -127,7 +128,9 @@ export const make = Effect.gen(function* () {
                   () => linuxDesktopEntryConfig.appImagePath,
                 ),
               ) ?? process.execPath,
-            scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
+            scheme: linux.isDevelopment
+              ? PERSONAL_DESKTOP.developmentScheme
+              : PERSONAL_DESKTOP.scheme,
             ...(iconPath === undefined ? {} : { iconPath }),
           }),
           "utf8",
