@@ -13,6 +13,8 @@
         ".coderabbit.config.ts",
         ".github/scripts/thread-transfer-report.cjs",
       ],
+      // The TypeScript SDK shell launcher resolves this package in inline JavaScript.
+      "ignoreDependencies": ["@effect/tsgo"],
       "vite": { "entry": [".github/**/*.test.cjs"] },
       "vitest": { "entry": [".github/**/*.test.cjs"] },
     },
