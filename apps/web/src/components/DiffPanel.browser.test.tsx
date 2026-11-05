@@ -21,6 +21,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../test/render";
 import { makeThreadFixture } from "~/test-fixtures";
+import { useComposerDraftStore } from "~/composerDraftStore";
 
 type ResultAtom<A> = Atom.Atom<AsyncResult.AsyncResult<A, Error>>;
 
@@ -122,6 +123,7 @@ function setup(failedBaseRef: string | null) {
       keepSelectionOnOpenThreadKey: null,
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useComposerDraftStore.setState(useComposerDraftStore.getInitialState(), true);
   };
   reset();
   state.diffFilesCollapsed = false;
@@ -228,7 +230,7 @@ it.each([
 );
 
 it.each([false, true])(
-  "expands an unloaded file on the first click with default collapse %s",
+  "expands a lazy diff and comments on selected code with default collapse %s",
   async (collapsed) => {
     using context = setup("origin/orphan");
     state.diffFilesCollapsed = collapsed;
@@ -236,7 +238,7 @@ it.each([false, true])(
     const metadata = preview();
     const source = {
       ...metadata.sources[0]!,
-      files: [{ path, previousPath: null, additions: 1, deletions: 1 }],
+      files: [{ path, previousPath: null, additions: 2, deletions: 2 }],
     };
     state.previews.set("main", Atom.make(AsyncResult.success({ ...metadata, sources: [source] })));
     useDiffPanelStore.getState().selectBranchBaseRef(context.threadRef, "main");
@@ -255,13 +257,69 @@ it.each([false, true])(
         context.patch,
         AsyncResult.success({
           ...source,
-          diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-before\n+after\n`,
+          diff: `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n@@ -1,2 +1,2 @@\n-before\n-oldTail\n+after\n+newTail\n`,
         }),
       ),
     );
     const loadedToggle = screen.getByRole("button", { name: `Collapse ${path}`, exact: true });
     await expect.element(loadedToggle).toHaveAttribute("aria-expanded", "true");
     await expect.element(screen.getByText("after", { exact: true })).toBeVisible();
+    const code = screen.getByText("after", { exact: true }).element();
+    const nextLine = screen.getByText("newTail", { exact: true }).element();
+    const selection = window.getSelection()!;
+    using _selection = { [Symbol.dispose]: () => selection.removeAllRanges() };
+    act(() => {
+      const range = document.createRange();
+      range.setStart(code, 0);
+      range.setEnd(nextLine, 0);
+      selection.removeAllRanges();
+      if (collapsed) selection.setBaseAndExtent(nextLine, 0, code, 0);
+      else selection.addRange(range);
+      code.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, composed: true, button: 0 }),
+      );
+    });
+    const comment = screen.getByRole("textbox", { name: /Comment on lines/ });
+    await expect.element(comment).toBeVisible();
+    await expect.element(comment).toHaveFocus();
+    await comment.fill("Check this selected line");
+    const selectDeletedLines = () => {
+      const before = screen.getByText("before", { exact: true }).element();
+      const oldTail = screen.getByText("oldTail", { exact: true }).element();
+      const range = document.createRange();
+      range.setStart(before, 0);
+      range.setEnd(oldTail, oldTail.childNodes.length);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      oldTail.dispatchEvent(
+        new PointerEvent("pointerup", { bubbles: true, composed: true, button: 0 }),
+      );
+    };
+    act(selectDeletedLines);
+    await expect.element(comment).toHaveValue("Check this selected line");
+    await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(context.threadRef)?.reviewComments,
+    ).toContainEqual(
+      expect.objectContaining({
+        filePath: path,
+        text: "Check this selected line",
+        selection: expect.objectContaining({ start: 1, end: 1, side: "additions" }),
+      }),
+    );
+    act(selectDeletedLines);
+    await expect.element(comment).toBeVisible();
+    await comment.fill("Check these deleted lines");
+    await screen.getByRole("button", { name: "Comment", exact: true }).click();
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(context.threadRef)?.reviewComments,
+    ).toContainEqual(
+      expect.objectContaining({
+        filePath: path,
+        text: "Check these deleted lines",
+        selection: expect.objectContaining({ start: 1, end: 2, side: "deletions" }),
+      }),
+    );
     await userEvent.click(loadedToggle);
     await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
   },

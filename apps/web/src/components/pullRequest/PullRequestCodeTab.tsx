@@ -1790,6 +1790,7 @@ function PullRequestCodeTab({
               onScroll={scrollState.value.save}
               items={items}
               selectedLines={selectedLines}
+              onTextSelectionEnd={(range, item) => beginComment(range, { item })}
               onSelectedLinesChange={setSelectedLines}
               options={diffViewOptions}
               renderCodeViewFooter={renderCodeViewFooter}

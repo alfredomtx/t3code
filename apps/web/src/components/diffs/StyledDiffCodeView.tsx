@@ -7,10 +7,12 @@ import {
   type UncontrolledCodeViewProps,
 } from "@pierre/diffs/react";
 /* oxlint-enable eslint/no-restricted-imports */
-import type { Ref } from "react";
+import type { CodeViewItem, SelectedLineRange } from "@pierre/diffs";
+import { useRef, type Ref } from "react";
 
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { DiffWorkerPoolProvider } from "../DiffWorkerPoolProvider";
+import { diffTextSelection } from "./diffTextSelection";
 
 export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
 /* A 1fr track's automatic minimum grows with the currently mounted lines. In split
@@ -215,44 +217,88 @@ type StyledDiffCodeViewProps<LAnnotation> = (
   readonly options?: StyledDiffCodeViewOptions<LAnnotation>;
   readonly viewerRef?: Ref<CodeViewHandle<LAnnotation, undefined>>;
   readonly unsafeCSSExtra?: string;
+  readonly onTextSelectionEnd?: (range: SelectedLineRange, item: CodeViewItem<LAnnotation>) => void;
 };
+
+function assignRef<T>(ref: Ref<T> | undefined, value: T | null) {
+  if (typeof ref === "function") return ref(value);
+  if (ref) ref.current = value;
+}
 
 export function StyledDiffCodeView<LAnnotation = undefined>({
   options,
   viewerRef,
   className,
   unsafeCSSExtra,
+  onTextSelectionEnd,
   ...props
 }: StyledDiffCodeViewProps<LAnnotation>) {
+  const viewer = useRef<CodeViewHandle<LAnnotation, undefined> | null>(null);
+  const attachViewer = (instance: CodeViewHandle<LAnnotation, undefined> | null) => {
+    viewer.current = instance;
+    return assignRef(viewerRef, instance);
+  };
+  const finishTextSelection = () => {
+    if (!onTextSelectionEnd || !options?.enableLineSelection) return;
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed) return;
+    for (const rendered of viewer.current?.getInstance()?.getRenderedItems() ?? []) {
+      if (rendered.type !== "diff") continue;
+      const range = diffTextSelection(rendered.element, selection);
+      if (!range) continue;
+      const selected = { id: rendered.id, range };
+      viewer.current?.setSelectedLines(selected);
+      props.onSelectedLinesChange?.(selected);
+      selection.removeAllRanges();
+      onTextSelectionEnd(range, rendered.item);
+      return;
+    }
+  };
   return (
-    <DiffWorkerPoolProvider>
-      <CodeView<LAnnotation>
-        {...props}
-        {...(viewerRef ? { ref: viewerRef } : {})}
-        className={
-          className
-            ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
-            : "diff-render-surface [--code-background:var(--background)] outline-none"
-        }
-        options={{
-          ...options,
-          unsafeCSS: unsafeCSSExtra
-            ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
-            : DIFF_VIEW_UNSAFE_CSS,
-          itemMetrics: {
-            diffHeaderHeight: 32,
-            hunkSeparatorHeight: 24,
-            // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
-            // gap.
-            spacing: 0,
-            paddingTop: 0,
-            // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
-            // row.
-            paddingBottom: 8,
-          },
-          layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
-        }}
-      />
-    </DiffWorkerPoolProvider>
+    <div
+      className="contents"
+      onPointerUp={(event) => {
+        if (
+          event.button === 0 &&
+          event.nativeEvent
+            .composedPath()
+            .some((node) => node instanceof Element && node.hasAttribute("data-line"))
+        )
+          finishTextSelection();
+      }}
+      onKeyUp={(event) => {
+        if (event.key === "Shift") finishTextSelection();
+      }}
+    >
+      <DiffWorkerPoolProvider>
+        <CodeView<LAnnotation>
+          {...props}
+          ref={attachViewer}
+          className={
+            className
+              ? `diff-render-surface [--code-background:var(--background)] outline-none ${className}`
+              : "diff-render-surface [--code-background:var(--background)] outline-none"
+          }
+          options={{
+            ...options,
+            unsafeCSS: unsafeCSSExtra
+              ? `${DIFF_VIEW_UNSAFE_CSS}\n${unsafeCSSExtra}`
+              : DIFF_VIEW_UNSAFE_CSS,
+            itemMetrics: {
+              diffHeaderHeight: 32,
+              hunkSeparatorHeight: 24,
+              // Zero both spacing and paddingTop; Pierre's expanded-file fallback otherwise adds an 8px header
+              // gap.
+              spacing: 0,
+              paddingTop: 0,
+              // Include Pierre's 8px --diffs-gap-fallback in metrics or each expanded file loses a scrollable
+              // row.
+              paddingBottom: 8,
+            },
+            layout: { paddingTop: 0, paddingBottom: 0, gap: 0 },
+          }}
+        />
+      </DiffWorkerPoolProvider>
+    </div>
   );
 }
