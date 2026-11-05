@@ -329,7 +329,7 @@ async function main() {
       "@t3tools/web",
       "t3",
     ])
-      run("vp", ["exec", "--filter", workspace, "--", "tsc", "--noEmit"]);
+      run("vp", ["run", "--filter", workspace, "typecheck"]);
     run(
       process.execPath,
       [

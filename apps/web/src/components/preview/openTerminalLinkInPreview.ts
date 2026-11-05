@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { isWebUrl, resolveBrowserLinkTargetPreference } from "~/browser/browserLinkTarget";
 import {
-  BrowserSettingsReadError,
+  isBrowserSettingsReadError,
   openUrlInPreview,
   type OpenPreviewMutation,
 } from "~/browser/openFileInPreview";
@@ -67,7 +67,7 @@ export async function openTerminalLinkInPreview<E>(
       return;
     }
     const failure = squashAtomCommandFailure(result);
-    if (failure instanceof BrowserSettingsReadError) throw failure;
+    if (isBrowserSettingsReadError(failure)) throw failure;
     console.error(
       new TerminalLinkPreviewOpenError({
         ...errorContext,
