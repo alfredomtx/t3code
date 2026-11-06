@@ -1,9 +1,9 @@
-import type { SourceControlMediaRequest } from "@t3tools/source-control-core/server/driver";
 import { githubMarkdownRepository } from "@t3tools/shared/githubMediaRepository";
-import { gitHubMediaUrl, GITHUB_CREDENTIALED_MEDIA_HOSTS } from "../shared/gitHubMedia.ts";
-import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
+import type { SourceControlMediaRequest } from "@t3tools/source-control-core/server/driver";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
 import * as Redacted from "effect/Redacted";
 import {
   FetchHttpClient,
@@ -11,32 +11,81 @@ import {
   HttpClientRequest,
   type HttpClientResponse,
 } from "effect/http";
-import * as GitHubRest from "./GitHubRest.ts";
+
+import { GITHUB_CREDENTIALED_MEDIA_HOSTS } from "../shared/gitHubMedia.ts";
+
 import * as GitHubCredentials from "./GitHubCredentials.ts";
+import * as GitHubRest from "./GitHubRest.ts";
+
+/**
+ * Everything a redirect leads to — the presigned object stores GitHub hands assets off to —
+ * authorizes with its own signature, and some of them reject a request that also carries a
+ * bearer token.
+ */
+const isCredentialedHost = (url: string) => {
+  const target = URL.parse(url);
+  return (
+    target !== null &&
+    target.protocol === "https:" &&
+    target.port === "" &&
+    GITHUB_CREDENTIALED_MEDIA_HOSTS.has(target.hostname.toLowerCase())
+  );
+};
+
+const MAX_REDIRECTS = 3;
+const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
+const MEDIA_CONTENT_TYPE_PATTERN = /^(?:image|video|audio)\/[\w!#$&^.+-]+$/i;
+const ATTACHMENT_PATH_PATTERN =
+  /^\/(?:user-attachments\/assets\/[\w-]+|[^/]+\/[^/]+\/assets\/\d+\/[\w-]+)$/u;
+const LEGACY_ATTACHMENT_REPOSITORY_PATTERN = /^\/([^/]+\/[^/]+)\/assets\//u;
+const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
+// GitHub's signed upload links last about five minutes.
+const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
+const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
+
+const contentTypeOf = (response: HttpClientResponse.HttpClientResponse) =>
+  response.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
+
+/** The repository an upload has to be rendered in, or `undefined` when it is not an upload. */
+const uploadRepository = (request: SourceControlMediaRequest) => {
+  const target = URL.parse(request.url);
+  if (
+    target === null ||
+    target.protocol !== "https:" ||
+    target.hostname !== "github.com" ||
+    target.port !== "" ||
+    target.username !== "" ||
+    target.password !== "" ||
+    !ATTACHMENT_PATH_PATTERN.test(target.pathname)
+  ) {
+    return undefined;
+  }
+  // A legacy upload names its repository; one the caller supplies cannot override that.
+  const repository =
+    LEGACY_ATTACHMENT_REPOSITORY_PATTERN.exec(target.pathname)?.[1] ??
+    (request.repositoryUrl === undefined
+      ? request.repository
+      : (githubMarkdownRepository(request.repositoryUrl) ?? undefined));
+  // An unusable explicit context must not fall back to an unrelated checkout.
+  return repository !== undefined && REPOSITORY_PATTERN.test(repository) ? repository : undefined;
+};
 
 export const make = Effect.gen(function* () {
   const credentials = yield* GitHubCredentials.GitHubCredentials;
-  const github = yield* GitHubRest.GitHubRest;
+  const rest = yield* GitHubRest.GitHubRest;
   const httpClient = HttpClient.withScope(yield* HttpClient.HttpClient);
-  const isCredentialedHost = (url: string) => {
-    try {
-      return GITHUB_CREDENTIALED_MEDIA_HOSTS.has(new URL(url).hostname.toLowerCase());
-    } catch {
-      return false;
-    }
-  };
+  const signedUrls = new Map<string, { readonly at: number; readonly url: string }>();
 
-  const MAX_REDIRECTS = 3;
-  const MANUAL_REDIRECT: RequestInit = { redirect: "manual" };
-  const githubToken = Effect.suspend(() => credentials.get("github.com")).pipe(
-    Effect.map((credential) => credential.token),
+  // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
+  // Read on every fetch, so media loads as soon as the user signs in.
+  const credential = Effect.suspend(() => credentials.get("github.com")).pipe(
     Effect.orElseSucceed(() => null),
   );
 
-  const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
+  const fetchFollowingRedirects = Effect.fnUntraced(function* (
     url: string,
-    headers: Record<string, string>,
-    token: Redacted.Redacted | null,
+    headers: Readonly<Record<string, string>>,
+    token: Redacted.Redacted<string> | null,
   ) {
     let target = url;
     for (let hop = 0; ; hop += 1) {
@@ -58,15 +107,18 @@ export const make = Effect.gen(function* () {
         )
         .pipe(
           Effect.provideService(FetchHttpClient.RequestInit, MANUAL_REDIRECT),
-          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
           Effect.provideService(Scope.Scope, scope),
+          // A signed URL's query string is a bearer capability; keep it out of tracing spans.
+          Effect.provideService(HttpClient.TracerDisabledWhen, () => true),
         );
       const location = response.headers.location;
       if (response.status < 300 || response.status >= 400) return { response, release };
       yield* release;
       if (!location || hop >= MAX_REDIRECTS) return null;
-      const next = new URL(location, target);
-      if (next.protocol !== "https:") return null;
+      const next = URL.parse(location, target);
+      if (next === null || next.protocol !== "https:" || next.username || next.password) {
+        return null;
+      }
       target = next.toString();
     }
   });
@@ -102,52 +154,96 @@ export const make = Effect.gen(function* () {
     }
   }
 
-  const resolveAttachment = Effect.fn("GitHubMediaFetch.resolveAttachment")(function* (
+  // An organization with SAML SSO answers a token-authenticated upload request with its sign-in
+  // page. Rendering the link as markdown in the repository's context hands back a signed URL.
+  const renderSignedUrl = Effect.fnUntraced(function* (
     url: string,
-    context: string,
+    repository: string,
+    legacy: boolean,
   ) {
-    const rendered = yield* github.rest({
-      host: "github.com",
-      operation: "resolve pull request attachment",
-      method: "POST",
-      path: "markdown",
-      body: { mode: "gfm", text: `![](<${url}>)`, context },
-      maxResponseBytes: 64 * 1024,
-    });
-    return rendered.truncated || rendered.invalidUtf8 ? null : signedMediaSource(rendered.body);
+    const rendered = yield* rest
+      .rest({
+        host: "github.com",
+        operation: "renderMarkdown",
+        method: "POST",
+        path: "markdown",
+        accept: "text/html",
+        maxResponseBytes: 64 * 1024,
+        body: { text: legacy ? `![](<${url}>)` : `![](${url})`, mode: "gfm", context: repository },
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (rendered === null || rendered.status !== 200 || rendered.truncated) return null;
+    if (rendered.invalidUtf8) return null;
+    for (const image of rendered.body.matchAll(/<img\b[^>]*>/gi)) {
+      const signed = signedMediaSource(image[0]);
+      if (signed !== null && (legacy || new URL(signed).searchParams.get("jwt"))) return signed;
+    }
+    return null;
   });
 
-  return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (asset: SourceControlMediaRequest) {
-    // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-    const token = yield* githubToken;
-    const forwarded = { ...asset.headers };
-    let fetched = yield* fetchFollowingRedirects(asset.url, forwarded, token);
-    const context =
-      asset.repositoryUrl === undefined ? null : githubMarkdownRepository(asset.repositoryUrl);
-    const canonical = gitHubMediaUrl(new URL(asset.url))?.fetchUrl ?? null;
-    const attachment = canonical !== null && new URL(canonical).hostname === "github.com";
-    if (
-      fetched &&
-      context &&
-      attachment &&
-      ([401, 403, 404].includes(fetched.response.status) ||
-        (fetched.response.status >= 200 &&
-          fetched.response.status < 300 &&
-          /^(?:text\/html|application\/xhtml\+xml)(?:;|$)/i.test(
-            fetched.response.headers["content-type"] ?? "",
-          )))
-    ) {
-      yield* fetched.release;
-      const signed = yield* resolveAttachment(canonical, context).pipe(
-        Effect.orElseSucceed(() => null),
+  return Effect.fn("GitHubMediaFetch.fetchMedia")(function* (request: SourceControlMediaRequest) {
+    const signedIn = yield* credential;
+    const repository =
+      signedIn === null && request.repositoryUrl === undefined
+        ? undefined
+        : uploadRepository(request);
+    const cacheKey =
+      signedIn === null || repository === undefined
+        ? null
+        : [signedIn.fingerprint, repository, request.url].map(encodeURIComponent).join("|");
+    const now = yield* Clock.currentTimeMillis;
+    const cached = cacheKey === null ? undefined : signedUrls.get(cacheKey);
+    let fetched;
+    if (cacheKey !== null && cached !== undefined && now - cached.at < SIGNED_URL_CACHE_TTL_MS) {
+      fetched = yield* fetchFollowingRedirects(cached.url, request.headers, null);
+      if (fetched === null || fetched.response.status >= 400) signedUrls.delete(cacheKey);
+      if (fetched?.response.status !== 403) return fetched?.response ?? null;
+    } else {
+      if (cacheKey !== null) signedUrls.delete(cacheKey);
+      fetched = yield* fetchFollowingRedirects(
+        request.url,
+        request.headers,
+        signedIn?.token ?? null,
       );
-      fetched =
-        signed === null
-          ? null
-          : yield* fetchFollowingRedirects(signed, forwarded, null).pipe(
-              Effect.orElseSucceed(() => null),
-            );
+      if (fetched === null) return null;
+      const type = contentTypeOf(fetched.response);
+      if (
+        type !== "text/html" &&
+        type !== "application/xhtml+xml" &&
+        ![401, 403, 404].includes(fetched.response.status)
+      )
+        return fetched.response;
+      if (fetched.response.status >= 400 && ![401, 403, 404].includes(fetched.response.status))
+        return fetched.response;
     }
-    return fetched?.response ?? null;
+    if (repository === undefined) return fetched?.response ?? null;
+    yield* fetched?.release;
+    const signed = yield* renderSignedUrl(
+      request.url,
+      repository,
+      request.repositoryUrl !== undefined,
+    );
+    if (signed === null)
+      return request.repositoryUrl === undefined ? (fetched?.response ?? null) : null;
+    const fetchSigned = fetchFollowingRedirects(signed, request.headers, null);
+    const media = yield* request.repositoryUrl === undefined
+      ? fetchSigned
+      : fetchSigned.pipe(Effect.orElseSucceed(() => null));
+    if (
+      cacheKey !== null &&
+      signedIn !== null &&
+      (media?.response.status === 200 || media?.response.status === 206) &&
+      MEDIA_CONTENT_TYPE_PATTERN.test(contentTypeOf(media.response))
+    ) {
+      const current = yield* credential;
+      if (current?.fingerprint === signedIn.fingerprint) {
+        if (signedUrls.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
+          const oldest = signedUrls.keys().next().value;
+          if (oldest !== undefined) signedUrls.delete(oldest);
+        }
+        signedUrls.set(cacheKey, { at: now, url: signed });
+      }
+    }
+    return media?.response ?? null;
   });
 });

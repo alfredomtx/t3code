@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { HttpServerResponse } from "effect/http";
 
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 
@@ -29,6 +30,7 @@ export const sourceControlMediaResponse = Effect.fn(
     readonly url: string;
     readonly cwd: string;
     readonly repositoryUrl?: string;
+    readonly repository?: string;
     readonly expiresAt: number;
   },
   requestHeaders: Record<string, string | undefined>,
@@ -51,9 +53,19 @@ export const sourceControlMediaResponse = Effect.fn(
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
+  // Clients that predate `repository` fall back to the repository checked out at `cwd`.
+  let repository = asset.repository;
+  if (repository === undefined && asset.repositoryUrl === undefined) {
+    const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+    const identity = yield* identities.resolve(asset.cwd);
+    if (identity?.provider === media.definition.kind && identity.owner && identity.name) {
+      repository = `${identity.owner}/${identity.name}`;
+    }
+  }
   const response = yield* fetchMedia({
     url: asset.url,
     headers: forwarded,
+    ...(repository === undefined ? {} : { repository }),
     ...(asset.repositoryUrl === undefined ? {} : { repositoryUrl: asset.repositoryUrl }),
   });
   if (response === null) return HttpServerResponse.empty({ status: 502, headers });

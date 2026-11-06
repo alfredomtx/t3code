@@ -6,6 +6,7 @@ import { pullRequestImageSource } from "./pullRequestMediaSource";
 const location = {
   environmentId: EnvironmentId.make("test"),
   cwd: "/different-checkout",
+  repository: "enterprise/private",
   repositoryUrl: "https://github.com/displayed/repository",
 };
 const url = "https://github.com/user-attachments/assets/abc-123";
@@ -23,8 +24,13 @@ describe("PR media previews", () => {
         url,
         cwd: location.cwd,
         repositoryUrl: location.repositoryUrl,
+        repository: location.repository,
       },
     });
+    expect(gallery).toMatchObject([
+      { resource: { url, repository: location.repository } },
+      { resource: { url: `${url}-second`, repository: location.repository } },
+    ]);
     expect(gallery.every((item) => "resource" in item)).toBe(true);
   });
 });

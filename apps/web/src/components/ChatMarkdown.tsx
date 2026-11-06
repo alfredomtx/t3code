@@ -249,6 +249,8 @@ interface ChatMarkdownProps {
       `cwd`'s; without it a private repository's uploads load unauthenticated and 404. */
   sourceControlMedia?: boolean | undefined;
   githubMediaRepositoryUrl?: string | undefined;
+  /** The change request's repository, when it can differ from the checkout at `cwd`. */
+  sourceControlMediaRepository?: string | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -496,6 +498,7 @@ function useChatMarkdownState({
   headingLevelOffset = 0,
   sourceControlMedia = false,
   githubMediaRepositoryUrl,
+  sourceControlMediaRepository,
 }: ChatMarkdownProps) {
   const resolvedTheme = useRenderedAppearance();
   const markdownRef = useRef<HTMLElement>(null);
@@ -889,6 +892,7 @@ function useChatMarkdownState({
     fileLinkChip,
     sourceControlMedia,
     githubMediaRepositoryUrl,
+    sourceControlMediaRepository,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -1364,6 +1368,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       environmentId,
       sourceControlMedia,
       githubMediaRepositoryUrl,
+      sourceControlMediaRepository,
       imageBaseDir,
       threadRef,
       workspaceMutationId,
@@ -1457,6 +1462,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ...(githubMediaRepositoryUrl === undefined
               ? {}
               : { repositoryUrl: githubMediaRepositoryUrl }),
+            ...(sourceControlMediaRepository ? { repository: sourceControlMediaRepository } : {}),
           }}
           alt={altText}
           kind={kind}

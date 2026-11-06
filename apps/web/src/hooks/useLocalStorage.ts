@@ -135,7 +135,7 @@ export function readLocalStorageValue<T, E>(
 export function subscribeLocalStorageKey(key: string, onChange: () => void): () => void {
   if (typeof window === "undefined") return () => {};
   const handleStorageChange = (event: StorageEvent) => {
-    if (event.key === key) {
+    if (event.key === key || event.key === null) {
       onChange();
     }
   };

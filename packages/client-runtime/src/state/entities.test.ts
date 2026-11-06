@@ -54,14 +54,16 @@ describe("V2 client presentation", () => {
       const placement = tracker.observe([attention]);
       expect(placement.isWorking(attention)).toBe(false);
       if (status !== "completed") expect(placement.returnedAt(attention)).toBeDefined();
-      expect(canSnooze(attention, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+      expect(canSnooze(attention, { now: "2026-06-20T00:05:00.000Z" })).toBe(
+        status === "running" || status === "waiting" || status === "completed",
+      );
       expect(effectiveSnoozed(attention, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
       expect(answered.hasPendingUserInput).toBe(false);
       expect(tracker.observe([answered]).isWorking(answered)).toBe(status !== "completed");
       tracker.observe(null);
     },
   );
-  it("an async question blocks snooze and wakes a snoozed thread", () => {
+  it("an async question allows snooze and wakes an older snooze", () => {
     const runId = RunId.make("run-async-question");
     const running = {
       ...v2ThreadShell,
@@ -78,7 +80,17 @@ describe("V2 client presentation", () => {
       },
     };
     const active = presentThreadShell(environmentId, running);
-    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
+    expect(active.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(active)).toBe(false);
+    expect(canSnooze(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(true);
+
+    const completed = presentThreadShell(environmentId, {
+      ...running,
+      activeRunId: null,
+      status: "completed",
+    });
+    expect(completed.hasPendingUserInput).toBe(true);
+    expect(isThreadWorking(completed)).toBe(false);
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 

@@ -14,6 +14,7 @@ import ProjectPinArchive from "./Migrations/077_ProjectionProjectsPinArchive.ts"
 import RepairSettledOverride from "./Migrations/078_RepairBooleanSettledOverride.ts";
 import DropCorrelationIndex from "./Migrations/079_DropOrchestrationEventCorrelationIndex.ts";
 import DelegatedRecoveryIndexes from "./Migrations/080_DelegatedRecoveryIndexes.ts";
+import ScheduledTaskThreadMode from "./Migrations/081_ScheduledTaskThreadMode.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -35,7 +36,7 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect.each([74, 75, 76, 77, 78, 79])(
+  it.effect.each([74, 75, 76, 77, 78, 79, 80])(
     "upgrades official history through %s without repeating schema changes",
     (head) =>
       Effect.gen(function* () {
@@ -48,6 +49,7 @@ describe("runMigrations", () => {
           [77, "RepairBooleanSettledOverride", RepairSettledOverride],
           [78, "DropOrchestrationEventCorrelationIndex", DropCorrelationIndex],
           [79, "DelegatedRecoveryIndexes", DelegatedRecoveryIndexes],
+          [80, "ScheduledTaskThreadMode", ScheduledTaskThreadMode],
         ] as const;
         for (const [id, name, migration] of official) {
           if (id > head) break;

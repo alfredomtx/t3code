@@ -6,6 +6,7 @@ export interface PullRequestMediaLocation {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
   readonly repositoryUrl?: string;
+  readonly repository?: string;
 }
 
 /** Keep the original resource identity so previewers can resolve and renew its capability. */
@@ -21,6 +22,7 @@ export function pullRequestMediaSource(url: string, location: PullRequestMediaLo
           ...(location.repositoryUrl === undefined
             ? {}
             : { repositoryUrl: location.repositoryUrl }),
+          ...(location.repository ? { repository: location.repository } : {}),
         },
       }
     : { uri: url };

@@ -25,6 +25,8 @@ export const PullRequestMarkdownContext = createContext<{
   remarkPlugins: PluggableList;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
+  /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
+  repository: string | null;
 } | null>(null);
 
 function PullRequestHostVideo({
@@ -33,18 +35,21 @@ function PullRequestHostVideo({
   url,
   fetchUrl,
   repositoryUrl,
+  repository,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   url: string;
   fetchUrl: string;
   repositoryUrl: string | null | undefined;
+  repository: string | undefined;
 }) {
   const resource: AssetResource = {
     _tag: SOURCE_CONTROL_MEDIA_ASSET,
     cwd,
     url: fetchUrl,
     ...(repositoryUrl ? { repositoryUrl } : {}),
+    ...(repository ? { repository } : {}),
   };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
@@ -85,6 +90,7 @@ export function PullRequestMarkdown({
   const repositoryUrl = context?.repositoryUrl;
   const mediaRepositoryUrl =
     repositoryUrl && githubMarkdownRepository(repositoryUrl) !== null ? repositoryUrl : undefined;
+  const repository = context?.repository ?? undefined;
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   return (
     <div
@@ -108,6 +114,7 @@ export function PullRequestMarkdown({
               lineBreaks={lineBreaks ?? context?.lineBreaks ?? false}
               sourceControlMedia
               githubMediaRepositoryUrl={mediaRepositoryUrl}
+              sourceControlMediaRepository={repository}
               onTaskListChange={
                 onTaskListChange && segment.kind === "markdown"
                   ? ({ markerOffset, checked }) =>
@@ -130,6 +137,7 @@ export function PullRequestMarkdown({
               url={segment.url}
               fetchUrl={hostMedia.fetchUrl}
               repositoryUrl={mediaRepositoryUrl}
+              repository={repository}
             />
           );
         }

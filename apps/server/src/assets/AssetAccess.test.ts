@@ -35,6 +35,7 @@ import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { assetFileResponse } from "../http.ts";
 import { ASSET_ROUTE_PREFIX, issueAssetUrl, readMcpAppHtml, resolveAsset } from "./AssetAccess.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import { fakeSourceControlDriverInstance } from "@t3tools/source-control-testing/fakeSourceControlDriver";
 import * as BuiltInDrivers from "../sourceControl/builtInDrivers.ts";
@@ -1516,10 +1517,39 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("preserves the change request repository through RPC decoding and signed media", () =>
+    Effect.gen(function* () {
+      const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
+      const resource = {
+        _tag: SOURCE_CONTROL_MEDIA_ASSET,
+        cwd: "/personal-fork",
+        url: "https://github.com/user-attachments/assets/1a1842fb-6383-492f-873c-57aa0033fa6c",
+        repository: "enterprise/private",
+      };
+      const input = yield* decodeAssetCreateUrlInput({ resource });
+      const issued = yield* issueAssetUrl(input);
+      const suffix = issued.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const resolved = yield* resolveAsset(suffix.slice(0, separator), suffix.slice(separator + 1));
+
+      expect(resolved).toEqual({
+        kind: "source-control-media",
+        url: resource.url,
+        cwd: resource.cwd,
+        repository: resource.repository,
+        expiresAt: issued.expiresAt,
+      });
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect.each([undefined, "text/html", "application/xhtml+xml"])(
     "serves host media and rejects document type %s",
     (contentType) => {
-      const fetched: Array<{ url: string; headers: Readonly<Record<string, string>> }> = [];
+      const fetched: Array<{
+        url: string;
+        headers: Readonly<Record<string, string>>;
+        repository?: string;
+      }> = [];
       const url = "https://github.com/owner/repo/blob/main/docs/shot.png";
       const media = sourceControlDefinitions.mediaUrl(url)!;
       const layerDrivers = Layer.succeed(BuiltInDrivers.SourceControlDrivers, [
@@ -1544,6 +1574,17 @@ describe("AssetAccess", () => {
           }),
         },
       ]);
+      // Clients that predate `repository` get the checkout's.
+      const layerIdentities = Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+        resolve: () =>
+          Effect.succeed({
+            canonicalKey: "github.com/owner/repo",
+            locator: { source: "git-remote", remoteName: "origin", remoteUrl: "" },
+            provider: media.definition.kind,
+            owner: "owner",
+            name: "repo",
+          }),
+      });
       return Effect.gen(function* () {
         const decodeAssetCreateUrlInput = Schema.decodeEffect(AssetCreateUrlInput);
 
@@ -1567,17 +1608,22 @@ describe("AssetAccess", () => {
           range: "bytes=0-4",
           cookie: "session",
         });
-        expect(fetched).toEqual([{ url: media.fetchUrl, headers: { range: "bytes=0-4" } }]);
+        expect(fetched).toEqual([
+          { url: media.fetchUrl, headers: { range: "bytes=0-4" }, repository: "owner/repo" },
+        ]);
+        expect(response.status).toBe(contentType === undefined ? 206 : 415);
         if (contentType === undefined) {
-          expect(response.status).toBe(206);
-          // The upstream sent no type, so it comes from the file name the host gave the media.
           expect(response.headers["content-type"]).toBe("image/png");
           expect(response.headers["content-length"]).toBe("5");
-        } else {
-          expect(response.status).toBe(415);
-          expect(response.headers["content-length"]).toBeUndefined();
-        }
-      }).pipe(Effect.provide(Layer.merge(layerTest, layerDrivers)), Effect.scoped);
+        } else expect(response.headers["content-length"]).toBeUndefined();
+
+        // A pull request's own repository wins over the checkout it is shown in.
+        yield* sourceControlMediaResponse({ ...asset, repository: "enterprise/private" }, {});
+        expect(fetched.at(-1)?.repository).toBe("enterprise/private");
+      }).pipe(
+        Effect.provide(Layer.mergeAll(layerTest, layerDrivers, layerIdentities)),
+        Effect.scoped,
+      );
     },
   );
 
