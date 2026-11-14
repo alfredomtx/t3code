@@ -182,6 +182,7 @@ vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => {
     ServerBrowserSurface: ({
       ref,
       onControl,
+      className,
     }: ComponentProps<typeof actual.ServerBrowserSurface>) => {
       useImperativeHandle(ref, () => ({
         navigate: () => {},
@@ -189,31 +190,29 @@ vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => {
         viewport: () => {},
         canvas: () => null,
         reload: mocks.serverReload,
+        stopLoading: () => {},
       }));
       return (
-        <button
-          className="fixed top-0 left-0 z-50"
-          onClick={() =>
-            onControl?.({ controller: "you", canOperate: true, generation: 1, dialog: null })
-          }
-        >
-          Grant browser control
-        </button>
+        <div data-testid="server-browser-surface" className={className}>
+          <button
+            className="fixed top-0 left-0 z-50"
+            onClick={() =>
+              onControl?.({ controller: "you", canOperate: true, generation: 1, dialog: null })
+            }
+          >
+            Grant browser control
+          </button>
+        </div>
       );
     },
   };
 });
 
 vi.mock(import("~/browser/browserViewportActions"), { spy: true });
-// The real surface opens a preview stream to the server; only its box matters here.
-vi.mock(import("~/browser/ServerBrowserSurface"), async (original) => ({
-  ...(await original()),
-  ServerBrowserSurface: ((props: { className?: string }) => (
-    <div data-testid="server-browser-surface" className={props.className} />
-  )) as never,
-}));
 
 import { useComposerDraftStore } from "~/composerDraftStore";
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
@@ -411,6 +410,23 @@ describe("PreviewView", () => {
     const rect = card.element().getBoundingClientRect();
     const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
     expect(card.element().contains(hit)).toBe(true);
+  });
+
+  it("sizes the first device viewport of a streamed tab to its panel", async () => {
+    setup();
+    mocks.streamedServerTab = true;
+    await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    const surface = page.getByTestId("server-browser-surface");
+    await expect.element(surface).toBeInTheDocument();
+    const rect = surface.element().getBoundingClientRect();
+
+    await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+
+    expect(commitBrowserViewportChange).toHaveBeenCalledWith(expect.anything(), {
+      _tag: "freeform",
+      ...resolveResponsiveBrowserViewportSize(rect, 1),
+    });
   });
 
   it("focuses and selects the address from forwarded desktop actions only while visible", async () => {

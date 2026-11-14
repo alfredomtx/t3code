@@ -33,6 +33,7 @@ interface Props {
   onBack: () => void;
   onForward: () => void;
   onRefresh: () => void | Promise<boolean>;
+  onStopLoading: () => void;
   onSubmit: (url: string) => void;
   onOpenInBrowser?: (() => void) | undefined;
   onCapture?: ((record: boolean) => void) | undefined;
@@ -62,6 +63,7 @@ export function PreviewChromeRow({
   onBack,
   onForward,
   onRefresh,
+  onStopLoading,
   onSubmit,
   onOpenInBrowser,
   onCapture,
@@ -140,6 +142,10 @@ export function PreviewChromeRow({
                   onPointerDownCapture={coach.capture}
                   onClick={(event) => {
                     if (refreshDisabled) return;
+                    if (loading) {
+                      onStopLoading();
+                      return;
+                    }
                     const remind = coach.prepare("preview.refresh", event);
                     void Promise.resolve(onRefresh())
                       .then((accepted) => {
@@ -155,7 +161,7 @@ export function PreviewChromeRow({
             >
               <RefreshIcon refreshing={loading} />
             </TooltipTrigger>
-            <TooltipPopup>{loading ? "Loading…" : "Refresh"}</TooltipPopup>
+            <TooltipPopup>{loading ? "Stop" : "Refresh"}</TooltipPopup>
           </Tooltip>
         </div>
 

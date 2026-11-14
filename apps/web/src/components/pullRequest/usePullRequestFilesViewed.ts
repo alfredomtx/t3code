@@ -4,7 +4,10 @@ import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useEffectEvent, useRef, useState } from "react";
 
-import { pullRequestEnvironment } from "~/state/pullRequests";
+import {
+  pullRequestEnvironment,
+  subscribePullRequestFilesViewedAnswers,
+} from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -157,8 +160,10 @@ export function usePullRequestFilesViewed(options: {
       }
       const before = registry.get(lane.atom);
       let stop = () => {};
+      let stopAnswers = () => {};
       const finish = (value: FileViewedStates | null) => {
         stop();
+        stopAnswers();
         lane.abort.signal.removeEventListener("abort", abort);
         resolve(value);
       };
@@ -166,10 +171,12 @@ export function usePullRequestFilesViewed(options: {
       const check = () => {
         const result = registry.get(lane.atom);
         if (result === before || result.waiting) return;
-        if (AsyncResult.isSuccess(result)) {
-          finish(result.value.truncated ? null : toFileViewedStates(result.value));
-        } else if (AsyncResult.isFailure(result)) finish(null);
+        if (AsyncResult.isFailure(result)) finish(null);
       };
+      stopAnswers = subscribePullRequestFilesViewedAnswers(
+        { environmentId: lane.environmentId, input: lane.reference },
+        (answer) => finish(answer.truncated ? null : toFileViewedStates(answer)),
+      );
       stop = registry.subscribe(lane.atom, check);
       lane.abort.signal.addEventListener("abort", abort, { once: true });
       registry.refresh(lane.atom);

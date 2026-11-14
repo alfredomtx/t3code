@@ -30,6 +30,7 @@ const {
   command,
   permission,
   diffCommits,
+  viewedAnswers,
 } = await vi.hoisted(async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const Cause = await import("effect/Cause");
@@ -69,7 +70,9 @@ const {
   const filesViewedState = Atom.make<AsyncResult.AsyncResult<PullRequestFilesViewedResult>>(
     AsyncResult.initial(),
   );
+  const viewedAnswers = new Set<(answer: PullRequestFilesViewedResult) => void>();
   return {
+    viewedAnswers,
     diffCommits: [] as Array<string | undefined>,
     filePatch,
     firstDiffData,
@@ -91,6 +94,9 @@ const {
     }),
     filesViewedAtom: Atom.make((get) => {
       const result = get(filesViewedState);
+      if (AsyncResult.isSuccess(result)) {
+        for (const listener of viewedAnswers) listener(result.value);
+      }
       return AsyncResult.isSuccess(result) ? AsyncResult.success(result.value) : result;
     }),
   };
@@ -104,6 +110,12 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
     ...actual,
+    subscribePullRequestFilesViewedAnswers: (_target, listener) => {
+      viewedAnswers.add(listener);
+      return () => {
+        viewedAnswers.delete(listener);
+      };
+    },
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {

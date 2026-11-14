@@ -61,6 +61,7 @@ import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMoreReplies } from "./PullRequestMoreReplies";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "@t3tools/client-runtime/pull-request-reactions";
 import { PullRequestResolveThreadButton } from "./PullRequestResolveThreadButton";
 import {
   PullRequestActorAvatar,
@@ -82,7 +83,7 @@ interface ReactionSurface {
   readonly commentRequest: PullRequestCommentRequest | undefined;
   readonly onCommentRequestHandled: ((requestId: string) => void) | undefined;
   revealAnchor?: string | null;
-  readonly canReact: boolean;
+  readonly canReact: (event: PullRequestTimelineEvent) => boolean;
   /** Absent where there is no composer beside the panel to add a remark to. */
   readonly onAddToChat?: ((comment: PullRequestComment) => void) | undefined;
   readonly environmentId: EnvironmentId;
@@ -257,6 +258,7 @@ function ConversationCard({
     reactions.commentRequest,
     reactions.onCommentRequestHandled,
   );
+  const canReact = reactions.canReact(event);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const updateComment = useAtomCommand(pullRequestEnvironment.updateComment, {
@@ -282,6 +284,7 @@ function ConversationCard({
   return (
     <article
       ref={targetRef}
+      tabIndex={-1}
       {...(reactions.revealAnchor != null &&
       pullRequestAnchorMatchesUrl(reactions.revealAnchor, event.url)
         ? {
@@ -317,11 +320,11 @@ function ConversationCard({
           {event.body && event.comment && !reply ? (
             <AddToChatButton comment={event.comment} reactions={reactions} />
           ) : null}
-          {reactions.canReact || event.reactions.length > 0 ? (
+          {canReact || event.reactions.length > 0 ? (
             <PullRequestReactionBar
               className="ml-auto justify-end"
               reactions={event.reactions}
-              canReact={reactions.canReact}
+              canReact={canReact}
               subjectId={event.id}
               environmentId={reactions.environmentId}
               reference={reactions.reference}
@@ -694,6 +697,7 @@ function ReviewVerdictEvent({
     reactions.commentRequest,
     reactions.onCommentRequestHandled,
   );
+  const canReact = reactions.canReact(event);
   return (
     <div
       ref={targetRef}
@@ -745,11 +749,11 @@ function ReviewVerdictEvent({
         {event.body && event.comment ? (
           <AddToChatButton comment={event.comment} reactions={reactions} />
         ) : null}
-        {reactions.canReact || event.reactions.length > 0 ? (
+        {canReact || event.reactions.length > 0 ? (
           <PullRequestReactionBar
             className="ml-auto justify-end"
             reactions={event.reactions}
-            canReact={reactions.canReact}
+            canReact={canReact}
             subjectId={event.id}
             environmentId={reactions.environmentId}
             reference={reactions.reference}
@@ -827,7 +831,8 @@ export function PullRequestTimelineTab({
     commentRequest,
     onCommentRequestHandled,
     revealAnchor: anchor,
-    canReact: detail.capabilities.reactions === true,
+    canReact: (event) =>
+      event.comment !== undefined && canReactPullRequestComment(detail, event.comment),
     onAddToChat: onAddToChat && ((comment) => onAddToChat({ kind: "comment", comment })),
     environmentId,
     threadRef,

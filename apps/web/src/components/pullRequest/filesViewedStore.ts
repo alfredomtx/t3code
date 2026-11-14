@@ -30,7 +30,7 @@ type FilesViewedBatch = ReadonlyArray<{
 
 export interface FilesViewedStoreDeps {
   readonly flushDelayMs: number;
-  /** Calls `onAnswer` with the host's current answer at once, then with every later one. */
+  /** Calls `onAnswer` only after completed server reads, excluding persisted values. */
   readonly subscribeAnswers: (
     target: FilesViewedTarget,
     onAnswer: (answer: PullRequestFilesViewedResult | null) => void,
@@ -62,13 +62,8 @@ interface FilesViewedScope {
   readonly sentBy: Map<string, number>;
   requests: number;
   timer: ReturnType<typeof setTimeout> | null;
-  answer: PullRequestFilesViewedResult | null;
-  /**
-   * The host's answer as it stood when a completed write was acknowledged, per path. The first
-   * answer that differs from it is the first read that could have seen the write, which is what
-   * retires the press rather than the host happening to agree with it.
-   */
-  readonly answeredFrom: Map<string, PullRequestFilesViewedResult | null>;
+  // Completed reads retire acknowledged presses even when equal data is structurally shared.
+  readonly answeredFrom: Set<string>;
 }
 
 /**
@@ -89,12 +84,11 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
   const isLive = (key: string, scope: FilesViewedScope) => scopes.get(key) === scope;
 
   const settle = (scope: FilesViewedScope, answer: PullRequestFilesViewedResult | null) => {
-    if (answer === scope.answer) return;
-    scope.answer = answer;
+    if (answer === null) return;
     const pending = new Set([...scope.queued.keys(), ...scope.sentBy.keys()]);
     const answered = new Set<string>();
-    for (const [path, from] of scope.answeredFrom) {
-      if (pending.has(path) || from === answer) continue;
+    for (const path of scope.answeredFrom) {
+      if (pending.has(path)) continue;
       answered.add(path);
       scope.answeredFrom.delete(path);
     }
@@ -135,7 +129,7 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
       }
       // Answered for from the next read on, whatever it says. A push landing between the write
       // and that read comes back as `dismissed`, and the press must not stand over it.
-      for (const path of mine) scope.answeredFrom.set(path, scope.answer);
+      for (const path of mine) scope.answeredFrom.add(path);
       deps.refresh(scope.target);
     });
   };
@@ -154,10 +148,8 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
     if (scope === undefined) {
       const listeners = new Set<() => void>();
       let created: FilesViewedScope | undefined;
-      let initial: PullRequestFilesViewedResult | null = null;
       const unsubscribeAnswers = deps.subscribeAnswers(target, (answer) => {
-        if (created === undefined) initial = answer;
-        else settle(created, answer);
+        if (created !== undefined) settle(created, answer);
       });
       created = {
         target,
@@ -168,8 +160,7 @@ export function createFilesViewedStore(deps: FilesViewedStoreDeps) {
         sentBy: new Map(),
         requests: 0,
         timer: null,
-        answer: initial,
-        answeredFrom: new Map(),
+        answeredFrom: new Set(),
       };
       scope = created;
       scopes.set(key, scope);

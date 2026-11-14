@@ -144,7 +144,7 @@ it("opens a collapsed ordinary comment group for an issue comment link", async (
   await vi.waitFor(() =>
     expect(document.activeElement?.textContent).toContain("Linked conversation comment"),
   );
-  expect(handled).toHaveBeenCalledWith("issue");
+  await vi.waitFor(() => expect(handled).toHaveBeenCalledWith("issue"));
 });
 
 it("scrolls a late comment request inside a long collapsed conversation into the viewport", async () => {

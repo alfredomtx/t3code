@@ -204,7 +204,7 @@ describe("GitHubMediaFetch", () => {
           { url: fixture.signedUrls[0] },
           { url: fixture.signedUrls[0], range: "bytes=2-5" },
         ]);
-      }).pipe(Effect.provide(fixture.layer), Effect.scoped);
+      }).pipe(Effect.provide(fixture.layer));
     },
   );
 
@@ -218,7 +218,7 @@ describe("GitHubMediaFetch", () => {
       expect(fixture.rendered.map((input) => input.body)).toEqual([
         { text: `![](${url})`, mode: "gfm", context: PR_REPOSITORY },
       ]);
-    }).pipe(Effect.provide(fixture.layer), Effect.scoped);
+    }).pipe(Effect.provide(fixture.layer));
   });
 
   it.effect("renders a fresh signed URL after an account switch, early expiry, or its TTL", () => {
@@ -240,7 +240,7 @@ describe("GitHubMediaFetch", () => {
       yield* fetchMedia(request);
       expect(fixture.rendered).toHaveLength(4);
       expect(fixture.requests.at(-1)?.url).toBe(fixture.signedUrls.at(-1));
-    }).pipe(Effect.provide(fixture.layer), Effect.scoped);
+    }).pipe(Effect.provide(fixture.layer));
   });
 });
 

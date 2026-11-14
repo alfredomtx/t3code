@@ -2,6 +2,11 @@ import * as Migrator from "effect/sql/Migrator";
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
+  DATABASE_MIGRATION_PROGRESS_MESSAGE,
+  DATABASE_MIGRATIONS_FINISHED_MESSAGE,
+  DATABASE_MIGRATIONS_STARTED_MESSAGE,
+} from "@t3tools/shared/databaseMigrationLog";
+import {
   reconciledV2PreviewHistory,
   reconcileV2PreviewMigration,
 } from "./reconcileV2PreviewMigration.ts";
@@ -92,6 +97,12 @@ import Migration0083 from "./Migrations/083_TurnItemConversationIndex.ts";
 import Migration0084 from "./Migrations/084_CommandReadIndexes.ts";
 import Migration0085 from "./Migrations/085_LastExecutedRunIndex.ts";
 import Migration0086 from "./Migrations/086_TurnItemCounts.ts";
+import Migration0087 from "./Migrations/087_QueuedTurnInputIndex.ts";
+import Migration0088 from "./Migrations/088_ProjectionProjectsCustomTitle.ts";
+import Migration0089 from "./Migrations/089_TurnItemTypeStatusIndex.ts";
+import Migration0090 from "./Migrations/090_ShellThreadReadIndexes.ts";
+import Migration0091 from "./Migrations/091_AuthConnectDevices.ts";
+import Migration0092 from "./Migrations/092_AuthConnectDeniedRequests.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -181,6 +192,12 @@ const migrationEntries = [
   [84, "CommandReadIndexes", Migration0084],
   [85, "LastExecutedRunIndex", Migration0085],
   [86, "TurnItemCounts", Migration0086],
+  [87, "QueuedTurnInputIndex", Migration0087],
+  [88, "ProjectionProjectsCustomTitle", Migration0088],
+  [89, "TurnItemTypeStatusIndex", Migration0089],
+  [90, "ShellThreadReadIndexes", Migration0090],
+  [91, "AuthConnectDevices", Migration0091],
+  [92, "AuthConnectDeniedRequests", Migration0092],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -226,7 +243,7 @@ export function planMigrationHistory(
       .filter(([id]) => id >= 74)
       .every(
         ([id, name]) =>
-          id <= 85 &&
+          id <= 91 &&
           migrationManifest.some(
             ([personalId, personalName]) => personalId === id + 1 && personalName === name,
           ),
@@ -312,6 +329,8 @@ export interface RunMigrationsOptions {
 export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  // The desktop waits past its readiness budget until the finished line follows this one.
+  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const sql = yield* SqlClient.SqlClient;
@@ -343,7 +362,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const executedMigrations: Array<readonly [id: number, name: string]> = [...reconciledMigrations];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
-      yield* Effect.log("Upgrading database").pipe(
+      yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(
         Effect.annotateLogs({
           migration: `${id}_${name}`,
           progress: `${index + 1} of ${pending.length}`,
@@ -355,7 +374,7 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
     ? Effect.logDebug("Database schema is current")
-    : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
+    : Effect.log(DATABASE_MIGRATIONS_FINISHED_MESSAGE).pipe(Effect.annotateLogs({ migrations }));
 
   const recorded = yield* sql<{
     readonly migration_id: number;

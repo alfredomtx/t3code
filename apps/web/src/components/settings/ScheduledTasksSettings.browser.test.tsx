@@ -17,6 +17,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -46,13 +47,20 @@ const task: ScheduledTask = {
 
 const threadFamilyRead = {
   snapshotSequence: 1,
-  threads: [{ id: ThreadId.make("older-thread"), title: "Fix login bug" }],
+  threads: [
+    {
+      id: ThreadId.make("older-thread"),
+      title: "Fix login bug",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    },
+  ],
 };
 
 const state = vi.hoisted(() => ({
   connected: true,
   tasksLoaded: true,
   secondary: false,
+  remove: vi.fn(),
   supportsPolicy: true,
   task: null as ScheduledTask | null,
   inputs: [] as ScheduledTaskUpsertInput[],
@@ -64,6 +72,7 @@ const state = vi.hoisted(() => ({
 }));
 
 function setup(saved: ScheduledTask = task) {
+  state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: { id: task.id } });
   state.secondary = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -90,6 +99,11 @@ const permissions = new Map<string, Atom.Writable<boolean>>();
 function secondaryEnvironment() {
   return { ...environment(), environmentId: secondaryId, label: "Secondary" };
 }
+
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
 
 function environment() {
   return {
@@ -217,6 +231,10 @@ vi.mock(import("../../state/server"), async (original) => {
         Atom.make(
           AsyncResult.success({ tasks: state.tasksLoaded && state.task ? [state.task] : [] }),
         ),
+      deleteScheduledTask: {
+        ...actual.serverEnvironment.deleteScheduledTask,
+        run: state.remove,
+      },
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
@@ -297,8 +315,13 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
   const { AsyncResult } = await import("effect/reactivity");
   return {
     ...(await original()),
-    useAtomCommand: (() =>
-      async ({ input }: { input: ScheduledTaskUpsertInput }) => {
+    useAtomCommand: ((command: unknown) =>
+      async (request: { environmentId: EnvironmentId; input: ScheduledTaskUpsertInput }) => {
+        const { serverEnvironment } = await import("../../state/server");
+        if (command === serverEnvironment.deleteScheduledTask) {
+          return state.remove(command, request);
+        }
+        const { input } = request;
         state.inputs.push(input);
         state.task = {
           ...state.task!,
@@ -312,6 +335,34 @@ vi.mock(import("../../state/use-atom-command"), async (original) => {
 });
 
 describe("ScheduledTasksSettings", () => {
+  it("only deletes a scheduled task after confirmation, including after cancelling", async () => {
+    setup();
+    await using screen = await render(
+      <>
+        <ScheduledTasksSettings />
+        <ConfirmDialogHost />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+    expect(state.remove).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+    expect(state.remove).not.toHaveBeenCalled();
+    await expect
+      .element(screen.getByRole("button", { name: "Actions for Review issues" }))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await userEvent.click(page.getByRole("button", { name: "Confirm", exact: true }));
+    await vi.waitFor(() =>
+      expect(state.remove).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId,
+        input: { id: task.id },
+      }),
+    );
+  });
+
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;
@@ -366,6 +417,20 @@ describe("ScheduledTasksSettings", () => {
     notify();
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
     await expect.element(name).toHaveValue("Review stale issues");
+  });
+
+  it("offers no model choice for a task bound to a thread, whose runs use the thread's model", async () => {
+    setup({ ...task, threadId: ThreadId.make("older-thread") });
+    state.threadSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" };
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
+    const enabledPicker = document.querySelector(
+      '[role="dialog"] [data-chat-provider-model-picker]:not(:disabled)',
+    );
+    expect(enabledPicker).toBeNull();
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "Other model", exact: true }))
+      .toBeDisabled();
   });
 
   it("keeps an editor the user opened when the linked task loads later", async () => {

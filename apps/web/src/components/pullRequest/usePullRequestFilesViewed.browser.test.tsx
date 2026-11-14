@@ -11,16 +11,29 @@ const mocked = await vi.hoisted(async () => {
   const data = Atom.family((_number: number) =>
     Atom.make<PullRequestFilesViewedResult>({ files: [], truncated: false }),
   );
+  const answers = new Map<number, Set<(answer: PullRequestFilesViewedResult) => void>>();
   const viewed = Atom.family((number: number) =>
-    Atom.make((get) => AsyncResult.success(get(data(number)))),
+    Atom.make((get) => {
+      const answer = get(data(number));
+      for (const listener of answers.get(number) ?? []) listener(answer);
+      return AsyncResult.success(answer);
+    }),
   );
-  return { data, viewed, permission: Atom.make(true), command: vi.fn(), execute: vi.fn() };
+  return { data, viewed, answers, permission: Atom.make(true), command: vi.fn(), execute: vi.fn() };
 });
 vi.mock(import("~/state/use-atom-command"), () => ({ useAtomCommand: () => mocked.command }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
   return {
     ...actual,
+    subscribePullRequestFilesViewedAnswers: ({ input }, listener) => {
+      let listeners = mocked.answers.get(input.number);
+      if (!listeners) mocked.answers.set(input.number, (listeners = new Set()));
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
       filesViewed: ({ input }) => mocked.viewed(input.number),

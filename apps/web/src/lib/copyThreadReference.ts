@@ -10,17 +10,11 @@ import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 export async function copyThreadReference(target: ThreadReferenceCopyTarget): Promise<boolean> {
   const fragment = target.fragment ? encodeComposerContextFragment(target.fragment) : null;
   try {
-    const didCopy = await writeTextToClipboard(
+    await writeTextToClipboard(
       target.value,
       target.clipboardTarget,
       fragment ? { [COMPOSER_CONTEXT_CLIPBOARD_MIME]: fragment } : undefined,
     );
-    if (!didCopy) return false;
-    toastManager.add({
-      type: "success",
-      title: target.successTitle,
-      description: target.description,
-    });
     return true;
   } catch (error) {
     console.error(error);

@@ -21,6 +21,12 @@ import TurnItemConversationIndex from "./Migrations/083_TurnItemConversationInde
 import CommandReadIndexes from "./Migrations/084_CommandReadIndexes.ts";
 import LastExecutedRunIndex from "./Migrations/085_LastExecutedRunIndex.ts";
 import TurnItemCounts from "./Migrations/086_TurnItemCounts.ts";
+import QueuedTurnInputIndex from "./Migrations/087_QueuedTurnInputIndex.ts";
+import ProjectionProjectsCustomTitle from "./Migrations/088_ProjectionProjectsCustomTitle.ts";
+import TurnItemTypeStatusIndex from "./Migrations/089_TurnItemTypeStatusIndex.ts";
+import ShellThreadReadIndexes from "./Migrations/090_ShellThreadReadIndexes.ts";
+import AuthConnectDevices from "./Migrations/091_AuthConnectDevices.ts";
+import AuthConnectDeniedRequests from "./Migrations/092_AuthConnectDeniedRequests.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -42,7 +48,24 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect.each([74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85])(
+  it.effect("upgrades published Personal history through 86 without reusing its ids", () =>
+    Effect.gen(function* () {
+      yield* runMigrations({ toMigrationInclusive: 86 });
+      const published = yield* history;
+      assert.deepStrictEqual(
+        published,
+        migrationManifest.filter(([id]) => id <= 86),
+      );
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 87),
+      );
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect.each([74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91])(
     "upgrades official history through %s without repeating schema changes",
     (head) =>
       Effect.gen(function* () {
@@ -61,6 +84,12 @@ describe("runMigrations", () => {
           [83, "CommandReadIndexes", CommandReadIndexes],
           [84, "LastExecutedRunIndex", LastExecutedRunIndex],
           [85, "TurnItemCounts", TurnItemCounts],
+          [86, "QueuedTurnInputIndex", QueuedTurnInputIndex],
+          [87, "ProjectionProjectsCustomTitle", ProjectionProjectsCustomTitle],
+          [88, "TurnItemTypeStatusIndex", TurnItemTypeStatusIndex],
+          [89, "ShellThreadReadIndexes", ShellThreadReadIndexes],
+          [90, "AuthConnectDevices", AuthConnectDevices],
+          [91, "AuthConnectDeniedRequests", AuthConnectDeniedRequests],
         ] as const;
         for (const [id, name, migration] of official) {
           if (id > head) break;
