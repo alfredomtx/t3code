@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
 import { RegistryContext } from "@effect/atom-react";
 import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { sha256 } from "@noble/hashes/sha2";
+import { bytesToHex } from "@noble/hashes/utils";
 import {
   EnvironmentId,
   ProjectId,
@@ -12,6 +14,7 @@ import {
 import { expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
+import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
 const {
   filePatch,
@@ -36,9 +39,14 @@ const {
       "index 1111111..2222222 100644",
       `--- a/${path}`,
       `+++ b/${path}`,
-      "@@ -1 +1 @@",
+      "@@ -1,6 +1,6 @@",
       "-before()",
       "+after()",
+      " one()",
+      " two()",
+      " three()",
+      " four()",
+      " five()",
       "",
     ].join("\n");
   const firstPage: PullRequestDiffResult = {
@@ -231,6 +239,9 @@ function setup(
   );
   return {
     registry,
+    wrap: (node: import("react").ReactNode) => (
+      <RegistryContext.Provider value={registry}>{node}</RegistryContext.Provider>
+    ),
     tab: (refreshToken: number, props: Partial<Parameters<typeof PullRequestCodeTab>[0]> = {}) => (
       <RegistryContext.Provider value={registry}>
         {tab(refreshToken, {
@@ -559,6 +570,35 @@ it.each(["headSha", "updatedAt"] as const)(
     expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "new.md", viewed: true }]);
   },
 );
+// regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
+it("keeps a revealed file open when its Viewed mark loads afterwards", async () => {
+  using fixture = setup({ files: [], truncated: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(fixture.tab(0, { revealRequest: { path: "a.ts", nonce: 1 } }), {
+    container,
+  });
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+
+  await act(() =>
+    fixture.registry.set(
+      filesViewedState,
+      AsyncResult.success({ files: [{ path: "a.ts", state: "viewed" }], truncated: false }),
+    ),
+  );
+  await expect.element(screen.getByRole("checkbox", { name: "Viewed" })).toBeChecked();
+
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff" }))
+    .toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+});
 
 function pagedContainer() {
   const container = document.createElement("div");
@@ -606,7 +646,9 @@ it("scrolls to a file asked for as the tab opens", async () => {
 it("pages forward to a file asked for that is not loaded yet, then scrolls to it", async () => {
   using fixture = setup(null, {
     patch: {
-      patch: Array.from({ length: 40 }, (_, index) => filePatch(`early-${index}.ts`)).join(""),
+      patch: Array.from({ length: 40 }, (_, index) =>
+        filePatch(index === 1 ? "early-1.test.ts" : `early-${index}.ts`),
+      ).join(""),
       truncated: true,
       nextCursor: "page-2",
     },
@@ -614,15 +656,31 @@ it("pages forward to a file asked for that is not loaded yet, then scrolls to it
   });
   fixture.registry.set(
     diffPagesAtom,
-    new Map([["page-2", { patch: filePatch("late.ts"), truncated: false, nextCursor: null }]]),
+    new Map([["page-2", { patch: filePatch("late.test.ts"), truncated: false, nextCursor: null }]]),
   );
+  __setClientSettingsForTests({ ...getClientSettings(), diffFilesCollapsed: true });
   const container = pagedContainer();
   await using screen = await render(fixture.tab(0), { container });
   await expect.element(screen.getByText("early-0.ts", { exact: true }).first()).toBeVisible();
 
-  await screen.rerender(fixture.tab(0, { revealRequest: { path: "late.ts", nonce: 1 } }));
+  const url = `${detail.url}/files#diff-${bytesToHex(sha256(new TextEncoder().encode("late.test.ts")))}R4-R5`;
+  const settled = vi.fn();
+  await screen.rerender(fixture.tab(0, { revealUrl: url, onRevealSettled: settled }));
 
-  await expectFileHeaderShown(screen, container, "late.ts");
+  await expectFileHeaderShown(screen, container, "late.test.ts");
+  await expect.element(screen.getByText("three()", { exact: true })).toBeVisible();
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+  // A later click reveals the same linked file again.
+  await screen.rerender(fixture.tab(0, { revealRequest: { path: "early-0.ts", nonce: 1 } }));
+  await expectFileHeaderShown(screen, container, "early-0.ts");
+  await screen.rerender(
+    fixture.tab(0, {
+      revealRequest: { path: "early-0.ts", nonce: 1 },
+      revealUrl: url,
+      onRevealSettled: settled,
+    }),
+  );
+  await expectFileHeaderShown(screen, container, "late.test.ts");
 });
 
 it("never requests the diff of a selected commit the pull request no longer has", async () => {
@@ -733,4 +791,130 @@ it("restores a scrolled PR after the viewer unmounts for another thread", async 
   await vi.waitFor(() =>
     expect(secondContainer.querySelector(".diff-render-surface")?.scrollTop).toBeGreaterThan(700),
   );
+});
+
+it("answers a commit's diff link only once that commit's diff is shown", async () => {
+  using fixture = setup({ files: [], truncated: false });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const oid = "c".repeat(40);
+  const withCommit = {
+    ...detail,
+    commits: [{ oid, messageHeadline: "Linked commit", committedDate: "2026-09-01T00:00:00Z" }],
+  };
+  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("a.ts")))}R2`;
+  const settled = vi.fn();
+  const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={withCommit}
+      selectedCommitOid={selectedCommitOid}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+      revealUrl={revealUrl}
+      onRevealSettled={settled}
+    />
+  );
+  await using screen = await render(fixture.wrap(scoped(null)), { container });
+  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+
+  // The panel selects the link's commit after this tab has already seen the link.
+  await screen.rerender(fixture.wrap(scoped(null, url)));
+  expect(settled).not.toHaveBeenCalled();
+  await screen.rerender(fixture.wrap(scoped(oid, url)));
+  await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
+});
+
+it("hides a resolved conversation behind avatars on its line until they are clicked", async () => {
+  using fixture = setup({ files: [], truncated: false });
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+  using _preferences = {
+    [Symbol.dispose]() {
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    },
+  };
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  const comment = {
+    author: { login: "reviewer", name: null, avatarUrl: null },
+    body: "Rename this.",
+    createdAt: "2026-09-01T00:00:00Z",
+    url: null,
+  };
+  const withThread = (isResolved: boolean, oldSideToo = false) => (
+    <PullRequestCodeTab
+      scrollerRef={() => {}}
+      environmentId={EnvironmentId.make("environment")}
+      reference={detail}
+      detail={{
+        ...detail,
+        capabilities: {
+          ...detail.capabilities,
+          review: { ...detail.capabilities.review, reply: true },
+        },
+        viewerPermissions: { ...detail.viewerPermissions, comment: true },
+        reviewThreads: [
+          {
+            id: "thread",
+            path: "a.ts",
+            line: 3,
+            side: "right",
+            isResolved,
+            isOutdated: false,
+            comments: [{ id: "comment", ...comment }],
+          },
+          ...(oldSideToo
+            ? [
+                {
+                  id: "old-side",
+                  path: "a.ts",
+                  line: 3,
+                  side: "left" as const,
+                  isResolved: true,
+                  isOutdated: false,
+                  comments: [{ id: "old-side-comment", ...comment }],
+                },
+              ]
+            : []),
+        ],
+      }}
+      selectedCommitOid={null}
+      onSelectedCommitChange={() => {}}
+      onRefresh={() => {}}
+    />
+  );
+  await using screen = await render(fixture.wrap(withThread(true)), { container });
+  const marker = screen.getByRole("button", { name: "Resolved conversation", exact: true });
+  const card = (state: string) => screen.getByRole("button", { name: `${state} · 1 comment` });
+  const reply = () => screen.getByRole("textbox", { name: "Reply to this conversation" });
+
+  await expect.element(marker).toHaveAttribute("aria-expanded", "false");
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+
+  await marker.click();
+  await expect.element(marker).toHaveAttribute("aria-expanded", "true");
+  await expect.element(card("Resolved")).toHaveAttribute("aria-expanded", "true");
+  await screen.getByRole("button", { name: "Reply", exact: true }).click();
+  await reply().fill("Unsent");
+
+  // Hidden conversations stay mounted, so the unsent reply is still there.
+  await marker.click();
+  await expect.element(card("Resolved")).not.toBeInTheDocument();
+  await marker.click();
+  await expect.element(reply()).toHaveValue("Unsent");
+  await marker.click();
+
+  // Seen open and then resolved, it stays until the avatars are clicked.
+  await screen.rerender(fixture.wrap(withThread(false)));
+  await expect.element(card("Open")).toBeVisible();
+  await screen.rerender(fixture.wrap(withThread(true)));
+  await expect.element(card("Resolved")).toBeVisible();
+
+  // Stacked view draws a context row once, so both sides' conversations share the avatars.
+  await screen.rerender(fixture.wrap(withThread(true, true)));
+  await expect
+    .element(screen.getByRole("button", { name: "2 resolved conversations" }))
+    .toBeVisible();
 });

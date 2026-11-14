@@ -114,7 +114,9 @@ describe("revertFileViewedOverlay", () => {
 describe("toFileViewedBatch", () => {
   it.each([501, 1001])("bounds each drain of %i paths to 500", async (count) => {
     const { toFileViewedBatch } = await import("./pullRequestFilesViewed.logic");
-    const queued = new Map(Array.from({ length: count }, (_, n) => [`${n}.ts`, true]));
+    const queued = new Map(
+      Array.from({ length: count }, (_, n) => [`${n}.ts`, { viewed: true, revision: undefined }]),
+    );
     const sizes: number[] = [];
     while (queued.size > 0) {
       const batch = toFileViewedBatch(queued);

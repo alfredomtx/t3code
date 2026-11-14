@@ -23,7 +23,7 @@ export function isFileDiffCollapsed(
   fileKey: string,
   foldOverride: DiffFoldOverride,
   choices: FileFoldChoices,
-  defaultCollapsed: boolean,
+  defaultCollapsed = false,
 ): boolean {
   return (
     choices.get(fileKey) ?? (foldOverride === null ? defaultCollapsed : foldOverride === "folded")

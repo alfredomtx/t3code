@@ -21,9 +21,12 @@ import { shouldShowOpenInPicker } from "./OpenInPicker.logic";
 
 const state = vi.hoisted(() => ({
   allowed: new Set<string>(),
-  remoteInput: { route: null, remoteOpenTargets: [], isDesktopRenderer: true } as Parameters<
-    typeof resolveRemoteOpenState
-  >[0],
+  remoteInput: {
+    route: null,
+    remoteOpenTargets: [],
+    isDesktopRenderer: true,
+    hostEnvironmentId: null,
+  } as Parameters<typeof resolveRemoteOpenState>[0],
   useCommand: vi.fn(),
   clientEditors: ["vscode"] as readonly EditorId[],
   run: vi.fn(),
@@ -98,7 +101,12 @@ const editors: readonly EditorId[] = ["vscode"];
 
 async function setup() {
   state.allowed.clear();
-  state.remoteInput = { route: null, remoteOpenTargets: [], isDesktopRenderer: true };
+  state.remoteInput = {
+    route: null,
+    remoteOpenTargets: [],
+    isDesktopRenderer: true,
+    hostEnvironmentId: null,
+  };
   state.useCommand.mockReset();
   state.clientEditors = editors;
   state.run.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -243,7 +251,12 @@ describe("saved local service editor action", () => {
         [Symbol.dispose]: registry.mount(serverEnvironment.configValueAtom(selected)),
       };
       await using fixture = await setup();
-      state.remoteInput = { route, remoteOpenTargets: [], isDesktopRenderer: true };
+      state.remoteInput = {
+        route,
+        remoteOpenTargets: [],
+        isDesktopRenderer: true,
+        hostEnvironmentId: null,
+      };
       state.allowed.add(allowed ? selected : primary);
       function ParentEditorControls() {
         const availableEditors = useAtomValue(serverAvailableEditorsAtom(selected));
@@ -316,12 +329,53 @@ describe("remote editor links", () => {
       },
       remoteOpenTargets: [],
       isDesktopRenderer: true,
+      hostEnvironmentId: null,
     };
+    state.openUrl.mockResolvedValueOnce(false);
     await act(async () => screen.rerender(<FavoriteEditorFallback />));
 
     expect((await pressOpenFavorite()).defaultPrevented).toBe(true);
     expect(state.openUrl).toHaveBeenCalledWith(expect.stringContaining("ssh-remote+sol"));
     expect(state.run).not.toHaveBeenCalled();
+  });
+
+  it("explains why a phone or tablet browser has no editor to open", async () => {
+    await using fixture = await setup();
+    const { renderPicker, byLabel, primaryButton, menuItems, click, pressOpenFavorite } = fixture;
+    const target = new SshConnectionTarget({
+      environmentId: selected,
+      label: "sol",
+      connectionId: "ssh-sol",
+    });
+    state.remoteInput = {
+      route: {
+        target,
+        profile: Option.some(
+          new SshConnectionProfile({
+            environmentId: selected,
+            label: target.label,
+            connectionId: target.connectionId,
+            target: { alias: "sol", username: null, hostname: "127.0.0.1", port: null },
+          }),
+        ),
+      },
+      remoteOpenTargets: [],
+      isDesktopRenderer: true,
+      hostEnvironmentId: null,
+    };
+    state.clientEditors = [];
+    await renderPicker();
+
+    expect(primaryButton().disabled).toBe(true);
+    expect((await pressOpenFavorite()).defaultPrevented).toBe(false);
+    await click(byLabel("Choose editor"));
+    await vi.waitFor(() =>
+      expect(menuItems().map((item) => item.textContent)).toEqual([
+        "Open from a computer to edit on Test host",
+      ]),
+    );
+    expect(menuItems()[0]!.getAttribute("aria-disabled")).toBe("true");
+    expect(state.openUrl).not.toHaveBeenCalled();
   });
 });
 

@@ -16,6 +16,12 @@ import DropCorrelationIndex from "./Migrations/079_DropOrchestrationEventCorrela
 import DelegatedRecoveryIndexes from "./Migrations/080_DelegatedRecoveryIndexes.ts";
 import ScheduledTaskThreadMode from "./Migrations/081_ScheduledTaskThreadMode.ts";
 
+import ProjectionMessageSearchText from "./Migrations/082_ProjectionMessageSearchText.ts";
+import TurnItemConversationIndex from "./Migrations/083_TurnItemConversationIndex.ts";
+import CommandReadIndexes from "./Migrations/084_CommandReadIndexes.ts";
+import LastExecutedRunIndex from "./Migrations/085_LastExecutedRunIndex.ts";
+import TurnItemCounts from "./Migrations/086_TurnItemCounts.ts";
+
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
 
@@ -36,7 +42,7 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect.each([74, 75, 76, 77, 78, 79, 80])(
+  it.effect.each([74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85])(
     "upgrades official history through %s without repeating schema changes",
     (head) =>
       Effect.gen(function* () {
@@ -50,6 +56,11 @@ describe("runMigrations", () => {
           [78, "DropOrchestrationEventCorrelationIndex", DropCorrelationIndex],
           [79, "DelegatedRecoveryIndexes", DelegatedRecoveryIndexes],
           [80, "ScheduledTaskThreadMode", ScheduledTaskThreadMode],
+          [81, "ProjectionMessageSearchText", ProjectionMessageSearchText],
+          [82, "TurnItemConversationIndex", TurnItemConversationIndex],
+          [83, "CommandReadIndexes", CommandReadIndexes],
+          [84, "LastExecutedRunIndex", LastExecutedRunIndex],
+          [85, "TurnItemCounts", TurnItemCounts],
         ] as const;
         for (const [id, name, migration] of official) {
           if (id > head) break;
@@ -236,6 +247,36 @@ describe("runMigrations", () => {
       );
       assert.notInclude(String(exit), "57_ScheduledTaskWebhooks");
       assert.deepStrictEqual(yield* history, before);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("keeps the migrations that finished before a later one failed", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 82 });
+      yield* sql`CREATE TABLE orchestration_v2_projection_turn_item_counts (thread_id TEXT)`;
+
+      const exit = yield* Effect.exit(runMigrations());
+
+      assert.isTrue(Exit.isFailure(exit));
+      assert.deepStrictEqual(
+        yield* history,
+        migrationManifest.filter(([id]) => id <= 85),
+      );
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
+  it.effect("reapplies peer link migrations whose ledger rows are missing", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 72 });
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id BETWEEN 70 AND 72`;
+
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 70),
+      );
+      assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

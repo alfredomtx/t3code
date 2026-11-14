@@ -75,6 +75,17 @@ describe("isFileDiffCollapsed", () => {
       ).toBe(true);
     }
   });
+
+  it("folds a file marked Viewed when the Code tab mounts again with no fold choices", () => {
+    expect(isFileDiffCollapsed("a.ts", null, new Map(), true)).toBe(true);
+    expect(isFileDiffCollapsed("a.ts", null, new Map(), false)).toBe(false);
+  });
+
+  it("keeps a reader's choice when the file's Viewed mark loads later", () => {
+    const choices = new Map([["a.ts", false]]);
+    expect(isFileDiffCollapsed("a.ts", null, choices, false)).toBe(false);
+    expect(isFileDiffCollapsed("a.ts", null, choices, true)).toBe(false);
+  });
 });
 
 describe("setFileDiffCollapsed", () => {
@@ -83,6 +94,13 @@ describe("setFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", folded, false)).toBe(true);
     const expanded = setFileDiffCollapsed("a.ts", false, folded);
     expect(isFileDiffCollapsed("a.ts", "folded", expanded, true)).toBe(false);
+  });
+
+  it("records an absolute choice and keeps the same map when nothing changes", () => {
+    const folded = setFileDiffCollapsed("a.ts", true, new Map());
+    expect(folded.get("a.ts")).toBe(true);
+    expect(setFileDiffCollapsed("a.ts", true, folded)).toBe(folded);
+    expect(setFileDiffCollapsed("a.ts", false, folded).get("a.ts")).toBe(false);
   });
 
   it("retains an explicit reveal through late viewed data and repeated reveals", () => {

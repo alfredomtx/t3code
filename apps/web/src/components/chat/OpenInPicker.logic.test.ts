@@ -80,3 +80,29 @@ describe("parent editor picker visibility", () => {
     ).toBe(false);
   });
 });
+
+describe("shouldShowOpenInPicker", () => {
+  it("shows both local environments when the primary has a separate WSL home", () => {
+    const primaryEnvironmentId = EnvironmentId.make("wsl");
+    const hostEnvironmentId = EnvironmentId.make("host");
+    for (const [activeThreadEnvironmentId, visible] of [
+      [primaryEnvironmentId, true],
+      [hostEnvironmentId, true],
+      [EnvironmentId.make("other"), false],
+    ] as const) {
+      expect(
+        shouldShowOpenInPicker({
+          hasOpenTarget: true,
+          target: new BearerConnectionTarget({
+            environmentId: activeThreadEnvironmentId,
+            label: "Local",
+            connectionId: "local:wsl:Ubuntu",
+          }),
+          primaryEnvironmentId,
+          hostEnvironmentId,
+          remoteOpenMode: "local-exec",
+        }),
+      ).toBe(visible);
+    }
+  });
+});

@@ -79,6 +79,8 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
+      /** A clicked link waiting for the panel to show where it points; cleared once shown. */
+      revealUrl?: string;
       detailTab?: PullRequestDetailTab;
       commitRequest?: PullRequestCommitRequest;
       commentRequest?: PullRequestCommentRequest;
@@ -156,6 +158,8 @@ interface RightPanelStoreState {
       repository: string;
       number: number;
       url?: string;
+      /** A clicked link to reveal; reopening a surface passes only its `url`. */
+      revealUrl?: string;
       detailTab?: PullRequestDetailTab;
       commitRequest?: PullRequestCommitRequest;
       commentRequest?: PullRequestCommentRequest;
@@ -176,6 +180,8 @@ interface RightPanelStoreState {
     surfaceId: string,
     detailTab: PullRequestDetailTab,
   ) => void;
+  /** Clears the surface's pending link only while it is still `revealUrl`. */
+  settlePullRequestReveal: (ref: ScopedThreadRef, surfaceId: string, revealUrl: string) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
     ref: ScopedThreadRef,
@@ -316,6 +322,18 @@ export function pullRequestSurface(target: {
     ...(target.commentRequest === undefined ? {} : { commentRequest: target.commentRequest }),
   };
 }
+
+/** A pending link belongs to the click that made it, not to a reload or a reopen. */
+const withoutReveal = (surface: RightPanelSurface): RightPanelSurface => {
+  if (surface.kind !== "pull-request") return surface;
+  const {
+    revealUrl: _pending,
+    commentRequest: _commentRequest,
+    commitRequest: _commitRequest,
+    ...rest
+  } = surface;
+  return rest;
+};
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -776,20 +794,22 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           userAction(state, scopedThreadKey(ref), (current) => {
             const surface = pullRequestSurface(target);
             const next = upsertSurface(current, surface);
-            return target.url || target.commitRequest || target.commentRequest
-              ? {
-                  ...next,
-                  surfaces: next.surfaces.map((entry) => {
-                    if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
-                    const {
-                      commitRequest: _commitRequest,
-                      commentRequest: _commentRequest,
-                      ...rest
-                    } = entry;
-                    return { ...rest, ...surface };
-                  }),
-                }
-              : next;
+            const { url, revealUrl } = target;
+            if (!url && !revealUrl && !target.commitRequest && !target.commentRequest) return next;
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => {
+                if (entry.id !== surface.id || entry.kind !== "pull-request") return entry;
+                // A later link replaces one not yet shown.
+                const {
+                  revealUrl: _previous,
+                  commitRequest: _commitRequest,
+                  commentRequest: _commentRequest,
+                  ...rest
+                } = entry;
+                return { ...rest, ...surface, ...(revealUrl ? { revealUrl } : {}) };
+              }),
+            };
           }),
         ),
       consumePullRequestCommentRequest: (ref, surfaceId, requestId) =>
@@ -840,6 +860,20 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               surface.id === surfaceId && surface.kind === "pull-request"
                 ? { ...surface, detailTab }
                 : surface,
+            ),
+          }));
+        }),
+      settlePullRequestReveal: (ref, surfaceId, revealUrl) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (existing?.kind !== "pull-request" || existing.revealUrl !== revealUrl) return state;
+          return automaticUpdate(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId ? withoutReveal(surface) : surface,
             ),
           }));
         }),
@@ -1226,19 +1260,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
       ),
       partialize: (state) => ({
         byThreadKey: Object.fromEntries(
-          Object.entries(state.byThreadKey)
-            .filter(([threadKey]) => !isPullRequestsPanelKey(threadKey))
-            .map(([threadKey, panel]) => [
-              threadKey,
-              {
-                ...panel,
-                surfaces: panel.surfaces.map((surface) => {
-                  if (surface.kind !== "pull-request") return surface;
-                  const { commentRequest: _commentRequest, ...persisted } = surface;
-                  return persisted;
-                }),
-              },
-            ]),
+          Object.entries(state.byThreadKey).flatMap(([threadKey, threadState]) =>
+            isPullRequestsPanelKey(threadKey)
+              ? []
+              : [
+                  [
+                    threadKey,
+                    { ...threadState, surfaces: threadState.surfaces.map(withoutReveal) },
+                  ],
+                ],
+          ),
         ),
         threadPanelVisibilityByThreadKey: Object.fromEntries(
           Object.entries(state.threadPanelVisibilityByThreadKey).flatMap(
@@ -1267,7 +1298,7 @@ useRightPanelStore.subscribe((next, previous) => {
       ...removed.filter((surface) => surface.id !== before.activeSurfaceId),
       ...removed.filter((surface) => surface.id === before.activeSurfaceId),
     ];
-    for (const surface of closedInOrder) {
+    for (const surface of closedInOrder.map(withoutReveal)) {
       if (
         surface.kind === "terminal" ||
         (surface.kind === "preview" && surface.resourceId !== null)

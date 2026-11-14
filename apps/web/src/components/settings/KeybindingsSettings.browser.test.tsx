@@ -168,6 +168,7 @@ it("removes server-origin custom tab shortcuts through their server owner", asyn
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   setup();
+  setup();
   await using screen = await render(<KeybindingsSettingsPanel />);
   const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
   const expression = screen.getByRole("textbox", { name: "When expression" });
@@ -251,4 +252,42 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+});
+
+it("Esc in the keybindings search clears the query without closing Settings", async () => {
+  setup();
+  const onOpenChange = vi.fn();
+  await using _screen = await render(
+    <Dialog open onOpenChange={onOpenChange}>
+      <DialogPopup>
+        <DialogTitle>Settings</DialogTitle>
+        <KeybindingsSettingsPanel />
+      </DialogPopup>
+    </Dialog>,
+  );
+  const search = page.getByRole("searchbox", { name: "Search keybindings" });
+  await search.fill("sidebar");
+
+  await userEvent.keyboard("{Escape}");
+
+  await expect.element(search).toHaveValue("");
+  expect(onOpenChange).not.toHaveBeenCalled();
+});
+
+it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
+  setup();
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
+  const expression = screen.getByRole("textbox", { name: "When expression" });
+
+  await whenTrigger.click();
+  await userEvent.type(expression, "terminalFocus");
+  await userEvent.type(expression, " &&");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+
+  await userEvent.keyboard("{Escape}");
+  await whenTrigger.click();
+
+  await expect.element(expression).toHaveValue("terminalFocus");
+  await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
 });

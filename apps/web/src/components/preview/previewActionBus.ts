@@ -4,13 +4,14 @@ export const PREVIEW_COMMAND_ACTIONS = [
   ["preview.toggle", "toggle-panel"],
   ["preview.refresh", "refresh"],
   ["preview.focusUrl", "focus-url"],
+  ["preview.find", "find"],
   ["preview.zoomIn", "zoom-in"],
   ["preview.zoomOut", "zoom-out"],
   ["preview.resetZoom", "reset-zoom"],
 ] as const satisfies ReadonlyArray<readonly [KeybindingCommand, string]>;
 
 export const PREVIEW_COMMANDS = PREVIEW_COMMAND_ACTIONS.map(([command]) => command);
-export type PreviewAction = (typeof PREVIEW_COMMAND_ACTIONS)[number][1];
+export type PreviewAction = (typeof PREVIEW_COMMAND_ACTIONS)[number][1] | "back" | "forward";
 
 const EVENT_NAME = "t3code:preview-action";
 

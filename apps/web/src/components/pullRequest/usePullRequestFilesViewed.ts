@@ -19,7 +19,7 @@ import {
 } from "./pullRequestFilesViewed.logic";
 
 const FLUSH_DELAY_MS = 400;
-type ViewedChange = { readonly path: string; readonly viewed: boolean };
+type ViewedChange = { readonly path: string; readonly viewed: boolean; readonly revision?: string };
 type Outcome = "confirmed" | "failed" | "uncertain" | "superseded";
 export type ViewedUndoReceipt = { readonly id: number };
 export type BulkViewedResult = {
@@ -36,7 +36,7 @@ type IntentPolicy =
   | { readonly kind: "undo"; readonly expectedViewed: boolean };
 type Intent = ViewedChange &
   IntentPolicy & {
-    readonly revision: number;
+    readonly intentId: number;
     readonly finish: (outcome: Outcome) => void;
   };
 type UndoEntry = Intent & { readonly previous: boolean };
@@ -193,7 +193,7 @@ export function usePullRequestFilesViewed(options: {
           ? toFileViewedStates(read.value)
           : null;
       for (const [path, intent] of lane.queued) {
-        const owned = lane.ownership.owners.get(path) === intent.revision;
+        const owned = lane.ownership.owners.get(path) === intent.intentId;
         const eligible =
           intent.kind === "manual" ||
           (intent.kind === "automatic" &&
@@ -215,7 +215,12 @@ export function usePullRequestFilesViewed(options: {
       }
       if (lane.queued.size === 0) break;
       const batch = toFileViewedBatch(
-        new Map([...lane.queued].map(([path, intent]) => [path, intent.viewed])),
+        new Map(
+          [...lane.queued].map(([path, intent]) => [
+            path,
+            { viewed: intent.viewed, revision: intent.revision },
+          ]),
+        ),
       );
       const intents = batch.flatMap(({ path }) => {
         const intent = lane.queued.get(path);
@@ -228,7 +233,7 @@ export function usePullRequestFilesViewed(options: {
       });
       const observed = await readAfterWrite(lane);
       for (const intent of intents) {
-        const owned = lane.ownership.owners.get(intent.path) === intent.revision;
+        const owned = lane.ownership.owners.get(intent.path) === intent.intentId;
         if (owned) lane.ownership.overlay.delete(intent.path);
         intent.finish(
           !owned
@@ -261,8 +266,8 @@ export function usePullRequestFilesViewed(options: {
   ) => {
     const lane = laneRef.current;
     lane.queued.get(change.path)?.finish("superseded");
-    const intent = { ...change, ...policy, revision: ++lane.ownership.revision, finish };
-    lane.ownership.owners.set(change.path, intent.revision);
+    const intent = { ...change, ...policy, intentId: ++lane.ownership.revision, finish };
+    lane.ownership.owners.set(change.path, intent.intentId);
     lane.ownership.overlay.set(change.path, change.viewed);
     lane.queued.set(change.path, intent);
     return intent;
@@ -300,7 +305,7 @@ export function usePullRequestFilesViewed(options: {
       for (const [path, intent] of lane.queued) {
         if (intent.kind === "automatic") {
           lane.queued.delete(path);
-          if (lane.ownership.owners.get(path) === intent.revision)
+          if (lane.ownership.owners.get(path) === intent.intentId)
             lane.ownership.overlay.delete(path);
           intent.finish("superseded");
         }
@@ -311,7 +316,7 @@ export function usePullRequestFilesViewed(options: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Retain the shared viewed-file writer and release queued work when this review closes.
   useEffect(() => initializeLane(scopeKey), [scopeKey]);
 
-  const setViewed = useStableCallback((path: string, viewed: boolean) => {
+  const setViewed = useStableCallback((path: string, viewed: boolean, revision?: string) => {
     if (
       !enabled ||
       !registry.get(pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId))
@@ -319,7 +324,7 @@ export function usePullRequestFilesViewed(options: {
       return;
     const lane = laneRef.current;
     options.onManualChanges?.([{ path, viewed }]);
-    enqueue({ path, viewed }, () => {});
+    enqueue({ path, viewed, ...(revision === undefined ? {} : { revision }) }, () => {});
     notify(lane);
     if (lane.timer !== null) clearTimeout(lane.timer);
     lane.timer = setTimeout(() => void drain(lane), FLUSH_DELAY_MS);
@@ -393,7 +398,7 @@ export function usePullRequestFilesViewed(options: {
     const changes = receipt.entries
       .filter(
         (entry) =>
-          lane.ownership.owners.get(entry.path) === entry.revision &&
+          lane.ownership.owners.get(entry.path) === entry.intentId &&
           isFileViewed(entry.path, observed, lane.ownership.overlay) === entry.viewed &&
           !isStaleViewedState(observed?.get(entry.path)),
       )
@@ -446,7 +451,7 @@ export function usePullRequestFilesViewed(options: {
       for (const [path, intent] of lane.queued) {
         if (intent.kind !== "automatic") continue;
         lane.queued.delete(path);
-        if (lane.ownership.owners.get(path) === intent.revision)
+        if (lane.ownership.owners.get(path) === intent.intentId)
           lane.ownership.overlay.delete(path);
         intent.finish("superseded");
       }
