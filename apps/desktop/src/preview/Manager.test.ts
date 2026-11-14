@@ -797,15 +797,40 @@ describe("PreviewManager", () => {
           };
           const preventDefault = vi.fn();
           beforeInput({ preventDefault } as never, key as never);
+          const pageFirst =
+            command === "preview.zoomIn" ||
+            command === "preview.zoomOut" ||
+            command === "preview.resetZoom";
+          const ipcOn = (preview.webContents as Electron.WebContents).ipc.on as ReturnType<
+            typeof vi.fn
+          >;
+          const pageUnhandledShortcut = ipcOn.mock.calls.find(
+            ([channel]) => channel === "preview:page-unhandled-shortcut",
+          )![1];
+          const pageKeys = {
+            key: key.key,
+            code: key.code,
+            metaKey: key.meta,
+            ctrlKey: key.control,
+            shiftKey: key.shift,
+            altKey: key.alt,
+          };
+          if (pageFirst) {
+            expect(send).not.toHaveBeenCalled();
+            expect(preventDefault).not.toHaveBeenCalled();
+            pageUnhandledShortcut({}, pageKeys);
+          }
           expect(send).toHaveBeenCalledExactlyOnceWith("desktop:menu-action", command);
           beforeInput({ preventDefault } as never, { ...key, isAutoRepeat: true } as never);
           expect(send).toHaveBeenCalledOnce();
-          expect(preventDefault).toHaveBeenCalledTimes(2);
+          expect(preventDefault).toHaveBeenCalledTimes(pageFirst ? 0 : 2);
           beforeInput({ preventDefault } as never, { ...key, isComposing: true } as never);
-          expect(preventDefault).toHaveBeenCalledTimes(2);
+          expect(preventDefault).toHaveBeenCalledTimes(pageFirst ? 0 : 2);
           Object.assign(preview.webContents, { focusedFrame: null });
           beforeInput({ preventDefault } as never, key as never);
-          expect(preventDefault).toHaveBeenCalledTimes(2);
+          if (pageFirst) pageUnhandledShortcut({}, pageKeys);
+          expect(send).toHaveBeenCalledOnce();
+          expect(preventDefault).toHaveBeenCalledTimes(pageFirst ? 0 : 2);
           Object.assign(preview.webContents, { focusedFrame: {} });
           yield* manager.setForwardedShortcuts([
             { command, shortcut: parseKeybindingShortcut("mod+c")! },
@@ -814,8 +839,11 @@ describe("PreviewManager", () => {
             { preventDefault } as never,
             { ...key, key: "c", code: "KeyC", shift: false } as never,
           );
+          if (pageFirst) {
+            pageUnhandledShortcut({}, { ...pageKeys, key: "c", code: "KeyC", shiftKey: false });
+          }
           expect(send).toHaveBeenCalledOnce();
-          expect(preventDefault).toHaveBeenCalledTimes(2);
+          expect(preventDefault).toHaveBeenCalledTimes(pageFirst ? 0 : 2);
           beforeInput(
             { preventDefault } as never,
             { ...key, key: "r", code: "KeyR", shift: false } as never,

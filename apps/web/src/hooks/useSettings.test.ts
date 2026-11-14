@@ -41,7 +41,10 @@ describe("following main app preferences", () => {
       clientSettings: { ...DEFAULT_CLIENT_SETTINGS, wordWrap: false },
       themeValues: null,
     });
-    vi.stubGlobal("window", { desktopBridge: { getPersonalSharedPreferences: shared } });
+    vi.stubGlobal(
+      "window",
+      Object.assign(new EventTarget(), { desktopBridge: { getPersonalSharedPreferences: shared } }),
+    );
     await ensureClientSettingsHydrated();
     expect(getClientSettings().wordWrap).toBe(false);
     await persistClientSettingsPatch({ wordWrap: true });
