@@ -220,9 +220,7 @@ it.each([false, true])(
       : primary;
     expect(copied).toBeInstanceOf(HTMLButtonElement);
     expect(copied?.hasAttribute("disabled")).toBe(true);
-    expect(_toast).toHaveBeenCalledWith(
-      expect.objectContaining({ title: "Copied!", positionerProps: { anchor: copied } }),
-    );
+    expect(_toast).not.toHaveBeenCalled();
     expect(pressCopy(editor)).toBe(false);
     expect(write).toHaveBeenCalledTimes(1);
   },
