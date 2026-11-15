@@ -103,6 +103,10 @@ import Migration0089 from "./Migrations/089_TurnItemTypeStatusIndex.ts";
 import Migration0090 from "./Migrations/090_ShellThreadReadIndexes.ts";
 import Migration0091 from "./Migrations/091_AuthConnectDevices.ts";
 import Migration0092 from "./Migrations/092_AuthConnectDeniedRequests.ts";
+import Migration0093 from "./Migrations/093_QueuedTurnInputIndexJsonValid.ts";
+import Migration0094 from "./Migrations/094_ProviderTurnAttemptIndex.ts";
+import Migration0095 from "./Migrations/095_TurnItemMessageOrdinalIndex.ts";
+import Migration0096 from "./Migrations/096_TurnItemInlineWorkOutput.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -198,6 +202,10 @@ const migrationEntries = [
   [90, "ShellThreadReadIndexes", Migration0090],
   [91, "AuthConnectDevices", Migration0091],
   [92, "AuthConnectDeniedRequests", Migration0092],
+  [93, "QueuedTurnInputIndexJsonValid", Migration0093],
+  [94, "ProviderTurnAttemptIndex", Migration0094],
+  [95, "TurnItemMessageOrdinalIndex", Migration0095],
+  [96, "TurnItemInlineWorkOutput", Migration0096],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -243,7 +251,7 @@ export function planMigrationHistory(
       .filter(([id]) => id >= 74)
       .every(
         ([id, name]) =>
-          id <= 91 &&
+          id <= 95 &&
           migrationManifest.some(
             ([personalId, personalName]) => personalId === id + 1 && personalName === name,
           ),

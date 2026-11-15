@@ -151,6 +151,18 @@ describe("link round trips", () => {
       "t3code-personal://threads/env-1/thread-1?prompt=hi",
     );
   });
+
+  it("maps links in browsers without URL.canParse, such as Safari before 17", () => {
+    const canParse = URL.canParse;
+    Reflect.deleteProperty(URL, "canParse");
+    try {
+      expect(promptLinkAppPath("https://app.t3.codes/new?prompt=hi")).toBe("/new?prompt=hi");
+      expect(promptLinkAppPath("https://app.t3.codes/")).toBeNull();
+      expect(promptLinkAppPath("not a url")).toBeNull();
+    } finally {
+      URL.canParse = canParse;
+    }
+  });
 });
 
 it("accepts exact official and personal deep links for remote clients", () => {

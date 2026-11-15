@@ -12,7 +12,7 @@ import {
   type HttpClientResponse,
 } from "effect/http";
 
-import { GITHUB_CREDENTIALED_MEDIA_HOSTS } from "../shared/gitHubMedia.ts";
+import { GITHUB_CREDENTIALED_MEDIA_HOSTS, gitHubLfsMediaUrl } from "../shared/gitHubMedia.ts";
 
 import * as GitHubCredentials from "./GitHubCredentials.ts";
 import * as GitHubRest from "./GitHubRest.ts";
@@ -207,6 +207,23 @@ export const make = Effect.gen(function* () {
       );
       if (fetched === null) return null;
       const type = contentTypeOf(fetched.response);
+      const lfsUrl = gitHubLfsMediaUrl(request.url);
+      if (lfsUrl !== null && type === "text/plain") {
+        const lfs = yield* fetchFollowingRedirects(
+          lfsUrl,
+          request.headers,
+          signedIn?.token ?? null,
+        );
+        if (
+          lfs !== null &&
+          (lfs.response.status === 200 || lfs.response.status === 206) &&
+          MEDIA_CONTENT_TYPE_PATTERN.test(contentTypeOf(lfs.response))
+        ) {
+          yield* fetched.release;
+          return lfs.response;
+        }
+        if (lfs !== null) yield* lfs.release;
+      }
       if (
         type !== "text/html" &&
         type !== "application/xhtml+xml" &&

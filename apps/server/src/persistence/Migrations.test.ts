@@ -27,6 +27,10 @@ import TurnItemTypeStatusIndex from "./Migrations/089_TurnItemTypeStatusIndex.ts
 import ShellThreadReadIndexes from "./Migrations/090_ShellThreadReadIndexes.ts";
 import AuthConnectDevices from "./Migrations/091_AuthConnectDevices.ts";
 import AuthConnectDeniedRequests from "./Migrations/092_AuthConnectDeniedRequests.ts";
+import QueuedTurnInputIndexJsonValid from "./Migrations/093_QueuedTurnInputIndexJsonValid.ts";
+import ProviderTurnAttemptIndex from "./Migrations/094_ProviderTurnAttemptIndex.ts";
+import TurnItemMessageOrdinalIndex from "./Migrations/095_TurnItemMessageOrdinalIndex.ts";
+import TurnItemInlineWorkOutput from "./Migrations/096_TurnItemInlineWorkOutput.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
@@ -65,7 +69,9 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect.each([74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91])(
+  it.effect.each([
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+  ])(
     "upgrades official history through %s without repeating schema changes",
     (head) =>
       Effect.gen(function* () {
@@ -90,6 +96,10 @@ describe("runMigrations", () => {
           [89, "ShellThreadReadIndexes", ShellThreadReadIndexes],
           [90, "AuthConnectDevices", AuthConnectDevices],
           [91, "AuthConnectDeniedRequests", AuthConnectDeniedRequests],
+          [92, "QueuedTurnInputIndexJsonValid", QueuedTurnInputIndexJsonValid],
+          [93, "ProviderTurnAttemptIndex", ProviderTurnAttemptIndex],
+          [94, "TurnItemMessageOrdinalIndex", TurnItemMessageOrdinalIndex],
+          [95, "TurnItemInlineWorkOutput", TurnItemInlineWorkOutput],
         ] as const;
         for (const [id, name, migration] of official) {
           if (id > head) break;

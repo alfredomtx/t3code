@@ -67,6 +67,13 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
     const draft = useComposerDraftStore.getState().getDraftSession(target.draftId);
     return draft ? (draft.promotedTo ?? scopeThreadRef(draft.environmentId, draft.threadId)) : null;
   };
+  const readRouteEnvironmentId = () => {
+    const target = readRouteTarget();
+    if (!target) return null;
+    return target.kind === "server"
+      ? target.threadRef.environmentId
+      : (useComposerDraftStore.getState().getDraftSession(target.draftId)?.environmentId ?? null);
+  };
   const readPreviewOpen = () => {
     const threadRef = readRouteThreadRef();
     // Store-only on purpose: the URL-aware arbitration lives in ChatView's
@@ -123,15 +130,16 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
   };
 
   const runPreviewAction = (action: PreviewAction) => {
+    const environmentId = readRouteEnvironmentId();
     const threadRef = readRouteThreadRef();
     if (
-      !threadRef ||
+      !environmentId ||
       (action === "toggle-panel"
-        ? !canOperatePreview(threadRef.environmentId) && !readPreviewOpen()
-        : !canOperatePreview(threadRef.environmentId))
+        ? !canOperatePreview(environmentId) && !readPreviewOpen()
+        : !canOperatePreview(environmentId))
     )
       return;
-    if (!isPreviewAvailableFor(threadRef.environmentId)) {
+    if (!isPreviewAvailableFor(environmentId)) {
       if (action === "toggle-panel")
         toastManager.add(
           stackedThreadToast({
