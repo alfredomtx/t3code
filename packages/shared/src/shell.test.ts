@@ -125,11 +125,15 @@ describe("readEnvironmentFromLoginShell", () => {
       try {
         const tools = NodePath.join(home, "tools 'quoted $dir");
         NodeFS.mkdirSync(tools);
-        const printenv = NodeChildProcess.execFileSync("/bin/bash", ["-c", "type -P printenv"], {
-          encoding: "utf8",
-          env: { PATH: process.env.PATH },
-        }).trim();
-        NodeFS.copyFileSync(printenv, NodePath.join(tools, "printenv"));
+        const printenv = NodeChildProcess.execFileSync(
+          "/bin/bash",
+          ["--norc", "-c", "type -P printenv"],
+          {
+            encoding: "utf8",
+            env: { PATH: process.env.PATH },
+          },
+        ).trim();
+        NodeFS.symlinkSync(printenv, NodePath.join(tools, "printenv"));
         vi.stubEnv("PATH", tools);
         const shellPath = NodePath.join(home, "bin");
         const bashEnv = NodePath.join(home, "env.bash");

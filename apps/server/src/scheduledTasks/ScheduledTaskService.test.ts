@@ -440,6 +440,7 @@ it.effect(
           Layer.mergeAll(
             ManagedPolicy.layerTest(),
             Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              isNonGitProject: () => Effect.succeed(false),
               launch: (input) => {
                 launches.push(input);
                 return Effect.die("launch captured");

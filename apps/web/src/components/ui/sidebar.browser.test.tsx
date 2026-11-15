@@ -83,19 +83,19 @@ it("restores collapsed and expanded desktop state after remounting", async () =>
     </SidebarProvider>
   );
   {
-    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    await using screen = await render(layout());
     const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
     await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
     await userEvent.click(trigger);
     await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
   }
   {
-    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    await using screen = await render(layout());
     const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
     await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
     await userEvent.click(trigger);
   }
-  await using screen = await render(layout(), { router: false /* no routes involved */ });
+  await using screen = await render(layout());
   await expect
     .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
     .toHaveAttribute("aria-pressed", "true");
@@ -111,7 +111,6 @@ it("keeps the mobile sheet closed and leaves the saved desktop state alone", asy
       <SidebarProvider storageKey={storageKey}>
         <SidebarTrigger />
       </SidebarProvider>,
-      { router: false /* no routes involved */ },
     );
     const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
     await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
@@ -123,7 +122,6 @@ it("keeps the mobile sheet closed and leaves the saved desktop state alone", asy
     <SidebarProvider storageKey={storageKey}>
       <SidebarTrigger />
     </SidebarProvider>,
-    { router: false /* no routes involved */ },
   );
   await expect
     .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
@@ -146,7 +144,6 @@ it("keeps closed mobile sheet contents mounted and reports the sheet only while 
       <SidebarTrigger />
       <MobileSheetMountedProbe />
     </SidebarProvider>,
-    { router: false /* no routes involved */ },
   );
   const sheetMounted = screen.getByLabelText("Sheet mounted");
   // Window shortcuts registered by sidebar children only work while they stay mounted.
@@ -172,7 +169,6 @@ it("opens the mobile sheet without a transition while panel animations are off",
         <SidebarTrigger />
       </SidebarProvider>
     </div>,
-    { router: false /* no routes involved */ },
   );
   await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
   const popup = document.querySelector<HTMLElement>('[data-mobile="true"][data-sidebar="sidebar"]');

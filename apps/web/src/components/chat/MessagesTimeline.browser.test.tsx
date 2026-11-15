@@ -54,11 +54,15 @@ import { toastManager } from "../ui/toast";
 import type { CitedHistory } from "./citationProcedure";
 import type { TimelineNavigation } from "./timelineViewport";
 import { rememberTimelinePosition } from "./timelineScrollAnchoring";
+import { useTimelineFollow } from "./useTimelineFollow";
+import { measuredEndOffset, settleListScroll } from "./useTimelinePositionRestore";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
   decodeComposerContextFragment,
 } from "@t3tools/shared/composerContextClipboard";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
+
+vi.mock(import("./useTimelinePositionRestore"), { spy: true });
 
 const environmentQuery = vi.hoisted(() => ({
   error: "Pull request not found" as string | null,
@@ -216,6 +220,31 @@ function renderTimeline(entries: ReadonlyArray<Entry>, props: Partial<TimelinePr
   );
 }
 
+function FollowedTimeline(props: TimelineProps) {
+  const follow = useTimelineFollow({
+    legendListRef: props.listRef,
+    composerTimelineInset: 0,
+    routeThreadKey: props.routeThreadKey,
+    activeThreadKey: props.routeThreadKey,
+    isServerThread: false,
+    serverProjection: null,
+    threadStatus: "live",
+    activeActivityRun: null,
+    activeRunningTurnId: null,
+    timelineEntries: props.timelineEntries,
+    timelineAnchorMessageId: null,
+    setTimelineAnchor: () => {},
+  });
+  return (
+    <MessagesTimeline
+      {...props}
+      liveFollowEnabled={follow.timelineLiveFollowEnabled}
+      onViewportAttach={follow.attachTimelineViewport}
+      onIsAtEndChange={follow.onIsAtEndChangeStable}
+    />
+  );
+}
+
 async function click(element: HTMLElement) {
   await act(async () => element.click());
 }
@@ -261,7 +290,7 @@ describe("MessagesTimeline work rows", () => {
     const container = document.createElement("div");
     container.style.cssText = "height:600px;width:900px;display:flex;flex-direction:column";
     await using screen = await render(
-      <MessagesTimeline
+      <FollowedTimeline
         {...props}
         renderHtmlRender={() => <Preview />}
         timelineEntries={[
@@ -541,7 +570,7 @@ describe("MessagesTimeline messages", () => {
             ),
     );
     await using screen = await renderElement(
-      <MessagesTimeline {...props} timelineEntries={entries} />,
+      <FollowedTimeline {...props} timelineEntries={entries} />,
     );
     const headings = () => [...screen.container.querySelectorAll("h3")];
     const headingFor = (text: string) =>
@@ -564,6 +593,23 @@ describe("MessagesTimeline messages", () => {
       expect(headings()[0]).toBe(headingFor("First turn"));
       expect(headings().at(-1)).toBe(headingFor("Last turn"));
     });
+
+    const settling = vi.mocked(settleListScroll);
+    const bootstrapCallIndex = () =>
+      settling.mock.calls.findIndex(
+        ([list, target]) => list === props.listRef.current && target === measuredEndOffset,
+      );
+    await vi.waitFor(() => expect(bootstrapCallIndex()).toBeGreaterThanOrEqual(0));
+    const bootstrapIndex = bootstrapCallIndex();
+    const bootstrap = settling.mock.results[bootstrapIndex];
+    if (!bootstrap || bootstrap.type !== "return") {
+      throw new Error("Bootstrap settling did not return its completion promise");
+    }
+    await act(async () => {
+      await bootstrap.value;
+    });
+    expect(settling.mock.calls[bootstrapIndex]![2]()).toBe(true);
+    expect(viewport.isConnected).toBe(true);
 
     await expectHeadingInView("First turn", "Turn 1:");
     expect(headingFor("Last turn")).toBeDefined();
@@ -604,7 +650,7 @@ describe("MessagesTimeline messages", () => {
 
   it("disables the minimap's next turn button at the bottom of the thread", async () => {
     setup();
-    const props = baseProps();
+    const props = { ...baseProps(), liveFollowEnabled: false };
     const entries = Array.from({ length: 16 }, (_, index) => [
       message(`Question ${index}`, {}, `user-${index}`),
       message(`Answer ${index}`, { role: "assistant" }, `assistant-${index}`),
@@ -801,7 +847,7 @@ describe("MessagesTimeline messages", () => {
   });
 
   it("steps the minimap's next turn past two adjacent user messages", async () => {
-    const props = baseProps();
+    const props = { ...baseProps(), liveFollowEnabled: false };
     const reply = (id: string) => message("Reply.\n\n".repeat(120), { role: "assistant" }, id);
     const userIds = ["turn-0", "turn-1", "turn-2", "pair-a", "pair-b", "turn-3", "turn-4"];
     const entries = [

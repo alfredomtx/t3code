@@ -1011,7 +1011,7 @@ const AGENT_COMMAND_ENV = "T3CODE_TEST_AGENT_COMMAND";
  * job: under a detached shell with job control, in a group of its own. Release kills only the pids
  * it started.
  */
-const agentServer = () =>
+const agentServer = (commandValue: string) =>
   Effect.acquireRelease(
     Effect.callback<{
       readonly child: NodeChildProcess.ChildProcess;
@@ -1025,9 +1025,10 @@ const agentServer = () =>
         "bash",
         [
           "-c",
-          `set -m; ${AGENT_COMMAND_ENV}=command-live "$0" -e "$1" & wait`,
+          `set -m; ${AGENT_COMMAND_ENV}=${commandValue} "$0" -e "$1" & wait`,
           process.execPath,
           AGENT_SERVER_SCRIPT,
+          "command-live",
         ],
         { detached: true, env, stdio: ["ignore", "pipe", "ignore"] },
       );
@@ -1057,48 +1058,52 @@ const isRunning = (pid: number): boolean => {
   }
 };
 
-effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-  "stops an agent's server through its job's group, and only a listed server",
-  () =>
-    Effect.gen(function* () {
-      const scanner = yield* PortScanner.PortDiscovery;
-      yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
-        Effect.sync(release),
-      );
-      const job = yield* agentServer();
-      const stops: Array<readonly [string, boolean]> = [];
-      yield* scanner.watchAgentCommandStops({
-        variable: AGENT_COMMAND_ENV,
-        onStop: (command) => Effect.sync(() => stops.push([command, isRunning(job.pid)])),
-        onStopAbandoned: () => Effect.die("the signal reached the job"),
-      });
+for (const commandValue of ["command-live", '"$2"']) {
+  effectIt.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    `stops an agent's server through its job's group, and only a listed server: ${commandValue}`,
+    () =>
+      Effect.gen(function* () {
+        const scanner = yield* PortScanner.PortDiscovery;
+        yield* Effect.acquireRelease(Effect.sync(scanner.trackAgent), (release) =>
+          Effect.sync(release),
+        );
+        const job = yield* agentServer(commandValue);
+        const stops: Array<readonly [string, boolean]> = [];
+        yield* scanner.watchAgentCommandStops({
+          variable: AGENT_COMMAND_ENV,
+          onStop: (command) => Effect.sync(() => stops.push([command, isRunning(job.pid)])),
+          onStopAbandoned: () => Effect.die("the signal reached the job"),
+        });
 
-      expect(yield* scanner.scan()).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            pid: job.pid,
-            port: job.port,
-            agent: { threadId: "thread-live" },
-          }),
-        ]),
-      );
+        expect(yield* scanner.scan()).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              pid: job.pid,
+              port: job.port,
+              agent: { threadId: "thread-live" },
+            }),
+          ]),
+        );
 
-      const unlisted = yield* Effect.flip(scanner.stopServer({ pid: process.pid, port: job.port }));
-      expect(unlisted.reason).toBe("not-found");
-      expect(stops).toEqual([]);
+        const unlisted = yield* Effect.flip(
+          scanner.stopServer({ pid: process.pid, port: job.port }),
+        );
+        expect(unlisted.reason).toBe("not-found");
+        expect(stops).toEqual([]);
 
-      yield* scanner.stopServer({ pid: job.pid, port: job.port });
-      expect(stops).toEqual([["command-live", true]]);
-      // The shell waits on its job, so it exits once the job has.
-      yield* Effect.promise(() => job.exited);
-      expect(isRunning(job.pid)).toBe(false);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerScanner.pipe(
-          Layer.provide(ProcessRunner.layer),
-          Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+        yield* scanner.stopServer({ pid: job.pid, port: job.port });
+        expect(stops).toEqual([["command-live", true]]);
+        // The shell waits on its job, so it exits once the job has.
+        yield* Effect.promise(() => job.exited);
+        expect(isRunning(job.pid)).toBe(false);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerScanner.pipe(
+            Layer.provide(ProcessRunner.layer),
+            Layer.provide(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer)),
+          ),
         ),
       ),
-    ),
-);
+  );
+}

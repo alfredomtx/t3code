@@ -1095,6 +1095,20 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
       return new Map(read.flatMap(Option.toArray));
     }
+    const commandResult = yield* processRunner
+      .run({
+        command: "ps",
+        args: ["-ww", "-o", "pid=,command=", "-p", pids.join(",")],
+        timeout: Duration.millis(PS_TIMEOUT_MS),
+        maxOutputBytes: PS_MAX_OUTPUT_BYTES,
+      })
+      .pipe(Effect.option);
+    if (Option.isNone(commandResult)) return new Map();
+    const commands = new Map<number, string>();
+    for (const line of commandResult.value.stdout.split("\n")) {
+      const match = /^\s*(\d+)\s(.*)$/.exec(line);
+      if (match) commands.set(Number(match[1]), match[2]!);
+    }
     const result = yield* processRunner
       .run({
         command: "ps",
@@ -1107,7 +1121,13 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
       const match = /^\s*(\d+)\s(.*)$/.exec(line);
       if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
+        const command = commands.get(Number(match[1]));
+        if (command === undefined || (match[2] !== command && !match[2]!.startsWith(`${command} `)))
+          continue;
+        variables.set(
+          Number(match[1]),
+          parseEnvironmentVariables(match[2]!.slice(command.length), /\s+/, names),
+        );
       }
     }
     return variables;

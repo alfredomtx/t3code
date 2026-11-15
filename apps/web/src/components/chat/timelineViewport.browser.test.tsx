@@ -5,7 +5,7 @@ import { render } from "../../../test/render";
 import { attachTimelineViewport } from "./timelineViewport";
 
 describe("attachTimelineViewport", () => {
-  it("reports an upward scroll only while input is on an embedded frame", async () => {
+  it("reports frame input without treating a heading-aligned layout clamp as input", async () => {
     // A plain scroller; the viewport needs no routes.
     await using screen = await render(
       <div>
@@ -18,7 +18,9 @@ describe("attachTimelineViewport", () => {
             srcDoc="<p>frame</p>"
             style={{ display: "block", height: 200 }}
           />
-          <div data-testid="tail" style={{ height: 1200 }} />
+          <div data-testid="tail" style={{ height: 1200 }}>
+            <h3 className="sr-only">Message author</h3>
+          </div>
         </div>
       </div>,
       { router: false },
@@ -45,7 +47,7 @@ describe("attachTimelineViewport", () => {
     timeline.scrollTop = timeline.scrollHeight;
     await scroll;
     scroll = scrolled();
-    tail.style.height = "400px";
+    tail.style.height = "300px";
     void timeline.scrollTop;
     tail.style.height = "1200px";
     await scroll;

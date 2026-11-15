@@ -737,6 +737,7 @@ function PullRequestCodeTab({
     }
     const parsed = parseSlice(
       {
+        inventoryFresh,
         source: data,
         cursor: null,
         patch: data.patch,
@@ -765,11 +766,11 @@ function PullRequestCodeTab({
       ...withheldLoads,
       shownKeys: new Map([...withheldLoads.shownKeys, ...rekeyed]),
     });
-    setFoldChoices((current) =>
+    setFileFolds((current) =>
       rekeyed.reduce((next, [path, key]) => {
         const shown = withheldLoads.shownKeys.get(path);
         const collapsed = shown === undefined ? false : current.get(shown);
-        return collapsed === undefined ? next : withFileDiffFold(next, key, collapsed);
+        return collapsed === undefined ? next : setFileDiffCollapsed(key, collapsed, next);
       }, current),
     );
   }

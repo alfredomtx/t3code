@@ -282,7 +282,6 @@ export function AnnotatableCodeView({
         enableLineSelection: draft === null,
         onGutterUtilityClick: beginComment,
         onLineSelectionEnd: beginComment,
-        onRevealSearchMatch: (item) => onRevealSearchMatch(item.id),
         onItemCollapsedChange: (_item, nextItem) =>
           onFileCollapsedChange(nextItem.id, nextItem.collapsed === true),
       }}

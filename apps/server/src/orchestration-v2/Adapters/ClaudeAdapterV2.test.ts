@@ -7006,7 +7006,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         const sdk = yield* Effect.promise(() =>
           vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk"),
         );
-        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(sdk.resolveSettings);
+        // The SDK loads machine policy even when only project/local sources are requested.
+        vi.mocked(ClaudeSdk.resolveSettings).mockImplementation(async (options) => {
+          const resolved = await sdk.resolveSettings(options);
+          return {
+            ...resolved,
+            effective: resolved.sources.find(({ source }) => source === "local")?.settings ?? {},
+          };
+        });
         const probeCwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-probe-" });
         const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-project-" });
         const overridden = yield* fileSystem.makeTempDirectoryScoped({

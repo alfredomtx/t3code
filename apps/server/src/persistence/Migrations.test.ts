@@ -71,55 +71,53 @@ describe("runMigrations", () => {
 
   it.effect.each([
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
-  ])(
-    "upgrades official history through %s without repeating schema changes",
-    (head) =>
-      Effect.gen(function* () {
-        const sql = yield* SqlClient.SqlClient;
-        yield* runMigrations({ toMigrationInclusive: 73 });
-        const official = [
-          [74, "ExcludeAttachmentPlaceholdersFromSearch", ExcludeAttachmentPlaceholders],
-          [75, "SubagentDeliveryState", SubagentDeliveryState],
-          [76, "ProjectionProjectsPinArchive", ProjectPinArchive],
-          [77, "RepairBooleanSettledOverride", RepairSettledOverride],
-          [78, "DropOrchestrationEventCorrelationIndex", DropCorrelationIndex],
-          [79, "DelegatedRecoveryIndexes", DelegatedRecoveryIndexes],
-          [80, "ScheduledTaskThreadMode", ScheduledTaskThreadMode],
-          [81, "ProjectionMessageSearchText", ProjectionMessageSearchText],
-          [82, "TurnItemConversationIndex", TurnItemConversationIndex],
-          [83, "CommandReadIndexes", CommandReadIndexes],
-          [84, "LastExecutedRunIndex", LastExecutedRunIndex],
-          [85, "TurnItemCounts", TurnItemCounts],
-          [86, "QueuedTurnInputIndex", QueuedTurnInputIndex],
-          [87, "ProjectionProjectsCustomTitle", ProjectionProjectsCustomTitle],
-          [88, "TurnItemTypeStatusIndex", TurnItemTypeStatusIndex],
-          [89, "ShellThreadReadIndexes", ShellThreadReadIndexes],
-          [90, "AuthConnectDevices", AuthConnectDevices],
-          [91, "AuthConnectDeniedRequests", AuthConnectDeniedRequests],
-          [92, "QueuedTurnInputIndexJsonValid", QueuedTurnInputIndexJsonValid],
-          [93, "ProviderTurnAttemptIndex", ProviderTurnAttemptIndex],
-          [94, "TurnItemMessageOrdinalIndex", TurnItemMessageOrdinalIndex],
-          [95, "TurnItemInlineWorkOutput", TurnItemInlineWorkOutput],
-        ] as const;
-        for (const [id, name, migration] of official) {
-          if (id > head) break;
-          yield* migration;
-          yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
-        }
-        yield* runMigrations();
-        assert.deepStrictEqual(yield* history, migrationManifest);
-        assert.deepStrictEqual(yield* runMigrations(), []);
-        const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(scheduled_tasks)`;
-        assert.strictEqual(
-          columns.filter(({ name }) => name === "bound_model_selection_mode").length,
-          1,
-        );
-        assert.lengthOf(
-          yield* sql`SELECT completion_delivery_state FROM orchestration_v2_projection_subagents`,
-          0,
-        );
-        assert.lengthOf(yield* sql`SELECT pinned_at, archived_at FROM projection_projects`, 0);
-      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  ])("upgrades official history through %s without repeating schema changes", (head) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 73 });
+      const official = [
+        [74, "ExcludeAttachmentPlaceholdersFromSearch", ExcludeAttachmentPlaceholders],
+        [75, "SubagentDeliveryState", SubagentDeliveryState],
+        [76, "ProjectionProjectsPinArchive", ProjectPinArchive],
+        [77, "RepairBooleanSettledOverride", RepairSettledOverride],
+        [78, "DropOrchestrationEventCorrelationIndex", DropCorrelationIndex],
+        [79, "DelegatedRecoveryIndexes", DelegatedRecoveryIndexes],
+        [80, "ScheduledTaskThreadMode", ScheduledTaskThreadMode],
+        [81, "ProjectionMessageSearchText", ProjectionMessageSearchText],
+        [82, "TurnItemConversationIndex", TurnItemConversationIndex],
+        [83, "CommandReadIndexes", CommandReadIndexes],
+        [84, "LastExecutedRunIndex", LastExecutedRunIndex],
+        [85, "TurnItemCounts", TurnItemCounts],
+        [86, "QueuedTurnInputIndex", QueuedTurnInputIndex],
+        [87, "ProjectionProjectsCustomTitle", ProjectionProjectsCustomTitle],
+        [88, "TurnItemTypeStatusIndex", TurnItemTypeStatusIndex],
+        [89, "ShellThreadReadIndexes", ShellThreadReadIndexes],
+        [90, "AuthConnectDevices", AuthConnectDevices],
+        [91, "AuthConnectDeniedRequests", AuthConnectDeniedRequests],
+        [92, "QueuedTurnInputIndexJsonValid", QueuedTurnInputIndexJsonValid],
+        [93, "ProviderTurnAttemptIndex", ProviderTurnAttemptIndex],
+        [94, "TurnItemMessageOrdinalIndex", TurnItemMessageOrdinalIndex],
+        [95, "TurnItemInlineWorkOutput", TurnItemInlineWorkOutput],
+      ] as const;
+      for (const [id, name, migration] of official) {
+        if (id > head) break;
+        yield* migration;
+        yield* sql`INSERT INTO effect_sql_migrations (migration_id, name) VALUES (${id}, ${name})`;
+      }
+      yield* runMigrations();
+      assert.deepStrictEqual(yield* history, migrationManifest);
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      const columns = yield* sql<{ readonly name: string }>`PRAGMA table_info(scheduled_tasks)`;
+      assert.strictEqual(
+        columns.filter(({ name }) => name === "bound_model_selection_mode").length,
+        1,
+      );
+      assert.lengthOf(
+        yield* sql`SELECT completion_delivery_state FROM orchestration_v2_projection_subagents`,
+        0,
+      );
+      assert.lengthOf(yield* sql`SELECT pinned_at, archived_at FROM projection_projects`, 0);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect("refuses to start when another migration took a V2 id", () =>

@@ -131,7 +131,6 @@ export function installChatRouteCommands(router: AnyRouter): () => void {
 
   const runPreviewAction = (action: PreviewAction) => {
     const environmentId = readRouteEnvironmentId();
-    const threadRef = readRouteThreadRef();
     if (
       !environmentId ||
       (action === "toggle-panel"

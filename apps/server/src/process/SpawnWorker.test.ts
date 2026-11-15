@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnvInEffect:off - fixtures need real paths, the process resource list and the live environment.
 import * as NodeOS from "node:os";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
@@ -61,6 +62,8 @@ describe("SpawnWorker", () => {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const literal = "quote' \" $HOME; * & %PATH%";
       const cwd = NodeOS.tmpdir();
+      const platform = yield* HostProcess.Platform;
+      const expectedCwd = platform === "win32" ? NodePath.resolve(cwd) : NodeFS.realpathSync(cwd);
       const script = `
         const fs = require('node:fs');
         const input = fs.readFileSync(0, 'utf8');
@@ -82,7 +85,7 @@ describe("SpawnWorker", () => {
           { concurrency: "unbounded" },
         );
         expect(stdout).toBe(
-          JSON.stringify(["stdin value", NodePath.resolve(cwd), "inherited value", literal]) +
+          JSON.stringify(["stdin value", expectedCwd, "inherited value", literal]) +
             "\n" +
             "a".repeat(1024 * 1024),
         );
