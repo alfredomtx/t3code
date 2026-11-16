@@ -137,6 +137,7 @@ const layerFlakyReleaseEventSink = (flaky: FlakyReleaseWrites) =>
 const layerPausingAttachEventSink = (pause: {
   readonly armed: Ref.Ref<boolean>;
   readonly paused: Deferred.Deferred<void>;
+  readonly fail?: boolean;
 }) =>
   Layer.effect(
     EventSink.EventSinkV2,
@@ -149,6 +150,11 @@ const layerPausingAttachEventSink = (pause: {
             const attach = input.events.some((event) => event.type === "provider-session.attached");
             if (attach && (yield* Ref.getAndSet(pause.armed, false))) {
               yield* Deferred.succeed(pause.paused, undefined);
+              if (pause.fail === true) {
+                return yield* new EventSink.EventSinkWriteError({
+                  eventCount: input.events.length,
+                });
+              }
               return yield* Effect.never;
             }
             return yield* delegate.write(input);
@@ -469,6 +475,16 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
   } = {},
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const recordMcpAppConfig = (providerThread: OrchestrationV2ProviderThread) =>
+    options.mcpConfigs === undefined || providerThread.appThreadId === null
+      ? Effect.void
+      : mcpSessions
+          .read(providerThread.appThreadId)
+          .pipe(
+            Effect.flatMap((config) =>
+              Ref.update(options.mcpConfigs!, (configs) => [...configs, config]),
+            ),
+          );
   const countClose = Effect.addFinalizer(() =>
     Ref.update(state, (current) => ({
       ...current,
@@ -571,6 +587,14 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
                 hasPendingBackgroundWorkForThread: () => options.hasPendingBackgroundWorkForThread!,
               }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
+          mcpApps: {
+            listTools: ({ providerThread }) =>
+              recordMcpAppConfig(providerThread).pipe(Effect.as([])),
+            callTool: ({ providerThread }) =>
+              recordMcpAppConfig(providerThread).pipe(Effect.as({ content: [] })),
+            readResource: ({ providerThread }) =>
+              recordMcpAppConfig(providerThread).pipe(Effect.as({ contents: [] })),
+          },
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
               ...current,
@@ -749,6 +773,100 @@ function layerTest(input: {
     ),
   ).pipe(Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)));
 }
+
+it.effect.each(
+  (["listTools", "callTool", "readResource"] as const).flatMap((operation) =>
+    [false, true].map((failPreparation) => ({ operation, failPreparation })),
+  ),
+)(
+  "ProviderSessionManagerV2 prepares credentials before MCP app $operation, failure=$failPreparation",
+  ({ operation, failPreparation }) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const armed = yield* Ref.make(false);
+      const paused = yield* Deferred.make<void>();
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const parentThreadId = ThreadId.make("mcp-app-parent");
+        const appThreadId = ThreadId.make("mcp-app-restored-thread");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: parentThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: appThreadId, now }),
+          ],
+        });
+        yield* manager.open({
+          threadId: parentThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runtime = Option.getOrThrow(yield* manager.get(providerSessionId));
+        assert.isDefined(runtime.mcpApps);
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId: appThreadId,
+          providerSessionId,
+          now,
+        });
+        yield* Ref.set(armed, failPreparation);
+        const request: Effect.Effect<unknown, ProviderAdapter.ProviderAdapterV2Error> =
+          runtime.mcpApps![operation]({
+            providerThread,
+            server: "app-server",
+            tool: "app-tool",
+            arguments: {},
+            uri: "ui://app.html",
+          });
+        const result = yield* Effect.exit(request);
+        const sessions = yield* McpProviderSessions.McpProviderSessions;
+        if (failPreparation) {
+          assert.isTrue(Exit.isFailure(result));
+          assert.lengthOf(yield* Ref.get(mcpConfigs), 1, "The adapter must not load the thread");
+          assert.isUndefined(yield* sessions.read(appThreadId));
+          yield* manager.close(providerSessionId);
+          return;
+        }
+        assert.isTrue(Exit.isSuccess(result));
+        const captured = (yield* Ref.get(mcpConfigs)).at(-1);
+        assert.isDefined(
+          captured,
+          "MCP app loading must prepare T3 tools before resuming the thread",
+        );
+        assert.equal(captured?.threadId, appThreadId);
+        const scope = yield* registry.resolve(
+          captured!.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        assert.equal(scope?.thread.threadId, appThreadId);
+        assert.isTrue(scope?.capabilities.has("orchestration"));
+        yield* runtime.resumeThread({ providerThread, modelSelection, runtimePolicy });
+        assert.equal(
+          (yield* sessions.read(appThreadId))?.providerSessionId,
+          captured?.providerSessionId,
+        );
+        yield* manager.close(providerSessionId);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1_000,
+            mcpConfigs,
+            pauseAttachWrite: { armed, paused, fail: failPreparation },
+          }),
+        ),
+      );
+    }),
+);
 
 const fakeHttpServer = HttpServer.HttpServer.of({
   address: NetAddress.inetAddressFromIpStringUnsafe("127.0.0.1", 43123),

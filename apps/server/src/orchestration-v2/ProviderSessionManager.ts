@@ -2320,6 +2320,27 @@ export const layerWithOptions = (
       ): ProviderAdapter.ProviderAdapterV2SessionRuntime => {
         const providerSessionId = runtime.providerSessionId;
         const subscribeEvents = makeEventSubscription(eventSubscribers);
+        const mcpApps = runtime.mcpApps;
+        const prepareMcpAppThread = Effect.fn("ProviderSessionManager.prepareMcpAppThread")(
+          function* (providerThread: OrchestrationV2ProviderThread) {
+            if (providerThread.appThreadId === null) return;
+            // Codex ignores later MCP config when an app request already loaded the thread.
+            yield* ensureThreadAttached({
+              providerSessionId,
+              threadId: providerThread.appThreadId,
+              providerInstanceId: runtime.instanceId,
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: runtime.driver,
+                    detail: "Failed to prepare the MCP app session.",
+                    payload: cause,
+                  }),
+              ),
+            );
+          },
+        );
         const turnMetrics = (operation: string, model?: string) =>
           withMetrics({
             counter: providerTurnsTotal,
@@ -2340,6 +2361,24 @@ export const layerWithOptions = (
           events: Stream.unwrap(
             subscribeEvents.pipe(Effect.map((subscription) => subscription.events)),
           ),
+          ...(mcpApps === undefined
+            ? {}
+            : {
+                mcpApps: {
+                  listTools: (input) =>
+                    prepareMcpAppThread(input.providerThread).pipe(
+                      Effect.andThen(mcpApps.listTools(input)),
+                    ),
+                  callTool: (input) =>
+                    prepareMcpAppThread(input.providerThread).pipe(
+                      Effect.andThen(mcpApps.callTool(input)),
+                    ),
+                  readResource: (input) =>
+                    prepareMcpAppThread(input.providerThread).pipe(
+                      Effect.andThen(mcpApps.readResource(input)),
+                    ),
+                },
+              }),
           ensureThread: (input) =>
             observeActivity(
               providerSessionId,
