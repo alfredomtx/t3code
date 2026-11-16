@@ -30,6 +30,7 @@ import AuthConnectDeniedRequests from "./Migrations/092_AuthConnectDeniedRequest
 import QueuedTurnInputIndexJsonValid from "./Migrations/093_QueuedTurnInputIndexJsonValid.ts";
 import ProviderTurnAttemptIndex from "./Migrations/094_ProviderTurnAttemptIndex.ts";
 import TurnItemMessageOrdinalIndex from "./Migrations/095_TurnItemMessageOrdinalIndex.ts";
+import RepairStaleTitleRegeneration from "./Migrations/097_RepairStaleTitleRegeneration.ts";
 import TurnItemInlineWorkOutput from "./Migrations/096_TurnItemInlineWorkOutput.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
@@ -70,7 +71,7 @@ describe("runMigrations", () => {
   );
 
   it.effect.each([
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
   ])("upgrades official history through %s without repeating schema changes", (head) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -98,6 +99,7 @@ describe("runMigrations", () => {
         [93, "ProviderTurnAttemptIndex", ProviderTurnAttemptIndex],
         [94, "TurnItemMessageOrdinalIndex", TurnItemMessageOrdinalIndex],
         [95, "TurnItemInlineWorkOutput", TurnItemInlineWorkOutput],
+        [96, "RepairStaleTitleRegeneration", RepairStaleTitleRegeneration],
       ] as const;
       for (const [id, name, migration] of official) {
         if (id > head) break;
@@ -160,12 +162,18 @@ describe("runMigrations", () => {
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
-  it.effect("upgrades a database at exactly 54", () =>
+  it.effect("upgrades a database at exactly 54, then rechecks it without a write lock", () =>
     Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 54 });
       assert.deepStrictEqual(yield* runMigrations(), v2Migrations);
       assert.deepStrictEqual(yield* history, migrationManifest);
       assert.isAbove(yield* v2TableCount, 0);
+
+      // query_only rejects BEGIN IMMEDIATE, which CLI startup would otherwise take on the live database.
+      yield* sql`PRAGMA query_only = ON`;
+      assert.deepStrictEqual(yield* runMigrations(), []);
+      assert.deepStrictEqual(yield* history, migrationManifest);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 

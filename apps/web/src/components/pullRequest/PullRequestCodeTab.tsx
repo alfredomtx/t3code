@@ -1,3 +1,9 @@
+import {
+  isFileDiffCollapsed,
+  withFileDiffFold,
+  type DiffFoldOverride,
+  type FileDiffFoldChoices,
+} from "@t3tools/client-runtime/pull-request-diff-fold";
 import { TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR } from "../chat/composerFocusRedirect";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { isEditableFocused } from "~/lib/editableFocus";
@@ -134,14 +140,7 @@ import {
   toViewerSide,
 } from "./PullRequestReviewAnnotation";
 import { pullRequestCompletionScope } from "./PullRequestMarkdownTextarea";
-import {
-  getFileViewedRange,
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  setFileDiffCollapsed,
-  type DiffFoldOverride,
-  type FileFoldChoices,
-} from "./pullRequestDiff.logic";
+import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
 import { PullRequestDiffStat, PullRequestMetaLine } from "./pullRequestPresentation";
 import { PullRequestDiffUnavailableState } from "./PullRequestDiffUnavailableState";
 import {
@@ -450,7 +449,7 @@ function PullRequestCodeTab({
     wordWrap: settings.wordWrap,
   }));
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
-  const [fileFolds, setFileFolds] = useState<FileFoldChoices>(() => new Map());
+  const [fileFolds, setFileFolds] = useState<FileDiffFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
   const [pendingViewedGroup, setPendingViewedGroup] = useState<ReviewFileGroup | null>(null);
@@ -770,7 +769,7 @@ function PullRequestCodeTab({
       rekeyed.reduce((next, [path, key]) => {
         const shown = withheldLoads.shownKeys.get(path);
         const collapsed = shown === undefined ? false : current.get(shown);
-        return collapsed === undefined ? next : setFileDiffCollapsed(key, collapsed, next);
+        return collapsed === undefined ? next : withFileDiffFold(next, key, collapsed);
       }, current),
     );
   }
@@ -976,9 +975,8 @@ function PullRequestCodeTab({
       </div>
     );
 
-  // A stale mark means the file changed since it was viewed; Fold all and Expand all outrank marks.
   const foldsAsViewed = (path: string) =>
-    foldOverride === null && filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
+    filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
     ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
       const collapsed = isFileDiffCollapsed(
@@ -1115,7 +1113,7 @@ function PullRequestCodeTab({
       annotatedFiles.reduce(
         (next, file) =>
           reviewFileGroup(file.path) === group
-            ? setFileDiffCollapsed(file.fileKey, viewed, next)
+            ? withFileDiffFold(next, file.fileKey, viewed)
             : next,
         current,
       ),
@@ -1135,7 +1133,7 @@ function PullRequestCodeTab({
   };
 
   const setFileFold = (fileKey: string, collapsed: boolean) =>
-    setFileFolds((current) => setFileDiffCollapsed(fileKey, collapsed, current));
+    setFileFolds((current) => withFileDiffFold(current, fileKey, collapsed));
 
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
     const range = getFileViewedRange(
@@ -1149,7 +1147,15 @@ function PullRequestCodeTab({
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
     setFileFolds((current) =>
-      range.reduce((next, file) => setFileDiffCollapsed(file.fileKey, viewed, next), current),
+      range.reduce(
+        (next, file) =>
+          withFileDiffFold(
+            next,
+            file.fileKey,
+            foldOverride === null && !settings.diffFilesCollapsed ? undefined : viewed,
+          ),
+        current,
+      ),
     );
   };
   const pointer = useRef<{ x: number; y: number } | null>(null);

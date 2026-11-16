@@ -1,12 +1,11 @@
+import {
+  isFileDiffCollapsed,
+  withFileDiffFold,
+} from "@t3tools/client-runtime/pull-request-diff-fold";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  getFileViewedRange,
-  isFileDiffCollapsed,
-  isLineInFileDiff,
-  setFileDiffCollapsed,
-} from "./pullRequestDiff.logic";
+import { getFileViewedRange, isLineInFileDiff } from "./pullRequestDiff.logic";
 
 function fileWithHunks(
   hunks: ReadonlyArray<{
@@ -88,34 +87,34 @@ describe("isFileDiffCollapsed", () => {
   });
 });
 
-describe("setFileDiffCollapsed", () => {
+describe("withFileDiffFold", () => {
   it("sets absolute checkbox targets against a bulk choice", () => {
-    const folded = setFileDiffCollapsed("a.ts", true, new Map());
+    const folded = withFileDiffFold(new Map(), "a.ts", true);
     expect(isFileDiffCollapsed("a.ts", "expanded", folded, false)).toBe(true);
-    const expanded = setFileDiffCollapsed("a.ts", false, folded);
+    const expanded = withFileDiffFold(folded, "a.ts", false);
     expect(isFileDiffCollapsed("a.ts", "folded", expanded, true)).toBe(false);
   });
 
   it("records an absolute choice and keeps the same map when nothing changes", () => {
-    const folded = setFileDiffCollapsed("a.ts", true, new Map());
+    const folded = withFileDiffFold(new Map(), "a.ts", true);
     expect(folded.get("a.ts")).toBe(true);
-    expect(setFileDiffCollapsed("a.ts", true, folded)).toBe(folded);
-    expect(setFileDiffCollapsed("a.ts", false, folded).get("a.ts")).toBe(false);
+    expect(withFileDiffFold(folded, "a.ts", true)).toBe(folded);
+    expect(withFileDiffFold(folded, "a.ts", false).get("a.ts")).toBe(false);
   });
 
   it("retains an explicit reveal through late viewed data and repeated reveals", () => {
     const choices = new Map<string, boolean>();
-    const expanded = setFileDiffCollapsed("a.ts", false, choices);
+    const expanded = withFileDiffFold(choices, "a.ts", false);
     expect(choices.size).toBe(0);
     expect(expanded.get("a.ts")).toBe(false);
     expect(isFileDiffCollapsed("a.ts", null, expanded, false)).toBe(false);
     expect(isFileDiffCollapsed("a.ts", null, expanded, true)).toBe(false);
-    expect(setFileDiffCollapsed("a.ts", false, expanded)).toBe(expanded);
+    expect(withFileDiffFold(expanded, "a.ts", false)).toBe(expanded);
   });
 
   it("retains the last manual choice across changing defaults", () => {
-    const collapsed = setFileDiffCollapsed("a.ts", true, new Map());
-    const expanded = setFileDiffCollapsed("a.ts", false, collapsed);
+    const collapsed = withFileDiffFold(new Map(), "a.ts", true);
+    const expanded = withFileDiffFold(collapsed, "a.ts", false);
     for (const defaultCollapsed of [false, true]) {
       expect(isFileDiffCollapsed("a.ts", null, collapsed, defaultCollapsed)).toBe(true);
       expect(isFileDiffCollapsed("a.ts", null, expanded, defaultCollapsed)).toBe(false);

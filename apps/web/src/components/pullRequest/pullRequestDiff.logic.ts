@@ -14,30 +14,6 @@ export function isLineInFileDiff(
   );
 }
 
-export type DiffFoldOverride = "expanded" | "folded" | null;
-
-export type FileFoldChoices = ReadonlyMap<string, boolean>;
-
-// Explicit choices survive changing viewed defaults. Bulk also applies to files not yet loaded.
-export function isFileDiffCollapsed(
-  fileKey: string,
-  foldOverride: DiffFoldOverride,
-  choices: FileFoldChoices,
-  defaultCollapsed = false,
-): boolean {
-  return (
-    choices.get(fileKey) ?? (foldOverride === null ? defaultCollapsed : foldOverride === "folded")
-  );
-}
-
-export function setFileDiffCollapsed(
-  fileKey: string,
-  collapsed: boolean,
-  choices: FileFoldChoices,
-): FileFoldChoices {
-  return choices.get(fileKey) === collapsed ? choices : new Map(choices).set(fileKey, collapsed);
-}
-
 export function getFileViewedRange<T extends { readonly fileKey: string }>(
   files: ReadonlyArray<T>,
   fileKey: string,

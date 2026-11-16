@@ -107,6 +107,7 @@ import Migration0093 from "./Migrations/093_QueuedTurnInputIndexJsonValid.ts";
 import Migration0094 from "./Migrations/094_ProviderTurnAttemptIndex.ts";
 import Migration0095 from "./Migrations/095_TurnItemMessageOrdinalIndex.ts";
 import Migration0096 from "./Migrations/096_TurnItemInlineWorkOutput.ts";
+import Migration0097 from "./Migrations/097_RepairStaleTitleRegeneration.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -206,6 +207,7 @@ const migrationEntries = [
   [94, "ProviderTurnAttemptIndex", Migration0094],
   [95, "TurnItemMessageOrdinalIndex", Migration0095],
   [96, "TurnItemInlineWorkOutput", Migration0096],
+  [97, "RepairStaleTitleRegeneration", Migration0097],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -249,12 +251,10 @@ export function planMigrationHistory(
     ) &&
     recorded
       .filter(([id]) => id >= 74)
-      .every(
-        ([id, name]) =>
-          id <= 95 &&
-          migrationManifest.some(
-            ([personalId, personalName]) => personalId === id + 1 && personalName === name,
-          ),
+      .every(([id, name]) =>
+        migrationManifest.some(
+          ([personalId, personalName]) => personalId === id + 1 && personalName === name,
+        ),
       );
   const normalized = recorded
     .filter(([id]) => !legacyPersonalIds.includes(id))
@@ -338,19 +338,23 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
   // The desktop waits past its readiness budget until the finished line follows this one.
-  if (yield* hasPendingMigrations()) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
+  const hasPending = yield* hasPendingMigrations();
+  if (hasPending) yield* Effect.log(DATABASE_MIGRATIONS_STARTED_MESSAGE);
   const includesV2 =
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   const sql = yield* SqlClient.SqlClient;
-  const reconciledMigrations = includesV2
-    ? yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const preview = yield* reconcileV2PreviewMigration();
-          const compatible = yield* reconcileMigrationHistory(toMigrationInclusive);
-          return [...preview, ...compatible];
-        }),
-      )
-    : [];
+  const reconciledMigrations =
+    includesV2 && hasPending
+      ? yield* sql.withTransaction(
+          Effect.gen(function* () {
+            const preview = yield* reconcileV2PreviewMigration();
+            const compatible = yield* reconcileMigrationHistory(toMigrationInclusive);
+            return [...preview, ...compatible];
+          }),
+        )
+      : includesV2
+        ? yield* reconcileMigrationHistory(toMigrationInclusive)
+        : [];
   const ledger = yield* sql`
     SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
   `;
