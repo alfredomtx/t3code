@@ -201,8 +201,6 @@ describe("useActiveRowReveal", () => {
         </Sidebar>
         <SidebarTrigger />
       </SidebarProvider>,
-      // No router: the route arrives as the activeKey prop.
-      { router: false },
     );
 
     await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
