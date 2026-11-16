@@ -1,5 +1,3 @@
-import * as NodeSqlite from "node:sqlite";
-
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
@@ -47,13 +45,6 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-
-declare module "node:sqlite" {
-  interface StatementSync {
-    // Node 26 has this; @types/node 24 does not declare it yet.
-    stat(counter: "vmStep"): number;
-  }
-}
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -2072,53 +2063,50 @@ it.effect("starts and finishes a delegated task without reading the parent's his
       ["completed", "claimed", "completed", "completed", [task.id]],
     );
 
-    // Start and finish read the task's own records, so their VM steps, which are deterministic,
-    // must stay flat on a copy with a long parent history. Left out: the counts that number the
-    // task and its wake, which walk one index.
-    const copyPath = "file:/delegated-task-reads?vfs=memdb";
-    using copy = new NodeSqlite.DatabaseSync(copyPath);
-    yield* sql`VACUUM INTO ${copyPath}`;
     const reads = statements.filter(
-      ([query]) => /^\s*(SELECT|WITH)\b/.test(query) && !query.includes("COUNT(*)"),
+      ([query, params]) =>
+        (!params.includes(childThreadId) || params.includes(parentThreadId)) &&
+        /^\s*(SELECT|WITH)\b/.test(query) &&
+        !query.includes("COUNT(*)") &&
+        !query.includes("MAX(ordinal)"),
     );
-    const readSteps = () =>
-      reads.reduce((steps, [query, params]) => {
-        const statement = copy.prepare(query);
-        statement.all(...(params as ReadonlyArray<NodeSqlite.SQLInputValue>));
-        return steps + statement.stat("vmStep");
-      }, 0);
-    const shortSteps = readSteps();
-    assert.isAbove(shortSteps, 0);
-    const addHistory = (table: string, key: string, renamed: ReadonlyArray<string> = []) => {
-      const name = `orchestration_v2_projection_${table}`;
-      const columns = copy
-        .prepare(`SELECT name FROM pragma_table_info('${name}')`)
-        .all()
-        .map((column) => String(column.name));
-      const values = columns.map((column) =>
-        column === key || renamed.includes(column)
-          ? `CASE WHEN ${column} = '${parentThreadId}' THEN ${column} ELSE ${column} || ':history:' || history.n END`
-          : column === "ordinal"
-            ? "ordinal + history.n"
-            : column,
+    assert.isAbove(reads.length, 0);
+    for (const [query, params] of reads) {
+      const historyTable = /\bFROM (\w+)\b/.exec(query);
+      if (
+        !historyTable ||
+        !/^orchestration_v2_projection_(?:nodes|turn_items|subagents|context_transfers|runs|run_attempts|messages|provider_turns|provider_threads)$/.test(
+          historyTable[1]!,
+        )
+      )
+        continue;
+      const tables = [
+        historyTable[1]!,
+        ...Array.from(
+          query.matchAll(new RegExp(`\\b${historyTable[1]} AS (\\w+)`, "g")),
+          (match) => match[1]!,
+        ),
+      ];
+      const plan = yield* sql.unsafe<{ parent: number; detail: string }>(
+        `EXPLAIN QUERY PLAN ${query}`,
+        params,
       );
-      copy.exec(`WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 300)
-        INSERT INTO ${name} (${columns.join(", ")})
-        SELECT ${values.join(", ")} FROM ${name}, history
-        WHERE '${parentThreadId}' IN (${columns.filter((column) => column.endsWith("thread_id")).join(", ")})`);
-    };
-    addHistory("nodes", "node_id");
-    addHistory("turn_items", "turn_item_id", ["node_id"]);
-    addHistory("subagents", "subagent_id", ["child_thread_id"]);
-    addHistory("context_transfers", "context_transfer_id", [
-      "source_thread_id",
-      "target_thread_id",
-    ]);
-    addHistory("runs", "run_id");
-    addHistory("run_attempts", "attempt_id", ["run_id"]);
-    addHistory("messages", "message_id");
-    addHistory("provider_turns", "provider_turn_id", ["run_attempt_id"]);
-    assert.isAtMost(readSteps(), shortSteps * 1.1);
+      const accesses = plan.filter(
+        ({ parent, detail }) =>
+          (parent === 0 || historyTable[1] !== "orchestration_v2_projection_provider_threads") &&
+          tables.some(
+            (table) => detail.startsWith(`SEARCH ${table} `) || detail.startsWith(`SCAN ${table} `),
+          ),
+      );
+      assert.isAbove(accesses.length, 0, query);
+      for (const { detail } of accesses) {
+        assert.match(
+          detail,
+          /^SEARCH .*\([^)]*\b(?:node_id|turn_item_id|subagent_id|child_thread_id|context_transfer_id|run_id|attempt_id|run_attempt_id|message_id|provider_turn_id|provider_thread_id|rowid)=\?/,
+          `${detail}\n${query}`,
+        );
+      }
+    }
   }).pipe(Effect.provide(layerTest)),
 );
 
