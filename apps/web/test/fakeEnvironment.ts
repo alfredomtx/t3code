@@ -563,6 +563,7 @@ export const fakeDriver = {
         target: entry.target,
       },
       session,
+      refusedRouteIds: [],
     }),
   preflight: () => Effect.succeed(true),
   checkHost: () => Effect.succeed<RouteCheck>("unchecked"),

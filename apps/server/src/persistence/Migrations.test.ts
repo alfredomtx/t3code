@@ -31,6 +31,8 @@ import QueuedTurnInputIndexJsonValid from "./Migrations/093_QueuedTurnInputIndex
 import ProviderTurnAttemptIndex from "./Migrations/094_ProviderTurnAttemptIndex.ts";
 import TurnItemMessageOrdinalIndex from "./Migrations/095_TurnItemMessageOrdinalIndex.ts";
 import RepairStaleTitleRegeneration from "./Migrations/097_RepairStaleTitleRegeneration.ts";
+import IssueTrackerBindings from "./Migrations/098_IssueTrackerBindings.ts";
+import ActiveShellIndexIndexes from "./Migrations/099_ActiveShellIndexIndexes.ts";
 import TurnItemInlineWorkOutput from "./Migrations/096_TurnItemInlineWorkOutput.ts";
 
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
@@ -53,25 +55,28 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect("upgrades published Personal history through 86 without reusing its ids", () =>
-    Effect.gen(function* () {
-      yield* runMigrations({ toMigrationInclusive: 86 });
-      const published = yield* history;
-      assert.deepStrictEqual(
-        published,
-        migrationManifest.filter(([id]) => id <= 86),
-      );
-      assert.deepStrictEqual(
-        yield* runMigrations(),
-        migrationManifest.filter(([id]) => id >= 87),
-      );
-      assert.deepStrictEqual(yield* history, migrationManifest);
-      assert.deepStrictEqual(yield* runMigrations(), []);
-    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  it.effect.each([86, 97])(
+    "upgrades published Personal history through %s without reusing its ids",
+    (head) =>
+      Effect.gen(function* () {
+        yield* runMigrations({ toMigrationInclusive: head });
+        const published = yield* history;
+        assert.deepStrictEqual(
+          published,
+          migrationManifest.filter(([id]) => id <= head),
+        );
+        assert.deepStrictEqual(
+          yield* runMigrations(),
+          migrationManifest.filter(([id]) => id > head),
+        );
+        assert.deepStrictEqual(yield* history, migrationManifest);
+        assert.deepStrictEqual(yield* runMigrations(), []);
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
   it.effect.each([
-    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
+    98,
   ])("upgrades official history through %s without repeating schema changes", (head) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -100,6 +105,8 @@ describe("runMigrations", () => {
         [94, "TurnItemMessageOrdinalIndex", TurnItemMessageOrdinalIndex],
         [95, "TurnItemInlineWorkOutput", TurnItemInlineWorkOutput],
         [96, "RepairStaleTitleRegeneration", RepairStaleTitleRegeneration],
+        [97, "IssueTrackerBindings", IssueTrackerBindings],
+        [98, "ActiveShellIndexIndexes", ActiveShellIndexIndexes],
       ] as const;
       for (const [id, name, migration] of official) {
         if (id > head) break;

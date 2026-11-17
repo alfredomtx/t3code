@@ -4,6 +4,7 @@ import { AsyncResult } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 import { act, render } from "../../../test/render";
+import * as atomCommands from "../../state/use-atom-command";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
 
 const state = vi.hoisted(() => ({
@@ -35,7 +36,7 @@ vi.mock("../../state/session", async (original) => ({
 }));
 vi.mock("../../state/use-atom-command", async (original) => ({
   ...(await original<typeof import("../../state/use-atom-command")>()),
-  useAtomCommand: () => state.save,
+  useAtomCommand: vi.fn(() => state.save),
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
@@ -168,7 +169,6 @@ it("removes server-origin custom tab shortcuts through their server owner", asyn
 
 it("re-enables Save when a When editor closes on an expression it could not parse", async () => {
   setup();
-  setup();
   await using screen = await render(<KeybindingsSettingsPanel />);
   const whenTrigger = screen.getByRole("button", { name: "Edit when clause for Terminal: Toggle" });
   const expression = screen.getByRole("textbox", { name: "When expression" });
@@ -252,6 +252,54 @@ describe("Esc in a shortcut recorder", () => {
     await userEvent.keyboard("{Escape}");
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.anything());
   });
+});
+
+it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
+  setup();
+  state.rules = compileResolvedKeybindingsConfig([
+    { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+  ]);
+  const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
+  await vi.mocked(atomCommands.useAtomCommand).withImplementation(
+    () => mutate as never,
+    async () => {
+      await using screen = await render(<KeybindingsSettingsPanel />);
+
+      await screen.getByRole("button", { name: "Actions for Sidebar: Toggle" }).click();
+      await screen.getByRole("menuitem", { name: "Unassign" }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "source",
+        input: {
+          command: "sidebar.toggle",
+          key: "mod+b",
+          when: "false",
+          replace: { command: "sidebar.toggle", key: "mod+b" },
+        },
+      });
+
+      const unassigned = screen.getByRole("button", {
+        name: "Edit shortcut for Composer: Start in Background: Unassigned",
+      });
+      const save = screen.getByRole("button", { name: "Save" });
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await expect.element(save).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(save).not.toBeInTheDocument();
+
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await save.click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "source",
+        input: expect.objectContaining({
+          command: "composer.sendBackground",
+          when: "composerFocus && draftThreadRoute",
+          replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        }),
+      });
+    },
+  );
 });
 
 it("Esc in the keybindings search clears the query without closing Settings", async () => {

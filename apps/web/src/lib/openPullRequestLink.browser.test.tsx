@@ -182,7 +182,8 @@ it.each([
         [detailTab === "code" ? "commitRequest" : "commentRequest"]: request,
       });
     });
-    expect(state.preview).toHaveBeenCalledOnce();
+    if (anchor === "") expect(state.preview).toHaveBeenCalledOnce();
+    else expect(state.preview).not.toHaveBeenCalled();
     expect(state.openLink).not.toHaveBeenCalled();
   },
 );
