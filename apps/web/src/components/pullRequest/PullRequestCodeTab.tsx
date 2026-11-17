@@ -8,6 +8,7 @@ import { TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR } from "../chat/composerFocusRedi
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { isEditableFocused } from "~/lib/editableFocus";
 import { createPullRequestCodeScroll } from "./pullRequestCodeScroll";
+import { useOpenPullRequestFile } from "./useOpenPullRequestFile";
 import {
   parsePullRequestAnchor,
   pullRequestDiffPathMatches,
@@ -528,6 +529,7 @@ function PullRequestCodeTab({
     },
   });
   const diffQuery = useEnvironmentQuery(diffAtom);
+  const openFileInEditor = useOpenPullRequestFile(environmentId, detail);
   const diffRead = useAtomValue(diffAtom);
   const [pageRead, setPageRead] = useState({
     scopeKey,
@@ -2094,9 +2096,28 @@ function PullRequestCodeTab({
           onTouchStartCapture={codeViewReveal.cancel}
           onPointerDownCapture={codeViewReveal.cancel}
           onKeyDownCapture={codeViewReveal.cancel}
+          onPointerOverCapture={(event) => {
+            const title = event.nativeEvent
+              .composedPath()
+              .find(
+                (node): node is HTMLElement =>
+                  node instanceof HTMLElement && node.hasAttribute("data-title"),
+              );
+            if (title) title.title = "Command-click or Ctrl-click to open in your editor";
+          }}
           // Headers live in shadow DOM; composedPath crosses that boundary.
           onClickCapture={(event) => {
             const composedPath = event.nativeEvent.composedPath?.() ?? [];
+            const title = composedPath.find(
+              (node): node is HTMLElement =>
+                node instanceof HTMLElement && node.hasAttribute("data-title"),
+            );
+            if ((event.metaKey || event.ctrlKey) && title?.textContent?.trim()) {
+              event.preventDefault();
+              event.stopPropagation();
+              void openFileInEditor(title.textContent.trim());
+              return;
+            }
             for (const node of composedPath) {
               if (!(node instanceof HTMLElement)) continue;
               if (node instanceof HTMLButtonElement || node instanceof HTMLAnchorElement) {

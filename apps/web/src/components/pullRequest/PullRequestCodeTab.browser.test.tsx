@@ -12,7 +12,7 @@ import {
   type PullRequestFilesViewedResult,
 } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { setAppearanceMode } from "../../hooks/useTheme";
@@ -135,6 +135,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
 
 import { act, render } from "../../../test/render";
 import PullRequestCodeTab from "./PullRequestCodeTab";
+import { ToastProvider } from "../ui/toast";
 import { __setClientSettingsForTests, getClientSettings } from "~/hooks/useSettings";
 
 const detail: PullRequestDetailView = {
@@ -218,6 +219,7 @@ function setup(
   registry.set(permission, true);
   command.mockReset();
   command.mockImplementation(async ({ input }) => {
+    if (input.refKind) return AsyncResult.success({ refs: [], nextCursor: null });
     if (!input.files) return { _tag: "Success" };
     const previous = registry.get(filesViewedState);
     const states = new Map(
@@ -1047,4 +1049,34 @@ it("keeps an unsent reply when the appearance switches between light and dark", 
   setAppearanceMode("light");
 
   await expect.element(reply()).toHaveValue("Unsent");
+});
+
+it("opens the editor action on Command-click without folding the file", async () => {
+  using fixture = setup();
+  await using screen = await render(<ToastProvider>{fixture.tab(0)}</ToastProvider>, {
+    container: sizedContainer(),
+  });
+  const title = screen.getByText("a.ts", { exact: true });
+  await expect.element(title).toBeVisible();
+  await act(() =>
+    title.element().dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        composed: true,
+        metaKey: true,
+      }),
+    ),
+  );
+  await expect
+    .element(page.getByText("Check out feature locally before opening this file."))
+    .toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: "Collapse diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "true");
+  await act(() =>
+    title.element().dispatchEvent(new MouseEvent("click", { bubbles: true, composed: true })),
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Expand diff", exact: true }))
+    .toHaveAttribute("aria-expanded", "false");
 });
