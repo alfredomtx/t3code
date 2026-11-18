@@ -471,9 +471,12 @@ function PullRequestCodeTab({
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
   const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
   const [pendingViewedGroup, setPendingViewedGroup] = useState<ReviewFileGroup | null>(null);
-  const pendingViewedGroupLabel = REVIEW_FILE_GROUPS.find(
+  const pendingViewedGroupMessage = REVIEW_FILE_GROUPS.find(
     ({ id }) => id === pendingViewedGroup,
   )?.label;
+  const pendingViewedGroupLabel = pendingViewedGroupMessage
+    ? messages(pendingViewedGroupMessage)
+    : "";
   const diffLayout = settings.diffLayout;
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
@@ -1792,7 +1795,7 @@ function PullRequestCodeTab({
                     onCheckedChange={(checked) => void setGroupViewed(id, checked)}
                   />
                   <span>
-                    {label}
+                    {messages(label)}
                     <span aria-hidden>{inventoryReady ? ` (${paths.length})` : ""}</span>
                   </span>
                 </TooltipTrigger>
