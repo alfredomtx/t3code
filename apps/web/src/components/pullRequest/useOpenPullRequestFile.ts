@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, PullRequestDetailView } from "@t3tools/contracts";
 import {
@@ -88,7 +90,7 @@ export function useOpenPullRequestFile(
     openFile(filePath).catch((error: unknown) => {
       toastManager.add({
         type: "error",
-        title: "Could not open file in editor",
+        title: m(msg("Could not open file in editor")),
         description: error instanceof Error ? error.message : String(error),
       });
     });

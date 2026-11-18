@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 import { useId, useState, type ReactNode } from "react";
 
@@ -53,7 +54,9 @@ export function JiraResultDisclosure({
         }}
       >
         <ChevronRightIcon className={expanded ? "size-3.5 rotate-90" : "size-3.5"} />
-        <span className="truncate">Jira result</span>
+        <span className="truncate">
+          <T>Jira result</T>
+        </span>
       </Button>
       <div
         id={contentId}

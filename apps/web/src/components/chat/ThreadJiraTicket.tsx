@@ -5,6 +5,7 @@ import {
   type ScopedThreadRef,
   type ThreadLinkedJiraTicket,
 } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { TicketIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
@@ -43,6 +44,7 @@ export function ThreadJiraTicketBadge({
   ticket: ThreadLinkedJiraTicket;
   onActivate?: (() => void) | undefined;
 }) {
+  const gt = useGT();
   const openLink = useOpenLink(threadRef);
   return (
     <Tooltip>
@@ -54,7 +56,7 @@ export function ThreadJiraTicketBadge({
             render={
               <button
                 type="button"
-                aria-label={`Open Jira ticket ${ticket.key}`}
+                aria-label={gt("Open Jira ticket {key}", { key: ticket.key })}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -62,7 +64,7 @@ export function ThreadJiraTicketBadge({
                   void openLink(ticket.url, { event }).catch((error: unknown) => {
                     toastManager.add({
                       type: "error",
-                      title: "Could not open Jira ticket",
+                      title: gt("Could not open Jira ticket"),
                       description: error instanceof Error ? error.message : String(error),
                     });
                   });
@@ -98,6 +100,7 @@ export function JiraTicketDialogHost() {
 }
 
 function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
+  const gt = useGT();
   const thread = useThreadShell(threadRef);
   const config = useAtomValue(serverEnvironment.configValueAtom(threadRef.environmentId));
   const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
@@ -123,7 +126,7 @@ function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
     if (result._tag === "Success") close();
     else if (!isAtomCommandInterrupted(result)) {
       const failure = squashAtomCommandFailure(result);
-      setError(failure instanceof Error ? failure.message : "Could not save Jira ticket.");
+      setError(failure instanceof Error ? failure.message : gt("Could not save Jira ticket."));
     }
   };
   return (
@@ -135,9 +138,13 @@ function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
     >
       <DialogPopup initialFocus={inputRef}>
         <DialogHeader>
-          <DialogTitle>Link Jira ticket</DialogTitle>
+          <DialogTitle>
+            <T>Link Jira ticket</T>
+          </DialogTitle>
           <DialogDescription>
-            Attach one ticket to this thread. Linking another replaces it. Jira will not change.
+            <T>
+              Attach one ticket to this thread. Linking another replaces it. Jira will not change.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -148,11 +155,15 @@ function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
               if (parsed) void save(parsed);
               else
                 setError(
-                  "Paste an HTTPS Jira ticket URL such as https://your-site.atlassian.net/browse/CRM-123.",
+                  gt("Paste an HTTPS Jira ticket URL such as {example}.", {
+                    example: "https://your-site.atlassian.net/browse/CRM-123",
+                  }),
                 );
             }}
           >
-            <label htmlFor="jira-ticket-url">Jira ticket URL</label>
+            <label htmlFor="jira-ticket-url">
+              <T>Jira ticket URL</T>
+            </label>
             <Input
               ref={inputRef}
               id="jira-ticket-url"
@@ -163,9 +174,13 @@ function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
               disabled={pending || !canOperate || !supported}
             />
             {!supported ? (
-              <p role="status">Update this connection's backend to link Jira tickets.</p>
+              <p role="status">
+                <T>Update this connection's backend to link Jira tickets.</T>
+              </p>
             ) : !canOperate ? (
-              <p role="status">This connection cannot change threads.</p>
+              <p role="status">
+                <T>This connection cannot change threads.</T>
+              </p>
             ) : null}
             {error ? <p role="alert">{error}</p> : null}
           </form>
@@ -177,18 +192,18 @@ function JiraTicketDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
               disabled={pending || !canOperate || !supported}
               onClick={() => void save(null)}
             >
-              Unlink ticket
+              <T>Unlink ticket</T>
             </Button>
           ) : null}
           <Button variant="outline" disabled={pending} onClick={close}>
-            Cancel
+            <T>Cancel</T>
           </Button>
           <Button
             type="submit"
             form="link-jira-ticket"
             disabled={pending || !canOperate || !supported || !thread}
           >
-            Save ticket
+            <T>Save ticket</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

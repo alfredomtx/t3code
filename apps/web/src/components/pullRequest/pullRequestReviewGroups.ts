@@ -1,12 +1,14 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { classifyChangedFile, isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import * as Schema from "effect/Schema";
 
 export const ReviewFileGroup = Schema.Literals(["markdown", "tests", "source"]);
 export type ReviewFileGroup = typeof ReviewFileGroup.Type;
 export const REVIEW_FILE_GROUPS = [
-  { id: "markdown", label: "Markdown" },
-  { id: "tests", label: "Tests" },
-  { id: "source", label: "Source" },
+  { id: "markdown", label: m(msg("Markdown")) },
+  { id: "tests", label: m(msg("Tests")) },
+  { id: "source", label: m(msg("Source")) },
 ] as const;
 
 const SOURCE_EXTENSION =

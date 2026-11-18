@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 import { pipe } from "effect/Function";
 import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
@@ -157,8 +159,8 @@ function rejectSharedThemeEdit() {
   void import("~/components/ui/toast").then(({ toastManager }) => {
     toastManager.add({
       type: "info",
-      title: "Theme follows T3 Code Nightly",
-      description: "Change the theme in the main app. Return here to apply it.",
+      title: m(msg("Theme follows T3 Code Nightly")),
+      description: m(msg("Change the theme in the main app. Return here to apply it.")),
     });
   });
   return true;

@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import {
   STATIC_KEYBINDING_COMMANDS,
   type EnvironmentId,
@@ -135,6 +136,7 @@ type Snapshot = {
 export function useShortcutCoach(
   context: Partial<ShortcutMatchContext> | (() => Partial<ShortcutMatchContext>) = {},
 ) {
+  const gt = useGT();
   const navigate = useNavigate();
   const params = useParams({ strict: false });
   const snapshot = useRef<Snapshot | null>(null);
@@ -216,11 +218,11 @@ export function useShortcutCoach(
         title: commandLabel(command),
         description:
           shortcut.kind === "assigned"
-            ? `Next time, use ${shortcut.label}.`
-            : "No shortcut assigned.",
+            ? gt("Next time, use {shortcut}.", { shortcut: shortcut.label })
+            : gt("No shortcut assigned."),
         timeout: 6000,
         actionProps: {
-          children: shortcut.kind === "assigned" ? "Change shortcut" : "Assign shortcut",
+          children: shortcut.kind === "assigned" ? gt("Change shortcut") : gt("Assign shortcut"),
           disabled: captured.source === null,
           onClick: () => {
             if (captured.source === null) return;
@@ -241,7 +243,7 @@ export function useShortcutCoach(
           additionalActions: [
             {
               id: "suppress",
-              props: { children: "Do not remind me", onClick: () => suppress(command) },
+              props: { children: gt("Do not remind me"), onClick: () => suppress(command) },
             },
           ],
         },
@@ -257,7 +259,9 @@ export function ShortcutCoachSettings() {
   const [mode, setMode] = useLocalStorage(MODE_KEY, "learning", Mode);
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3">
-      <label htmlFor="shortcut-coach-mode">Shortcut coach</label>
+      <label htmlFor="shortcut-coach-mode">
+        <T>Shortcut coach</T>
+      </label>
       <select
         id="shortcut-coach-mode"
         value={mode}
@@ -268,12 +272,18 @@ export function ShortcutCoachSettings() {
           if (next === "off") toastManager.close(TOAST_ID);
         }}
       >
-        <option value="everyClick">Every click</option>
-        <option value="learning">Learning</option>
-        <option value="off">Off</option>
+        <option value="everyClick">
+          <T>Every click</T>
+        </option>
+        <option value="learning">
+          <T>Learning</T>
+        </option>
+        <option value="off">
+          <T>Off</T>
+        </option>
       </select>
       <Button variant="outline" size="sm" onClick={resetShortcutCoach}>
-        Reset reminders
+        <T>Reset reminders</T>
       </Button>
     </div>
   );
