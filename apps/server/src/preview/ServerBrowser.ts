@@ -3423,6 +3423,8 @@ const make = Effect.gen(function* () {
     } satisfies ServerBrowserViewer;
   });
 
+  // Subscribe before forking: a forked stream subscribes only once it runs, so a tab opened
+  // right after startup would publish its `opened` event to no one and never load.
   const managerEvents = yield* manager.subscribeEvents;
   yield* Stream.fromSubscription(managerEvents).pipe(
     Stream.runForEach(mirrorManagerEvent),
