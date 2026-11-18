@@ -21,7 +21,7 @@ it.each([
   [86_399_000, "23h ago", 1000],
   [86_400_000, "1d ago", 86_400_000],
 ])("formats age %i with seconds precision", (age, label, delay) => {
-  expect(formatRelativeTimeLabel(timestamp, instant + age, "seconds")).toBe(label);
+  expect(formatRelativeTimeLabel(timestamp, instant + age, undefined, "seconds")).toBe(label);
   expect(msUntilRelativeTimeChange(timestamp, instant + age, "seconds")).toBe(delay);
 });
 
@@ -33,9 +33,9 @@ it("keeps legacy minute snapshots and labels", () => {
 });
 
 it("keeps invalid dates absent and future dates clamped with bounded wakeups", () => {
-  expect(formatRelativeTimeLabel("invalid", instant, "seconds")).toBe("");
+  expect(formatRelativeTimeLabel("invalid", instant, undefined, "seconds")).toBe("");
   expect(msUntilRelativeTimeChange("invalid", instant, "seconds")).toBeNull();
-  expect(formatRelativeTimeLabel(timestamp, instant - 5000, "seconds")).toBe("0s ago");
+  expect(formatRelativeTimeLabel(timestamp, instant - 5000, undefined, "seconds")).toBe("0s ago");
   expect(msUntilRelativeTimeChange(timestamp, instant - 5000, "seconds")).toBe(6000);
   expect(msUntilRelativeTimeChange(timestamp, instant - 10 ** 12, "seconds")).toBe(86_400_000);
 });

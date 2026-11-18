@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -17,6 +18,7 @@ export function useRelativeTimeState(
   isoDate: string | null,
   precision: RelativeTimePrecision = "minutes",
 ): RelativeTimeState {
+  const resolve = useMessages();
   const subscribe = (onChange: () => void) => {
     if (isoDate === null) return () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -37,5 +39,5 @@ export function useRelativeTimeState(
 
   if (isoDate === null) return { status: "missing" };
   if (elapsedMs === null) return { status: "invalid" };
-  return { status: "relative", ...formatRelativeElapsed(elapsedMs, precision) };
+  return { status: "relative", ...formatRelativeElapsed(elapsedMs, resolve, precision) };
 }

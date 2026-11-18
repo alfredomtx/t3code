@@ -1,5 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { msg, useMessages } from "gt-react";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useContext, useEffect, useEffectEvent, useRef, useState } from "react";
@@ -64,7 +65,8 @@ export function usePullRequestFilesViewed(options: {
   const { environmentId, reference, enabled } = options;
   const registry = useContext(RegistryContext);
   const atom = pullRequestEnvironment.filesViewed({ environmentId, input: reference });
-  const query = useEnvironmentQuery(enabled ? atom : null);
+  const resolve = useMessages();
+  const query = useEnvironmentQuery(enabled ? atom : null, resolve);
   const canWrite = useAtomValue(
     pullRequestEnvironment.setFilesViewed.permissionAtom(environmentId),
   );
@@ -256,7 +258,7 @@ export function usePullRequestFilesViewed(options: {
         );
       }
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        toastManager.add({ type: "error", title: "Could not update viewed files" });
+        toastManager.add({ type: "error", title: resolve(msg("Could not update viewed files")) });
       }
       notify(lane);
     }

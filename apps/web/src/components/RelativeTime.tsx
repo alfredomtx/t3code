@@ -6,5 +6,5 @@ import { useRelativeTimeState } from "../hooks/useRelativeTimeState";
 export function RelativeTime(props: { timestamp: string; precision?: RelativeTimePrecision }) {
   const relative = useRelativeTimeState(props.timestamp, props.precision);
   if (relative.status !== "relative") return null;
-  return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+  return relative.label;
 }
