@@ -3251,8 +3251,7 @@ it.effect("publishes edits made before the restored settings watch is registered
                       Stream.concat(Stream.never),
                     );
                   }
-                  if (directory !== active) return fs.watch(directory, options);
-                  if (yield* Deferred.isDone(replaced)) {
+                  if (directory === active && (yield* Deferred.isDone(replaced))) {
                     yield* Deferred.succeed(registering, undefined);
                     yield* Deferred.await(allowRegistration);
                   }
