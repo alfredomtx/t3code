@@ -5050,12 +5050,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 item: {
                   type: "commandExecution",
                   id: "command-after-provider-retry",
-                  command: "pwd",
+                  command: "cat /skills/ponytail/SKILL.md",
                   cwd: "/workspace",
                   processId: "42",
                   source: "unifiedExecStartup",
                   status: "inProgress",
-                  commandActions: [{ type: "unknown", command: "pwd" }],
+                  commandActions: [
+                    {
+                      type: "read",
+                      command: "cat /skills/ponytail/SKILL.md",
+                      name: "SKILL.md",
+                      path: "/skills/ponytail/SKILL.md",
+                    },
+                  ],
                   aggregatedOutput: null,
                   exitCode: null,
                   durationMs: null,
@@ -5075,12 +5082,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 item: {
                   type: "commandExecution",
                   id: "command-after-provider-retry",
-                  command: "pwd",
+                  command: "cat /skills/ponytail/SKILL.md",
                   cwd: "/workspace",
                   processId: "42",
                   source: "unifiedExecStartup",
                   status: "completed",
-                  commandActions: [{ type: "unknown", command: "pwd" }],
+                  commandActions: [
+                    {
+                      type: "read",
+                      command: "cat /skills/ponytail/SKILL.md",
+                      name: "SKILL.md",
+                      path: "/skills/ponytail/SKILL.md",
+                    },
+                  ],
                   aggregatedOutput: "/workspace\n",
                   exitCode: 0,
                   durationMs: 10,
@@ -5148,8 +5162,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "command_execution" &&
-          event.turnItem.input === "pwd",
+          event.turnItem.input === "cat /skills/ponytail/SKILL.md",
       );
+      const readItems = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" &&
+        event.turnItem.type === "command_execution" &&
+        event.turnItem.input === "cat /skills/ponytail/SKILL.md"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.isUndefined(readItems[0]?.skillReadPaths);
+      assert.deepEqual(readItems.at(-1)?.skillReadPaths, ["/skills/ponytail/SKILL.md"]);
       const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
       assert.isAtLeast(recoveredIndex, 0);
       assert.isAbove(resumedCommandIndex, recoveredIndex);

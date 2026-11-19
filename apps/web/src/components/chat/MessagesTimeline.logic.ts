@@ -81,6 +81,8 @@ import {
 } from "@t3tools/shared/toolActivityCopy";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
 
+import { skillReadName, skillReadPaths } from "./sessionSkills";
+
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
     return entry.message.role === "assistant" ? (entry.message.runId ?? null) : null;
@@ -156,6 +158,10 @@ export function workEntryDisplayLabel(
   }
   const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
+  const skills = skillReadPaths(entry.structuredPayload);
+  if (skills.length > 0) {
+    return resolve(msg("Read skill: {names}", { names: skills.map(skillReadName).join(", ") }));
+  }
   if (entry.command?.trim()) return commandDisplayText(entry.command);
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {

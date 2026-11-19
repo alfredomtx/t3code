@@ -4005,6 +4005,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             { type: "commandExecution" }
           >,
         ) {
+          const skillReadPaths =
+            item.status === "completed" && item.exitCode === 0
+              ? item.commandActions.flatMap((action) =>
+                  action.type === "read" && /(?:^|[\\/])SKILL\.md$/u.test(action.path)
+                    ? [action.path]
+                    : [],
+                )
+              : [];
           const updatedAt = yield* DateTime.now;
           const status = codexItemStatus(item.status);
           const completedAt = status.completed ? updatedAt : null;
@@ -4051,6 +4059,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             updatedAt,
             type: "command_execution",
             input: item.command,
+            ...(skillReadPaths.length > 0 ? { skillReadPaths } : {}),
             ...(item.aggregatedOutput === null || item.aggregatedOutput === undefined
               ? {}
               : { output: item.aggregatedOutput }),
