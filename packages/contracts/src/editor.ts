@@ -164,7 +164,7 @@ export const LaunchEditorInput = Schema.Struct({
       column: Schema.optional(PositiveInt),
     }),
   ),
-  /** Workspace the target belongs to; JetBrains IDEs open positioned files in this project. */
+  /** Workspace to open with the file in Zed or with a positioned file in a JetBrains IDE. */
   projectRoot: Schema.optional(TrimmedNonEmptyString),
   /** Only for file-manager; requires the server's shellRevealInFileManager capability. */
   reveal: Schema.optional(Schema.Boolean),

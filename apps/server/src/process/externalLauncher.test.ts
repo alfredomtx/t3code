@@ -778,7 +778,17 @@ for (const wsl of [false, true]) {
   );
 }
 
-for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12:4"]) {
+const zedProject = "/workspace with spaces";
+for (const { cwd, projectRoot, expected } of [
+  { cwd: zedProject + "/", expected: [zedProject + "/"] },
+  { cwd: zedProject + "/file.ts:12:4", expected: [zedProject + "/file.ts:12:4"] },
+  {
+    cwd: zedProject + "/file.ts",
+    projectRoot: zedProject,
+    expected: [zedProject, zedProject + "/file.ts"],
+  },
+  { cwd: zedProject, projectRoot: zedProject, expected: [zedProject] },
+]) {
   it.effect.skipIf(windowsHost)(
     `opens ${cwd} with the macOS Zed bundle when another zed is on PATH`,
     () =>
@@ -799,7 +809,7 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
         yield* Effect.gen(function* () {
           const launcher = yield* ExternalLauncher.ExternalLauncher;
           assert.include(yield* launcher.resolveAvailableEditors(), "zed");
-          yield* launcher.launchEditor({ editor: "zed", cwd });
+          yield* launcher.launchEditor({ editor: "zed", cwd, projectRoot });
         }).pipe(
           Effect.provide(
             layerTest({
@@ -813,7 +823,7 @@ for (const cwd of ["/workspace with spaces/", "/workspace with spaces/file.ts:12
         );
         assert.ok(spawned);
         assert.equal(spawned.command, executable);
-        assert.deepEqual(spawned.args, [cwd]);
+        assert.deepEqual(spawned.args, expected);
         assert.equal(spawned.options.shell, false);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );

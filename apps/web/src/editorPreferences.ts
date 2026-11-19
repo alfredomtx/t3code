@@ -100,6 +100,7 @@ export function useOpenInPreferredEditor(
 
   return async (
     targetPath: string,
+    targetProjectRoot = projectRoot,
   ): Promise<
     AtomCommandResult<
       EditorId,
@@ -148,7 +149,7 @@ export function useOpenInPreferredEditor(
         cwd: uri ? safeDecodeURIComponent(uri.path) : targetPath,
         ...(uri ? { position: { line, column } } : {}),
         editor,
-        ...(projectRoot ? { projectRoot } : {}),
+        ...(targetProjectRoot ? { projectRoot: targetProjectRoot } : {}),
       },
     });
     return mapAtomCommandResult(result, () => editor);

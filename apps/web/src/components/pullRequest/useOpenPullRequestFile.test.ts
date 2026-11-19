@@ -39,10 +39,13 @@ function setup(refs: readonly VcsRef[] = [branch()]) {
   });
 }
 
-it("opens the file in the checked-out PR worktree instead of the project branch", async () => {
+it("opens the file with its checked-out PR worktree as the editor project", async () => {
   const open = setup([branch({ name: "main", worktreePath: "/repo" }), branch()]);
   await open("app/Request.php");
-  expect(state.open).toHaveBeenCalledExactlyOnceWith("/repo-feature/app/Request.php");
+  expect(state.open).toHaveBeenCalledExactlyOnceWith(
+    "/repo-feature/app/Request.php",
+    "/repo-feature",
+  );
   expect(state.toast).not.toHaveBeenCalled();
 });
 
@@ -68,7 +71,7 @@ it("finds an exact branch on a later page of matching refs", async () => {
     AsyncResult.success({ refs: [branch({ name: "feature-other" })], nextCursor: 1 }),
   );
   await open("a.ts");
-  expect(state.open).toHaveBeenCalledExactlyOnceWith("/repo-feature/a.ts");
+  expect(state.open).toHaveBeenCalledExactlyOnceWith("/repo-feature/a.ts", "/repo-feature");
 });
 
 it("refuses a stale worktree claim after the checkout changes branches", async () => {

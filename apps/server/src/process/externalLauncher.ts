@@ -161,7 +161,9 @@ function resolveCommandEditorArgs(
 
   switch (editor.launchStyle) {
     case "direct-path":
-      return [positionedTarget];
+      return editor.id === "zed" && projectRoot !== undefined && projectRoot !== target
+        ? [projectRoot, positionedTarget]
+        : [positionedTarget];
     case "goto":
       // An existing folder wins over a position: `build:2026` is a legal folder name.
       // Without a window flag, VS Code's window settings may replace the user's last active window.

@@ -81,7 +81,7 @@ export function useOpenPullRequestFile(
     if (metadata.value.entries[0]?.kind !== "file") {
       throw new Error(`The file ${filePath} is missing or unreadable in ${checkout}.`);
     }
-    const opened = await openInEditor(target);
+    const opened = await openInEditor(target, checkout);
     if (opened._tag === "Failure" && !isAtomCommandInterrupted(opened)) {
       throw squashAtomCommandFailure(opened);
     }
