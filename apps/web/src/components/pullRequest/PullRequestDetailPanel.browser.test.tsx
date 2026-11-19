@@ -71,7 +71,11 @@ vi.mock("./PullRequestSummaryTab", () => ({
 vi.mock("./PullRequestTimelineTab", () => ({
   PullRequestTimelineTab: () => <div>Timeline content</div>,
 }));
-vi.mock("./PullRequestCodeTab", () => ({ default: () => <div>Code content</div> }));
+vi.mock("./PullRequestCodeTab", () => ({
+  default: ({ selectedCommitOid }: { selectedCommitOid: string | null }) => (
+    <div>{selectedCommitOid ?? "All commits"}</div>
+  ),
+}));
 
 const detail: PullRequestDetailView = {
   provider: SourceControlProviderKind.make("github"),
@@ -126,14 +130,20 @@ const detail: PullRequestDetailView = {
 };
 
 const ref = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread"));
+const commitOid = "c9c9bfe2e6fec8ee853695d92b2a8edabc5a367a";
+
 function Panel() {
   const surface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, ref),
   );
   const open = useOpenChangeRequestLink(ref);
   if (surface?.kind !== "pull-request") return null;
+  const commitUrl = `${detail.url}/changes/${commitOid}`;
   return (
     <>
+      <a href={commitUrl} onClick={(event) => open(event, commitUrl)}>
+        Open commit link
+      </a>
       <a href={detail.url} onClick={(event) => open(event, detail.url)}>
         Open PR link
       </a>
@@ -151,6 +161,14 @@ function Panel() {
           isWeb: true,
           isDesktop: false,
         })}
+        revealUrl={surface.revealUrl}
+        onRevealSettled={(url) =>
+          useRightPanelStore.getState().settlePullRequestReveal(ref, surface.id, url)
+        }
+        commitRequest={surface.commitRequest}
+        onCommitRequestHandled={(id) =>
+          useRightPanelStore.getState().consumePullRequestCommitRequest(ref, surface.id, id)
+        }
         selectedTab={surface.detailTab ?? "summary"}
         onTabChange={(tab) =>
           useRightPanelStore.getState().setPullRequestDetailTab(ref, surface.id, tab)
@@ -184,3 +202,17 @@ it.each(["Code", "Timeline"])(
     await expect.element(screen.getByText("Summary content", { exact: true })).toBeVisible();
   },
 );
+
+it("keeps the linked commit selected when revealing a GitHub changes URL", async () => {
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.getState().openPullRequest(ref, {
+    projectId: detail.projectId,
+    repository: detail.repository,
+    number: detail.number,
+    detailTab: "code",
+  });
+  await using screen = await render(<Panel />);
+  await expect.element(screen.getByText("All commits", { exact: true })).toBeVisible();
+  await userEvent.click(screen.getByRole("link", { name: "Open commit link" }));
+  await expect.element(screen.getByText(commitOid, { exact: true })).toBeVisible();
+});

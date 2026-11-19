@@ -108,6 +108,7 @@ it("handles encoded hashes and rejects invalid line numbers and URLs", () => {
 it("keeps the commit scope of a PR diff permalink", () => {
   const sha = "a".repeat(40);
   expect(pullRequestLinkCommit(`${url}/commits/${sha}#diff-abcR5`)).toBe(sha);
+  expect(pullRequestLinkCommit(`${url}/changes/${sha.toUpperCase()}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${forgejo}/commits/${sha}#diff-abcR5`)).toBe(sha);
   expect(pullRequestLinkCommit(`${url}/files#diff-abcR5`)).toBeNull();
   expect(pullRequestLinkCommit(`${gitlab}/diffs?commit_id=${sha}#${"b".repeat(40)}`)).toBe(sha);

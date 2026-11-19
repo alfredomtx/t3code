@@ -1,5 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
-import { parsePullRequestAnchor } from "@t3tools/shared/pullRequestAnchor";
+import { parsePullRequestAnchor, pullRequestLinkCommit } from "@t3tools/shared/pullRequestAnchor";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -47,12 +47,9 @@ export function parsePullRequestLink(targetUrl: string):
   if (parsed === null || parsed === undefined) return null;
   const { link } = parsed;
   const github = parsed.definition.kind === "github";
-  const match = /^\/[^/]+\/[^/]+\/pull\/\d+\/(?:commits|changes)\/([a-fA-F0-9]{40})\/?$/u.exec(
-    github ? new URL(targetUrl).pathname : "",
-  );
   return {
     ...link,
-    commitOid: match?.[1]?.toLowerCase() ?? null,
+    commitOid: github ? pullRequestLinkCommit(targetUrl) : null,
     commentAnchor: github ? pullRequestCommentAnchor(targetUrl) : null,
   };
 }

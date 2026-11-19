@@ -207,8 +207,8 @@ export function pullRequestLinkCommit(url: string | null | undefined): string | 
     const { pathname, searchParams } = new URL(url);
     const commit = /\/-\/merge_requests\/\d+\/diffs\/?$/i.test(pathname)
       ? searchParams.get("commit_id")
-      : /\/pulls?\/\d+\/commits\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
-    return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit : null;
+      : /\/pulls?\/\d+\/(?:commits|changes)\/([a-f0-9]{40})\/?$/i.exec(pathname)?.[1];
+    return commit && /^[a-f0-9]{40}$/i.test(commit) ? commit.toLowerCase() : null;
   } catch {
     return null;
   }
