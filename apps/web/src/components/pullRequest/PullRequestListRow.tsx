@@ -64,6 +64,7 @@ export function PullRequestRowLines({
   signals,
   meta,
   metaClassName,
+  size = "compact",
   updatedAt,
 }: {
   number: ReactNode;
@@ -72,23 +73,30 @@ export function PullRequestRowLines({
   signals?: ReactNode;
   meta?: ReactNode;
   metaClassName?: string;
+  size?: "compact" | "page";
   updatedAt?: string | null | undefined;
 }) {
+  const metadataSize = size === "page" ? "text-pr-meta" : "text-2xs";
   return (
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-1.5">
         {number}
-        <span className="min-w-0 truncate text-sm">{title}</span>
+        <span className={cn("min-w-0 truncate", size === "page" ? "text-base" : "text-sm")}>
+          {title}
+        </span>
         {signals ? (
-          <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
+          <span className={cn("flex shrink-0 items-center gap-1", metadataSize)}>{signals}</span>
         ) : null}
         {status ? (
-          <span className="ml-auto flex shrink-0 items-center gap-1.5 text-2xs">{status}</span>
+          <span className={cn("ml-auto flex shrink-0 items-center gap-1.5", metadataSize)}>
+            {status}
+          </span>
         ) : null}
       </span>
       <span
         className={cn(
-          "flex min-w-0 items-center gap-1.5 overflow-hidden text-2xs text-muted-foreground",
+          "flex min-w-0 items-center gap-1.5 overflow-hidden text-muted-foreground",
+          metadataSize,
           metaClassName,
         )}
       >

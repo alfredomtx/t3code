@@ -76,7 +76,7 @@ export function PullRequestStackPopover({
                 <span
                   role="button"
                   tabIndex={0}
-                  className="inline-flex shrink-0 cursor-pointer items-center gap-1 text-xs font-normal text-muted-foreground"
+                  className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-border bg-muted px-2 py-0.5 text-pr-meta leading-4 font-semibold text-foreground tabular-nums hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring data-popup-open:bg-accent"
                 />
               }
               aria-label={gt("Stack {number}, layer {position} of {size}", {
@@ -87,7 +87,7 @@ export function PullRequestStackPopover({
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
-              <PullRequestGlyph.stack aria-hidden className="size-3" />
+              <PullRequestGlyph.stack aria-hidden className="size-3.5" />
               {membership.position}/{membership.size}
             </MenuTrigger>
           }
@@ -101,6 +101,7 @@ export function PullRequestStackPopover({
       </Tooltip>
       <MenuPopup
         align="start"
+        className="w-80"
         onClick={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >

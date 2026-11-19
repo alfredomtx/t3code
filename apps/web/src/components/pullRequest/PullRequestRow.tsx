@@ -45,6 +45,7 @@ function PullRequestRowLabels({ labels }: { labels: EnvironmentPullRequestEntry[
           <PullRequestLabelChip
             key={label.name}
             label={label}
+            size="default"
             className={
               index === 0
                 ? ""
@@ -112,7 +113,7 @@ function PullRequestRowImpl({
       data-pull-request-stats-key={statsKey}
       data-pull-request-key={statsKey}
       className={cn(
-        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:56.5px]",
+        "flex items-center rounded-md [content-visibility:auto] [contain-intrinsic-block-size:64px]",
         selected ? "bg-accent" : "hover:bg-accent/60",
       )}
     >
@@ -142,9 +143,10 @@ function PullRequestRowImpl({
           className="mt-0.75 self-start"
         />
         <PullRequestRowLines
+          size="page"
           number={
             <span
-              className={PULL_REQUEST_ROW_NUMBER_CLASS}
+              className={cn(PULL_REQUEST_ROW_NUMBER_CLASS, "text-pr-meta")}
               onContextMenu={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
@@ -214,7 +216,7 @@ function PullRequestRowImpl({
                 <Tooltip>
                   <TooltipTrigger
                     render={
-                      <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1 text-3xs" />
+                      <span className="flex min-w-6 items-center gap-1 overflow-hidden rounded-full border border-border/60 px-1" />
                     }
                   >
                     <span className="sr-only">
