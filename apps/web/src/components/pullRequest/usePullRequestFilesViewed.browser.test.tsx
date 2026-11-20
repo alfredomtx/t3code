@@ -1,7 +1,8 @@
-import { createAtomCommandScheduler } from "@t3tools/client-runtime/state/runtime";
+import { createAtomCommandScheduler, runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { RegistryContext } from "@effect/atom-react";
 import { EnvironmentId, ProjectId, type PullRequestFilesViewedResult } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 import { AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { useEffect, useState } from "react";
@@ -64,12 +65,20 @@ function setup(count: number) {
   mocked.execute.mockReset();
   mocked.command.mockReset();
   mocked.command.mockImplementation((value) =>
-    scheduler.schedule(
+    runAtomCommand(
       registry,
-      { mode: "serial", key: ({ input }) => String(input.number) },
+      {
+        label: "set files viewed",
+        run: (registry, input) =>
+          scheduler.schedule(
+            registry,
+            { mode: "serial", key: ({ input }) => String(input.number) },
+            input,
+            Effect.promise(() => mocked.execute(input)),
+          ),
+      },
       value,
-      () => mocked.execute(value),
-    ),
+    ).then((result) => (result._tag === "Success" ? result.value : result)),
   );
   mocked.execute.mockImplementation(async ({ input }) => {
     const current = new Map(

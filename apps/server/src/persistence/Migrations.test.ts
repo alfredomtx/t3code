@@ -35,6 +35,14 @@ import IssueTrackerBindings from "./Migrations/098_IssueTrackerBindings.ts";
 import ActiveShellIndexIndexes from "./Migrations/099_ActiveShellIndexIndexes.ts";
 import TurnItemInlineWorkOutput from "./Migrations/096_TurnItemInlineWorkOutput.ts";
 
+import BackgroundRecoveryIndexes from "./Migrations/100_BackgroundRecoveryIndexes.ts";
+
+import TurnStartReadIndexes from "./Migrations/101_TurnStartReadIndexes.ts";
+
+import DelegatedTaskReadIndexes from "./Migrations/102_DelegatedTaskReadIndexes.ts";
+
+import ThreadItemCounts from "./Migrations/103_ThreadItemCounts.ts";
+
 const v2Migrations = migrationManifest.filter(([id]) => id >= 55);
 const newerMigrationId = Math.max(...migrationManifest.map(([id]) => id)) + 1;
 
@@ -55,7 +63,7 @@ const v2TableCount = Effect.gen(function* () {
 });
 
 describe("runMigrations", () => {
-  it.effect.each([86, 97])(
+  it.effect.each([86, 97, 101])(
     "upgrades published Personal history through %s without reusing its ids",
     (head) =>
       Effect.gen(function* () {
@@ -76,7 +84,7 @@ describe("runMigrations", () => {
 
   it.effect.each([
     74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97,
-    98,
+    98, 99, 100, 101, 102,
   ])("upgrades official history through %s without repeating schema changes", (head) =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
@@ -107,6 +115,10 @@ describe("runMigrations", () => {
         [96, "RepairStaleTitleRegeneration", RepairStaleTitleRegeneration],
         [97, "IssueTrackerBindings", IssueTrackerBindings],
         [98, "ActiveShellIndexIndexes", ActiveShellIndexIndexes],
+        [99, "BackgroundRecoveryIndexes", BackgroundRecoveryIndexes],
+        [100, "TurnStartReadIndexes", TurnStartReadIndexes],
+        [101, "DelegatedTaskReadIndexes", DelegatedTaskReadIndexes],
+        [102, "ThreadItemCounts", ThreadItemCounts],
       ] as const;
       for (const [id, name, migration] of official) {
         if (id > head) break;

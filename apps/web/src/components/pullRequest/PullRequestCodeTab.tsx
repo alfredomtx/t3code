@@ -1,7 +1,9 @@
 import {
+  EMPTY_PULL_REQUEST_DIFF_FOLDS,
+  foldAllPullRequestDiffs,
   isFileDiffCollapsed,
   withFileDiffFold,
-  type DiffFoldOverride,
+  withPullRequestDiffFold,
   type FileDiffFoldChoices,
 } from "@t3tools/client-runtime/pull-request-diff-fold";
 import { TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR } from "../chat/composerFocusRedirect";
@@ -39,6 +41,7 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   Columns2Icon,
+  FlaskConicalOffIcon,
   FolderTreeIcon,
   InfoIcon,
   MessageSquareOffIcon,
@@ -83,9 +86,11 @@ import {
   canResolvePullRequestThread,
 } from "@t3tools/client-runtime/pull-request-editing";
 import { fileDiffRows } from "@t3tools/client-runtime/review-guide-tour";
+import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { orderDiffFilesForReview } from "@t3tools/client-runtime/diff-file-order";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
-import { orderDiffFiles } from "./pullRequestFileOrder.logic";
 import {
+  buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
   getDiffLineStat,
@@ -116,7 +121,8 @@ import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { FileExplorerPane } from "../files/FileExplorerPane";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
-import { diffFileTreeEntries, orderDiffFilesLikeTree } from "../diffs/diffFileTree.logic";
+import { useHideTestFiles } from "../diffs/useHideTestFiles";
+import { diffFileTreeEntries } from "../diffs/diffFileTree.logic";
 import { StyledDiffCodeView } from "../diffs/StyledDiffCodeView";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
@@ -267,10 +273,9 @@ function diffModel(
   });
   const model: DiffModel = {
     parsedSlices,
-    loadedFiles: orderDiffFilesLikeTree(
-      parsedSlices.flatMap((parsed) =>
-        parsed?.kind === "files" ? orderDiffFiles(parsed.files) : [],
-      ),
+    loadedFiles: orderDiffFilesForReview(
+      parsedSlices.flatMap((parsed) => (parsed?.kind === "files" ? parsed.files : [])),
+      resolveFileDiffPath,
     ),
     sourceFileStats: new Map(
       parsedSlices.flatMap((parsed) =>
@@ -399,6 +404,13 @@ export interface PullRequestAgentSelectionInput {
   readonly request: string;
 }
 
+// A test's fold belongs to the file even when filtering or a refresh replaces its viewer item.
+function buildFileDiffFoldKey(fileDiff: FileDiffMetadata): string {
+  return isTestChangedFile(resolveFileDiffPath(fileDiff))
+    ? buildFileDiffIdentityKey(fileDiff)
+    : buildFileDiffRenderKey(fileDiff);
+}
+
 function isRemovedLine(fileDiff: FileDiffMetadata, oldLine: number): boolean {
   return fileDiff.hunks.some((hunk) => {
     let next = hunk.deletionStart;
@@ -466,10 +478,20 @@ function PullRequestCodeTab({
     diffLayout: settings.diffLayout,
     wordWrap: settings.wordWrap,
   }));
+  const [hideTestFiles, setHideTestFiles] = useHideTestFiles();
+  const [folds, setFolds] = useState(EMPTY_PULL_REQUEST_DIFF_FOLDS);
+  const foldGroup = (path: string) => {
+    const group = isTestChangedFile(path) ? folds.test : folds.source;
+    return group.override === null && settings.diffFilesCollapsed
+      ? { ...group, override: "folded" as const }
+      : group;
+  };
+  const setFoldChoices = (
+    path: string,
+    update: (choices: FileDiffFoldChoices) => FileDiffFoldChoices,
+  ) => setFolds((current) => withPullRequestDiffFold(current, isTestChangedFile(path), update));
   const [lastViewedFileKey, setLastViewedFileKey] = useState<string | null>(null);
-  const [fileFolds, setFileFolds] = useState<FileDiffFoldChoices>(() => new Map());
   const [visibleCommitCount, setVisibleCommitCount] = useState(COMMIT_PAGE_SIZE);
-  const [foldOverride, setFoldOverride] = useState<DiffFoldOverride>(null);
   const [pendingViewedGroup, setPendingViewedGroup] = useState<ReviewFileGroup | null>(null);
   const pendingViewedGroupMessage = REVIEW_FILE_GROUPS.find(
     ({ id }) => id === pendingViewedGroup,
@@ -530,8 +552,7 @@ function PullRequestCodeTab({
     setPendingViewedGroup(null);
     setDraft(null);
     setSelectedLines(null);
-    setFileFolds(new Map());
-    setFoldOverride(null);
+    setFolds(EMPTY_PULL_REQUEST_DIFF_FOLDS);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
     setOrphansOpen(false);
     setSliceState({ key: scopeKey, cursor: null, slices: NO_SLICES });
@@ -772,10 +793,9 @@ function PullRequestCodeTab({
       if (hasCutLines(data.patch)) cutFiles.add(file);
     } else withheldStatuses.set(path, "empty");
   });
-  // Fold choices follow render keys, so a loaded or refetched patch would otherwise fold again
-  // when marked Viewed: it opens on first load and keeps its earlier key's choice after.
+  // A withheld patch opens on first load and keeps its choice when its fold key changes.
   const rekeyed = [...withheldFiles].flatMap(([path, file]) => {
-    const key = buildFileDiffRenderKey(file);
+    const key = buildFileDiffFoldKey(file);
     return withheldLoads.shownKeys.get(path) === key ? [] : [[path, key] as const];
   });
   if (withheldLoads.scope === scopeKey && rekeyed.length > 0) {
@@ -783,13 +803,13 @@ function PullRequestCodeTab({
       ...withheldLoads,
       shownKeys: new Map([...withheldLoads.shownKeys, ...rekeyed]),
     });
-    setFileFolds((current) =>
-      rekeyed.reduce((next, [path, key]) => {
-        const shown = withheldLoads.shownKeys.get(path);
-        const collapsed = shown === undefined ? false : current.get(shown);
-        return collapsed === undefined ? next : withFileDiffFold(next, key, collapsed);
-      }, current),
-    );
+    for (const [path, key] of rekeyed) {
+      const shown = withheldLoads.shownKeys.get(path);
+      setFoldChoices(path, (current) => {
+        const collapsed = shown === undefined ? (current.get(key) ?? false) : current.get(shown);
+        return collapsed === undefined ? current : withFileDiffFold(current, key, collapsed);
+      });
+    }
   }
   const loadedFiles =
     withheldFiles.size === 0
@@ -816,7 +836,23 @@ function PullRequestCodeTab({
         )
       : undefined;
   const pendingLinkPath = linkFile ? resolveFileDiffPath(linkFile) : null;
-  const files = loadedFiles;
+  // The linked file stays shown past the test-file filter after the link settles.
+  const [revealedLink, setRevealedLink] = useState<{
+    readonly scope: string;
+    readonly path: string;
+  } | null>(null);
+  const linkPath = pendingLinkPath ?? (revealedLink?.scope === scopeKey ? revealedLink.path : null);
+  const testFileCount = loadedFiles.filter((file) =>
+    isTestChangedFile(resolveFileDiffPath(file)),
+  ).length;
+  // A requested file stays visible so a jump to a hidden test still lands.
+  const files = hideTestFiles
+    ? loadedFiles.filter((file) => {
+        const path = resolveFileDiffPath(file);
+        return path === revealRequest?.path || path === linkPath || !isTestChangedFile(path);
+      })
+    : loadedFiles;
+  const hiddenTestFileCount = loadedFiles.length - files.length;
   const filePaths = loadedFiles.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
@@ -927,6 +963,7 @@ function PullRequestCodeTab({
     }
     return {
       fileKey,
+      foldKey: buildFileDiffFoldKey(fileDiff),
       path,
       fileDiff,
       annotations,
@@ -996,14 +1033,12 @@ function PullRequestCodeTab({
   const foldsAsViewed = (path: string) =>
     filesViewedEnabled && isFileViewed(path) && !isFileViewedStale(path);
   const items: CodeViewDiffItem<ReviewAnnotationGroup>[] = annotatedFiles.map(
-    ({ fileKey, path, fileDiff, annotations, annotationsVersion }) => {
-      const collapsed = isFileDiffCollapsed(
-        fileKey,
-        foldOverride,
-        fileFolds,
-        (settings.diffFilesCollapsed || foldsAsViewed(path)) &&
-          scrollState.value.expandedFileId !== fileKey,
-      );
+    ({ fileKey, foldKey, path, fileDiff, annotations, annotationsVersion }) => {
+      const group = foldGroup(path);
+      const collapsed =
+        group.choices.get(foldKey) ??
+        (scrollState.value.expandedFileId !== fileKey &&
+          isFileDiffCollapsed(foldKey, group.override, group.choices, foldsAsViewed(path)));
       const viewedMark = filesViewedEnabled
         ? `e${isFileViewed(path) ? "v" : ""}${isFileViewedStale(path) ? "s" : ""}`
         : "";
@@ -1135,14 +1170,15 @@ function PullRequestCodeTab({
       return;
     const paths = [...inventoryPaths].filter((path) => reviewFileGroup(path) === group);
     setPendingViewedGroup(group);
-    setFileFolds((current) =>
-      annotatedFiles.reduce(
-        (next, file) =>
-          reviewFileGroup(file.path) === group
-            ? withFileDiffFold(next, file.fileKey, viewed)
-            : next,
-        current,
-      ),
+    setFolds((current) =>
+      loadedFiles.reduce((next, file) => {
+        const path = resolveFileDiffPath(file);
+        return reviewFileGroup(path) === group
+          ? withPullRequestDiffFold(next, isTestChangedFile(path), (choices) =>
+              withFileDiffFold(choices, buildFileDiffFoldKey(file), viewed),
+            )
+          : next;
+      }, current),
     );
     try {
       const result = await filesViewed.setManyViewed(paths.map((path) => ({ path, viewed })));
@@ -1158,8 +1194,12 @@ function PullRequestCodeTab({
     if (isCurrentScope(scopeKey, actionGeneration)) setPendingViewedGroup(null);
   };
 
-  const setFileFold = (fileKey: string, collapsed: boolean) =>
-    setFileFolds((current) => withFileDiffFold(current, fileKey, collapsed));
+  const setFileFold = (fileKey: string, collapsed: boolean) => {
+    const file = annotatedFiles.find((candidate) => candidate.fileKey === fileKey);
+    if (file !== undefined) {
+      setFoldChoices(file.path, (current) => withFileDiffFold(current, file.foldKey, collapsed));
+    }
+  };
 
   const setFileViewed = (fileKey: string, viewed: boolean, extendRange: boolean) => {
     const range = getFileViewedRange(
@@ -1172,17 +1212,10 @@ function PullRequestCodeTab({
       // A commit's diff names that commit's version of the file, not the head's.
       setViewed(file.path, viewed, commit === null ? file.fileDiff.newObjectId : undefined);
     }
-    setFileFolds((current) =>
-      range.reduce(
-        (next, file) =>
-          withFileDiffFold(
-            next,
-            file.fileKey,
-            foldOverride === null && !settings.diffFilesCollapsed ? undefined : viewed,
-          ),
-        current,
-      ),
-    );
+    for (const file of range) {
+      const collapsed = foldGroup(file.path).override === null ? undefined : viewed;
+      setFoldChoices(file.path, (current) => withFileDiffFold(current, file.foldKey, collapsed));
+    }
   };
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const markHoveredFile = useStableCallback((event: KeyboardEvent) => {
@@ -1261,15 +1294,26 @@ function PullRequestCodeTab({
   const revealFile = (path: string, range?: SelectedLineRange) => {
     const item = items.find((candidate) => resolveFileDiffPath(candidate.fileDiff) === path);
     if (item === undefined) return;
-    setFileFold(item.id, false);
+    // Record the unfold even when already open, so a Viewed mark that loads later cannot fold it.
+    setFoldChoices(path, (current) =>
+      withFileDiffFold(current, buildFileDiffFoldKey(item.fileDiff), false),
+    );
     scrollState.value.cancel();
     if (range) setSelectedLines({ id: item.id, range });
     codeViewReveal.request(item.id, range);
   };
 
   const toggleAllFiles = () => {
-    setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
-    setFileFolds(new Map());
+    const shownTestKeys = annotatedFiles.flatMap((file) =>
+      isTestChangedFile(file.path) ? [file.foldKey] : [],
+    );
+    setFolds((current) =>
+      foldAllPullRequestDiffs(
+        current,
+        allFilesCollapsed ? "expanded" : "folded",
+        hideTestFiles ? { shownKeys: shownTestKeys } : null,
+      ),
+    );
   };
 
   const orderedCommits = // GitLab preserves UTC offsets, so compare instants.
@@ -1435,7 +1479,16 @@ function PullRequestCodeTab({
     onItemCollapsedChange: (
       _item: CodeViewItem<ReviewAnnotationGroup>,
       nextItem: CodeViewItem<ReviewAnnotationGroup>,
-    ) => setFileFold(nextItem.id, nextItem.collapsed === true),
+    ) => {
+      if (nextItem.type !== "diff") return;
+      setFoldChoices(resolveFileDiffPath(nextItem.fileDiff), (current) =>
+        withFileDiffFold(
+          current,
+          buildFileDiffFoldKey(nextItem.fileDiff),
+          nextItem.collapsed === true,
+        ),
+      );
+    },
   };
 
   const runThreadCommand = async (
@@ -1674,6 +1727,14 @@ function PullRequestCodeTab({
             })}
             {nextCursor === null ? "" : "+"}
           </span>
+          {hiddenTestFileCount > 0 ? (
+            <Button type="button" size="xs" variant="link" onClick={() => setHideTestFiles(false)}>
+              {gt(
+                "{count, plural, one {{count} test file hidden} other {{count} test files hidden}}",
+                { count: hiddenTestFileCount },
+              )}
+            </Button>
+          ) : null}
           {filesViewed.enabled && loadedFiles.length > 0 ? (
             <span className="flex min-w-0 items-center gap-1 tabular-nums">
               <span className="shrink-0">
@@ -1932,6 +1993,26 @@ function PullRequestCodeTab({
             </TooltipPopup>
           </Tooltip>
         </div>
+        {testFileCount > 0 ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={gt("Hide test files")}
+                  variant="ghost"
+                  size="sm"
+                  pressed={hideTestFiles}
+                  onPressedChange={(pressed) => setHideTestFiles(Boolean(pressed))}
+                />
+              }
+            >
+              <FlaskConicalOffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {hideTestFiles ? gt("Show test files") : gt("Hide test files")}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
         {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -2022,6 +2103,7 @@ function PullRequestCodeTab({
       return;
     }
     answeredLink.current = key;
+    setRevealedLink({ scope: scopeKey, path: pendingLinkPath });
     onRevealSettled?.(revealUrl);
     const range =
       linkAnchor.range &&
