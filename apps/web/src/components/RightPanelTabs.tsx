@@ -1131,13 +1131,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
 
   if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
 
-  const openNewSurfaceLauncher = useEffectEvent(() => {
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS))
-      return false;
-    addSurfaceTriggerRef.current?.focus();
-    if (!addSurfaceMenuOpen) addSurfaceTriggerRef.current?.click();
-    return true;
-  });
+  const addSurfaceMenuBlocked = () =>
+    !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
   const activateAdjacentTab = (direction: -1 | 1) => {
     if (props.surfaces.length < 2) return;
     const index = props.surfaces.findIndex((surface) => surface.id === props.activeSurfaceId);
@@ -1148,10 +1143,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     if (next) props.onActivate(next);
   };
   const onForwardedPanelAction = useEffectEvent((action: string) => {
+    if (action === "rightPanel.new") {
+      // Focusing the trigger from the browser guest lets ChatView refocus the composer.
+      if (!addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
+      return;
+    }
     if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
     if (action === "rightPanel.previousTab") activateAdjacentTab(-1);
     else if (action === "rightPanel.nextTab") activateAdjacentTab(1);
-    else if (action === "rightPanel.new") openNewSurfaceLauncher();
     else if (action === "rightPanel.close") {
       const active = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
       if (active) props.onCloseSurface(active);
@@ -1178,11 +1177,12 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       return;
     }
     if (command !== "rightPanel.new") return;
-    if (!addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    if (addSurfaceMenuBlocked()) return;
     event.preventDefault();
     event.stopPropagation();
     if (!event.repeat) {
-      openNewSurfaceLauncher();
+      addSurfaceTriggerRef.current?.focus();
+      setAddSurfaceMenuOpen(true);
     }
   });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
