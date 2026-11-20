@@ -10,9 +10,10 @@ import { expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
+import { Atom, AtomRegistry } from "effect/reactivity";
 
 import {
   AVAILABLE_CONNECTION_STATE,
@@ -138,13 +139,13 @@ it.effect.each(["unsupported", "ignored", "supported"] as const)(
       const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (value) =>
         Effect.sync(() => value.dispose()),
       );
-      const result = yield* Effect.promise(() =>
+      const result = yield* Effect.result(
         atoms.upsertScheduledTask.run(registry, {
           environmentId,
           input: { ...task, boundModelSelectionMode: "use_task_selection" },
         }),
       );
-      expect(AsyncResult.isSuccess(result)).toBe(mode === "supported");
+      expect(Result.isSuccess(result)).toBe(mode === "supported");
       expect(calls.length).toBe(mode === "unsupported" ? 0 : 1);
     }),
 );
