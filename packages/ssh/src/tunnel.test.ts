@@ -31,7 +31,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { captureLauncher, captureLauncherFor, runLauncher } from "./launcherTestHarness.ts";
 import * as SshAuth from "./auth.ts";
-import { remoteStateKey } from "./command.ts";
+import { remoteStateKey, shellSingleQuote } from "./command.ts";
 import { SshCommandError, SshPasswordPromptError, SshReadinessError } from "./errors.ts";
 import * as SshTunnel from "./tunnel.ts";
 
@@ -1758,7 +1758,7 @@ const canBind = (port) =>
         yield* fs.makeDirectory(runtimeDir, { recursive: true });
         yield* fs.writeFileString(
           `${runtimeDir}/t3`,
-          `#!/bin/sh\nexec node '${fakeT3}' '${version}' "$@"\n`,
+          `#!/bin/sh\nexec ${shellSingleQuote(process.execPath)} '${fakeT3}' '${version}' "$@"\n`,
         );
         yield* fs.chmod(`${runtimeDir}/t3`, 0o755);
         yield* fs.writeFileString(`${runtimeDir}/.install-complete`, `${version}\n`);
