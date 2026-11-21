@@ -42,6 +42,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as RuntimePolicy from "../orchestration-v2/RuntimePolicy.ts";
+import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -2946,6 +2947,11 @@ describe("OrchestratorMcpService provider resolution", () => {
               Effect.provide(
                 RuntimePolicy.layerFromProjectStore.pipe(
                   Layer.provide(Layer.succeed(ProjectStore.ProjectStoreV2, projects)),
+                  Layer.provide(
+                    Layer.mock(WorkspaceFolders.WorkspaceFolders)({
+                      forThread: () => Effect.succeed({ folders: [], extraRoots: [] }),
+                    }),
+                  ),
                   Layer.provide(
                     Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                       getInstance: () => Effect.succeedNone.pipe(Effect.map(Option.getOrUndefined)),
