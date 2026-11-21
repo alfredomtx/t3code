@@ -120,7 +120,43 @@ async function inputFiles(root, directory = "") {
   return files;
 }
 
-export async function assertBuildEnvironment(root) {
+const buildLinks = new Map([
+  [".claude/skills", { target: ".agents/skills", mode: "040000 tree" }],
+  [
+    "apps/mobile/modules/t3-voice-transcription/ios/AppleSpeechEngine.swift",
+    { target: "native/apple-speech/AppleSpeechEngine.swift", mode: "100644 blob" },
+  ],
+]);
+
+async function isCommittedBuildLink(root, file, runGit) {
+  const allowed = buildLinks.get(file);
+  if (!allowed || !runGit) return false;
+  const link = NodePath.join(root, file);
+  const target = NodePath.join(root, allowed.target);
+  const relativeTarget = NodePath.relative(NodePath.dirname(link), target);
+  if ((await NodeFSP.readlink(link)) !== relativeTarget) return false;
+
+  const stat = await NodeFSP.lstat(target).catch((error) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return null;
+    throw error;
+  });
+  if (!(allowed.mode === "040000 tree" ? stat?.isDirectory() : stat?.isFile())) return false;
+  if (
+    (await NodeFSP.realpath(target)) !== NodePath.join(await NodeFSP.realpath(root), allowed.target)
+  )
+    return false;
+
+  const entries = runGit(["ls-tree", "HEAD", "--", file, allowed.target]).split("\n");
+  return (
+    entries.some((entry) => entry.startsWith("120000 blob ") && entry.endsWith(`\t${file}`)) &&
+    entries.some(
+      (entry) => entry.startsWith(`${allowed.mode} `) && entry.endsWith(`\t${allowed.target}`),
+    ) &&
+    runGit(["show", `HEAD:${file}`]) === relativeTarget
+  );
+}
+
+export async function assertBuildEnvironment(root, runGit) {
   const files = await inputFiles(root);
   NodeAssert.ok(
     !files.some(
@@ -133,7 +169,7 @@ export async function assertBuildEnvironment(root) {
   for (const file of files) {
     const stat = await NodeFSP.lstat(NodePath.join(root, file));
     NodeAssert.ok(
-      !stat.isSymbolicLink() || file === ".claude/skills",
+      !stat.isSymbolicLink() || (await isCommittedBuildLink(root, file, runGit)),
       `The source checkout contains a linked input: ${file}`,
     );
   }

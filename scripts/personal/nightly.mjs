@@ -297,7 +297,7 @@ async function main() {
       !release || release.isDraft,
       "Published release assets are immutable. Choose a new revision.",
     );
-    await assertBuildEnvironment(source);
+    await assertBuildEnvironment(source, (parameters) => run("git", parameters).stdout);
     Object.assign(
       environment,
       publicBuildEnvironment(await NodeFSP.readFile(NodePath.join(source, ".env.example"), "utf8")),

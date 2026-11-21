@@ -131,6 +131,52 @@ NodeTest.test("build inputs reject hidden environment files and symlinks", () =>
   }),
 );
 
+NodeTest.test("build inputs accept only the known committed internal links", () =>
+  temporary(async (root) => {
+    const file = "apps/mobile/modules/t3-voice-transcription/ios/AppleSpeechEngine.swift";
+    const target = "native/apple-speech/AppleSpeechEngine.swift";
+    const relativeTarget = "../../../../../" + target;
+    const link = NodePath.join(root, file);
+    const targetFile = NodePath.join(root, target);
+    await NodeFSP.mkdir(NodePath.dirname(link), { recursive: true });
+    await NodeFSP.mkdir(NodePath.dirname(targetFile), { recursive: true });
+    await NodeFSP.writeFile(targetFile, "shared engine");
+    await NodeFSP.symlink(relativeTarget, link);
+    const env = Object.fromEntries(
+      Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+    );
+    const git = (...args) =>
+      NodeChildProcess.execFileSync("git", args, {
+        cwd: root,
+        encoding: "utf8",
+        env: { ...env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+      });
+    git("init", "-q", "--template=");
+    git("add", "--", target);
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "fixture");
+
+    const validate = () => assertBuildEnvironment(root, (args) => git(...args));
+    await NodeAssert.rejects(validate(), /linked input/u);
+    await NodeFSP.mkdir(NodePath.join(root, ".claude"));
+    await NodeFSP.mkdir(NodePath.join(root, ".agents/skills"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(root, ".agents/skills/example.md"), "skill");
+    await NodeFSP.symlink("../.agents/skills", NodePath.join(root, ".claude/skills"));
+    git("add", "--", file, ".claude/skills", ".agents/skills");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "links");
+    await validate();
+
+    await NodeFSP.unlink(link);
+    await NodeFSP.symlink(targetFile, link);
+    await NodeAssert.rejects(validate(), /linked input/u);
+
+    await NodeFSP.unlink(link);
+    await NodeFSP.symlink(relativeTarget, link);
+    await NodeFSP.unlink(targetFile);
+    await NodeFSP.symlink(NodeOS.tmpdir(), targetFile);
+    await NodeAssert.rejects(validate(), /linked input/u);
+  }),
+);
+
 NodeTest.test(
   "draft retries replace corrupt assets, verify uploaded bytes, and preserve published assets",
   () =>
