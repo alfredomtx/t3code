@@ -165,7 +165,8 @@ export function useOpenChangeRequestLink(
             ? {}
             : { detailTab: "code", commitRequest: { id: randomUUID(), oid: commitOid } }),
         });
-        if (!resolvedThreadRef) {
+        // The pull request list keeps its selection in the URL; the Issues page's panel does not.
+        if (destinationPanelRef === PULL_REQUESTS_PANEL_REF) {
           void navigate({
             to: "/pull-requests",
             search: (previous) => ({
