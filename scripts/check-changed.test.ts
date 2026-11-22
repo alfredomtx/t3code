@@ -144,22 +144,39 @@ describe("check:changed", () => {
     }),
   );
 
-  it("runs the .github/scripts node:test files with node --test, not vitest", () => {
+  it("batches each Vitest file once and keeps node:test files separate", () => {
+    const unit = [
+      ...Array.from({ length: 29 }, (_, index) => `apps/server/unit-${index}.test.ts`),
+      "apps/web/src/reactCompilerCoverage.test.ts",
+      "apps/mobile/src/features/devices/device-stream.browser.test.ts",
+    ];
+    const browser = Array.from(
+      { length: 31 },
+      (_, index) => `apps/web/src/browser-${index}.browser.test.tsx`,
+    );
     assert.deepStrictEqual(
       splitTests([
-        "apps/server/src/ws.test.ts",
+        ...unit,
         ".github/scripts/ci-changes.test.cjs",
+        ...browser,
         ".github\\scripts\\thread-transfer-report.test.cjs",
-        "scripts/check-changed.test.ts",
+        ...unit,
+        ...browser,
+        "apps\\server\\unit-0.test.ts",
       ]),
       {
-        vitestTests: ["apps/server/src/ws.test.ts", "scripts/check-changed.test.ts"],
+        vitestBatches: [unit.slice(0, 30), unit.slice(30), browser.slice(0, 30), browser.slice(30)],
         nodeTests: [
           ".github/scripts/ci-changes.test.cjs",
           ".github\\scripts\\thread-transfer-report.test.cjs",
         ],
       },
     );
+    assert.deepStrictEqual(splitTests([]), { vitestBatches: [], nodeTests: [] });
+    assert.deepStrictEqual(splitTests(unit.slice(0, 30)), {
+      vitestBatches: [unit.slice(0, 30)],
+      nodeTests: [],
+    });
   });
 
   it.effect("fails instead of returning an empty file list when git exits nonzero", () => {
