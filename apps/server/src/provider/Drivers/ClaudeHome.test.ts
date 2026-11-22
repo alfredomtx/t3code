@@ -2,9 +2,13 @@ import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as TestClock from "effect/testing/TestClock";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import {
   makeClaudeCapabilitiesCacheKey,
@@ -58,6 +62,46 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       }),
     );
   });
+
+  it.effect("starts with managed settings when the user settings read stalls", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homePath = path.resolve("user-claude");
+      const programFiles = path.resolve("managed-claude");
+      const readStarted = yield* Deferred.make<void>();
+      const blockedRead = yield* Deferred.make<string>();
+      const completed = yield* Deferred.make<NodeJS.ProcessEnv>();
+      let userReads = 0;
+      const merge = mergeClaudeProcessEnvironment({ homePath }, undefined, {
+        ProgramFiles: programFiles,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          readFileString: (file) =>
+            file === path.join(homePath, "settings.json")
+              ? Effect.gen(function* () {
+                  userReads++;
+                  yield* Deferred.succeed(readStarted, undefined);
+                  return yield* Deferred.await(blockedRead);
+                })
+              : Effect.succeed('{"env":{"CLAUDE_CODE_ENTRYPOINT":"managed"}}'),
+        }),
+      );
+      yield* Effect.addFinalizer(() => Deferred.succeed(blockedRead, "{}"));
+      yield* merge.pipe(
+        Effect.tap((environment) => Deferred.succeed(completed, environment)),
+        Effect.forkScoped,
+      );
+      yield* Deferred.await(readStarted);
+      yield* TestClock.adjust("5 seconds");
+      expect(Option.isSome(yield* Deferred.poll(completed))).toBe(true);
+      expect((yield* Deferred.await(completed)).CLAUDE_CODE_ENTRYPOINT).toBe("managed");
+      expect((yield* merge).CLAUDE_CODE_ENTRYPOINT).toBe("managed");
+      expect(userReads).toBe(1);
+    }),
+  );
 
   it.effect(
     "drops the launching Claude session and Electron's run-as-Node flag, and labels processes t3-code unless overridden",

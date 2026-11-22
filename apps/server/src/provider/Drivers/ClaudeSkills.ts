@@ -1,4 +1,5 @@
 import type { ClaudeSettings, ServerProviderSkill } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -672,6 +673,51 @@ const decodeSettingsEnv = Schema.decodeUnknownEffect(
   fromLenientJson(Schema.Struct({ env: Schema.optional(SettingsEnv) })),
 );
 
+const pendingSettingsReads = new WeakMap<
+  FileSystem.FileSystem,
+  Map<string, { result: Deferred.Deferred<string | undefined>; timedOut: boolean }>
+>();
+
+const readOptionalClaudeSettings = Effect.fn("readOptionalClaudeSettings")(function* (
+  fileSystem: FileSystem.FileSystem,
+  settingsPath: string,
+  file: string,
+) {
+  let pending = pendingSettingsReads.get(fileSystem);
+  if (!pending) {
+    pending = new Map();
+    pendingSettingsReads.set(fileSystem, pending);
+  }
+  let read = pending.get(settingsPath);
+  if (!read) {
+    const result = Deferred.makeUnsafe<string | undefined>();
+    const reads = pending;
+    read = { result, timedOut: false };
+    reads.set(settingsPath, read);
+    // An open blocked by OS permissions can outlive cancellation of the JS read.
+    yield* Deferred.complete(
+      result,
+      fileSystem.readFileString(settingsPath).pipe(Effect.orElseSucceed(() => undefined)),
+    ).pipe(Effect.ensuring(Effect.sync(() => reads.delete(settingsPath))), Effect.forkDetach);
+  }
+  const active = read;
+  if (active.timedOut) return undefined;
+  return yield* Deferred.await(active.result).pipe(
+    Effect.timeoutOrElse({
+      duration: "5 seconds",
+      orElse: () =>
+        Effect.suspend(() => {
+          if (active.timedOut) return Effect.void;
+          active.timedOut = true;
+          return Effect.logWarning(
+            "Claude settings read timed out. Check filesystem access for the settings file and any symlink target.",
+            { file },
+          );
+        }),
+    }),
+  );
+});
+
 /** The `env` values T3 Code reads from Claude's user and managed settings; later files win. */
 export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function* (
   config: Pick<ClaudeSettings, "homePath">,
@@ -690,9 +736,11 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
     platform,
     environment,
   )) {
-    const contents = yield* fileSystem
-      .readFileString(settingsPath)
-      .pipe(Effect.orElseSucceed(() => undefined));
+    const contents = yield* readOptionalClaudeSettings(
+      fileSystem,
+      settingsPath,
+      path.basename(settingsPath),
+    );
     if (contents === undefined) continue;
     const parsed = yield* decodeSettingsEnv(contents).pipe(Effect.orElseSucceed(() => undefined));
     Object.assign(settingsEnv, parsed?.env);
