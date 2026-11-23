@@ -1587,7 +1587,10 @@ export const layer: Layer.Layer<
             handoff.delivery?.status === "pending",
         );
         const previousNativeRun = projection.runs.findLast(
-          (source) => source.ordinal < run.ordinal && source.providerThreadId === providerThread.id,
+          (source) =>
+            source.ordinal < run.ordinal &&
+            source.providerThreadId === providerThread.id &&
+            source.startedAt !== null,
         );
         const incompatibleHistory =
           session.driver === "codex" &&

@@ -1667,7 +1667,8 @@ describe("orchestration v2 provider switching", () => {
     "other-error",
     "repaired-native",
     "background",
-  ] as const)("recovers invalid encrypted Codex history on the next prompt: %s", (scenario) =>
+    "sharing-background",
+  ] as const)("recovers rejected Codex history on the next prompt: %s", (scenario) =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("codex-rejected-history");
@@ -1676,12 +1677,15 @@ describe("orchestration v2 provider switching", () => {
         const generation = yield* Ref.make(0);
         const rejectedNativeThreads = yield* Ref.make<ReadonlySet<string>>(new Set());
         const pendingBackgroundWork = yield* Ref.make(false);
+        const background = scenario === "background" || scenario === "sharing-background";
         const code =
-          scenario === "raw-error"
-            ? "other"
-            : scenario === "other-error"
-              ? "serverOverloaded"
-              : "invalid_encrypted_content";
+          scenario === "sharing-background"
+            ? "subscription_sharing_unsupported_capability"
+            : scenario === "raw-error"
+              ? "other"
+              : scenario === "other-error"
+                ? "serverOverloaded"
+                : "invalid_encrypted_content";
         const registry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -1698,14 +1702,16 @@ describe("orchestration v2 provider switching", () => {
             failure: makeProviderFailure({
               code,
               message:
-                scenario === "raw-error"
-                  ? JSON.stringify({
-                      error: {
-                        code: "invalid_encrypted_content",
-                        message: "Encrypted content could not be verified",
-                      },
-                    })
-                  : "Encrypted content could not be verified",
+                scenario === "sharing-background"
+                  ? "ChatGPT sharing rejected the conversation history."
+                  : scenario === "raw-error"
+                    ? JSON.stringify({
+                        error: {
+                          code: "invalid_encrypted_content",
+                          message: "Encrypted content could not be verified",
+                        },
+                      })
+                    : "Encrypted content could not be verified",
               class: "provider_error",
             }),
             responseByRunOrdinal: { 1: "BASELINE_OK", 3: "RECOVERY_OK", 4: "FOLLOWUP_OK" },
@@ -1807,7 +1813,7 @@ describe("orchestration v2 provider switching", () => {
               ],
             });
           }
-          if (scenario === "background") yield* Ref.set(pendingBackgroundWork, true);
+          if (background) yield* Ref.set(pendingBackgroundWork, true);
           const recovered = yield* dispatch(3, "huh");
           if (scenario === "repaired-native") {
             assert.equal(recovered.runs.at(-1)?.status, "completed");
@@ -1815,17 +1821,25 @@ describe("orchestration v2 provider switching", () => {
             assert.lengthOf(recovered.contextHandoffs, 0);
             return;
           }
-          if (scenario === "other-error" || scenario === "background") {
+          if (scenario === "other-error" || background) {
             assert.equal(recovered.runs.at(-1)?.status, "failed");
             assert.equal(yield* Ref.get(generation), 1);
-            assert.lengthOf(yield* Ref.get(capturedTurns), scenario === "background" ? 2 : 3);
-            if (scenario === "background") {
+            assert.lengthOf(yield* Ref.get(capturedTurns), background ? 2 : 3);
+            if (background) {
+              assert.deepEqual(
+                recovered.providerThreads[0]?.nativeThreadRef,
+                failed.providerThreads[0]?.nativeThreadRef,
+              );
+              assert.isTrue(yield* Ref.get(pendingBackgroundWork));
               yield* Ref.set(pendingBackgroundWork, false);
               assert.equal(
                 (yield* dispatch(4, "Continue after the worker finished")).runs.at(-1)?.status,
                 "completed",
               );
               assert.equal(yield* Ref.get(generation), 2);
+              const turns = yield* Ref.get(capturedTurns);
+              assert.lengthOf(turns, 3);
+              assert.notEqual(turns[2]?.nativeThreadId, turns[1]?.nativeThreadId);
             }
             return;
           }
