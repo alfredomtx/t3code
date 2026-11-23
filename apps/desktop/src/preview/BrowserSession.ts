@@ -1,3 +1,4 @@
+import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { Certificate, Session, WebContents } from "electron";
 import { BrowserWindow, session } from "electron";
@@ -126,6 +127,18 @@ const certificateApprovalKey = ({ origin, fingerprint, error }: CertificateAppro
 
 /** Kept beside the profile's cookies, so it lives and dies with them. */
 const CERTIFICATE_APPROVALS_FILE = "t3code-certificate-approvals.json";
+const LOOPBACK_APPROVALS_FILE = "t3code-loopback-approvals.json";
+const LoopbackOrigins = Schema.fromJsonString(
+  Schema.Array(
+    Schema.String.check(
+      Schema.makeFilter(
+        (value) => value.startsWith("https://") && permissionOrigin(value) === value,
+      ),
+    ),
+  ),
+);
+const decodeLoopbackOrigins = Schema.decodeEffect(LoopbackOrigins);
+const encodeLoopbackOrigins = Schema.encodeEffect(LoopbackOrigins);
 
 /** Server-chosen certificate names must not add lines or flood the prompt. */
 const promptCertificateName = (name: string): string => {
@@ -278,18 +291,20 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const promptPermission = (
     requester: WebContents | null,
     prompt: {
-      readonly buttons: readonly [allow: string, deny: string];
+      readonly buttons:
+        | readonly [allow: string, deny: string]
+        | readonly [allow: string, deny: string, always: string];
       readonly message: string;
       readonly detail?: string;
     },
-    callback: (answer: boolean | undefined) => void,
+    callback: (answer: number | undefined) => void,
   ): void => {
     if (permissionPromptOpen) {
       callback(undefined);
       return;
     }
     permissionPromptOpen = true;
-    const settle = (answer: boolean | undefined) =>
+    const settle = (answer: number | undefined) =>
       Effect.sync(() => {
         permissionPromptOpen = false;
         callback(answer);
@@ -309,7 +324,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           platform === "win32" ? undefined : previewHostWindow(requester),
         )
         .pipe(
-          Effect.map(({ response }): boolean | undefined => response === 0),
+          Effect.map(({ response }) => response),
           Effect.orElseSucceed(() => undefined),
           Effect.flatMap(settle),
           Effect.onInterrupt(() => settle(undefined)),
@@ -341,10 +356,36 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           url: truncateForPrompt(url),
         }),
       },
-      (answer) => callback(answer === true),
+      (answer) => callback(answer === 0),
     );
   };
-  const resetNetworkPermissions = new Map<string, () => void>();
+  const resetNetworkPermissions = new Map<
+    string,
+    () => Effect.Effect<void, BrowserSessionStorageClearError>
+  >();
+  const writeNetworkPermissions = yield* Semaphore.make(1);
+  const loopbackFile = (browserSession: Session) =>
+    browserSession.storagePath == null
+      ? null
+      : path.join(browserSession.storagePath, LOOPBACK_APPROVALS_FILE);
+  const loadLoopbackGrants = Effect.fn("BrowserSession.loadLoopbackGrants")(function* (
+    file: string,
+    grants: Set<string>,
+  ) {
+    const origins = yield* fileSystem.readFileString(file).pipe(
+      Effect.flatMap(decodeLoopbackOrigins),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed([]) : Effect.fail(error),
+      }),
+      Effect.catch((cause) =>
+        Effect.logWarning("Ignored saved local app permissions.", { file, cause }).pipe(
+          Effect.as([]),
+        ),
+      ),
+    );
+    for (const origin of origins) grants.add(origin);
+  });
 
   const certificateTrust = new WeakMap<Session, CertificateTrust>();
   const writeCertificateApprovals = yield* Semaphore.make(1);
@@ -653,20 +694,53 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                       }),
               },
               (answer) => {
-                if (answer !== undefined) decisions.set(origin, answer);
-                callback(answer === true);
+                if (answer !== undefined) decisions.set(origin, answer === 0);
+                callback(answer === 0);
               },
             );
           };
           let networkDecisions = new Map<string, boolean>();
+          const loopbackGrants = new Set<string>();
+          const grantFile = persistent ? loopbackFile(browserSession) : null;
           const pendingNetworkRequests = new Map<string, Array<(granted: boolean) => void>>();
-          resetNetworkPermissions.set(partition, () => {
-            networkDecisions = new Map();
-          });
+          resetNetworkPermissions.set(
+            partition,
+            Effect.fn("BrowserSession.resetNetworkPermissions")(function* () {
+              networkDecisions = new Map();
+              const hadGrants = loopbackGrants.size > 0;
+              loopbackGrants.clear();
+              if (grantFile !== null) {
+                yield* fileSystem.remove(grantFile, { force: true }).pipe(
+                  writeNetworkPermissions.withPermits(1),
+                  Effect.mapError(
+                    (cause) => new BrowserSessionStorageClearError({ partition, cause }),
+                  ),
+                );
+              }
+              if (hadGrants) {
+                yield* Effect.tryPromise({
+                  try: () => browserSession.closeAllConnections(),
+                  catch: (cause) => new BrowserSessionStorageClearError({ partition, cause }),
+                });
+              }
+            }),
+          );
+          const mayUseLoopbackGrant = (
+            requester: WebContents | null,
+            permission: string,
+            origin: string,
+            isMainFrame: boolean,
+          ) =>
+            permission === "loopback-network" &&
+            isMainFrame &&
+            requester !== null &&
+            !requester.isDestroyed() &&
+            permissionOrigin(requester.getURL()) === origin;
           const confirmLocalNetwork = (
-            requester: WebContents,
+            requester: WebContents | null,
             permission: string,
             rawUrl: string | undefined,
+            isMainFrame: boolean,
             callback: (granted: boolean) => void,
           ): void => {
             const origin = permissionOrigin(rawUrl);
@@ -674,37 +748,96 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(false);
               return;
             }
+            const eligible = mayUseLoopbackGrant(requester, permission, origin, isMainFrame);
             const key = `${permission}:${origin}`;
-            const remembered = networkDecisions.get(key);
+            const remembered =
+              eligible && loopbackGrants.has(origin) ? true : networkDecisions.get(key);
             if (remembered !== undefined) {
               callback(remembered);
               return;
             }
-            const pending = pendingNetworkRequests.get(key);
+            const offerAlways = eligible && grantFile !== null;
+            const requestKey = offerAlways ? `persistent:${key}` : key;
+            const complete = offerAlways
+              ? (granted: boolean) =>
+                  callback(
+                    granted && mayUseLoopbackGrant(requester, permission, origin, isMainFrame),
+                  )
+              : callback;
+            const pending = pendingNetworkRequests.get(requestKey);
             if (pending !== undefined) {
-              pending.push(callback);
+              pending.push(complete);
               return;
             }
-            pendingNetworkRequests.set(key, [callback]);
+            pendingNetworkRequests.set(requestKey, [complete]);
             const decisions = networkDecisions;
+            const finish = (answer: boolean | undefined, saved = false) => {
+              // Clearing cookies while a prompt or write is pending must not restore its grant.
+              const current = decisions === networkDecisions;
+              if (current && !saved && answer !== undefined) decisions.set(key, answer);
+              const callbacks = pendingNetworkRequests.get(requestKey) ?? [];
+              pendingNetworkRequests.delete(requestKey);
+              for (const settle of callbacks) settle(current && answer === true);
+            };
             promptPermission(
               requester,
               {
-                buttons: ["Allow", "Block"],
+                buttons: offerAlways
+                  ? ["Allow", "Block", m(msg("Always Allow"))]
+                  : ["Allow", "Block"],
                 message:
                   permission === "loopback-network"
                     ? `${truncateForPrompt(origin)} wants to connect to apps on this device`
                     : `${truncateForPrompt(origin)} wants to connect to the local network`,
-                detail:
-                  "Allow only sites you trust. Your choice lasts until you quit the app or clear this browser profile's cookies.",
+                detail: offerAlways
+                  ? m(
+                      msg(
+                        "Always Allow remembers this site in this browser profile. Clear the profile’s cookies to revoke it.",
+                      ),
+                    )
+                  : "Allow only sites you trust. Your choice lasts until you quit the app or clear this browser profile's cookies.",
               },
               (answer) => {
-                // Clearing site data while a prompt is open must not restore the old grant.
-                const current = decisions === networkDecisions;
-                if (current && answer !== undefined) decisions.set(key, answer);
-                const callbacks = pendingNetworkRequests.get(key) ?? [];
-                pendingNetworkRequests.delete(key);
-                for (const complete of callbacks) complete(current && answer === true);
+                if (answer !== 2) {
+                  finish(answer === undefined ? undefined : answer === 0);
+                  return;
+                }
+                if (!offerAlways) {
+                  finish(undefined);
+                  return;
+                }
+                runFork(
+                  Effect.gen(function* () {
+                    if (
+                      decisions !== networkDecisions ||
+                      !mayUseLoopbackGrant(requester, permission, origin, isMainFrame)
+                    ) {
+                      return false;
+                    }
+                    yield* writeFileStringAtomically({
+                      filePath: grantFile,
+                      contents: yield* encodeLoopbackOrigins([...loopbackGrants, origin]),
+                    }).pipe(
+                      Effect.provideService(FileSystem.FileSystem, fileSystem),
+                      Effect.provideService(Path.Path, path),
+                      Effect.provideService(HostProcess.Platform, platform),
+                    );
+                    if (decisions !== networkDecisions) return false;
+                    loopbackGrants.add(origin);
+                    return true;
+                  }).pipe(
+                    writeNetworkPermissions.withPermits(1),
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Could not save local app permission.", {
+                        origin,
+                        cause,
+                      }).pipe(Effect.as(false)),
+                    ),
+                    Effect.flatMap((saved) =>
+                      Effect.sync(() => finish(saved ? true : undefined, saved)),
+                    ),
+                  ),
+                );
               },
             );
           };
@@ -729,43 +862,68 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 return;
               }
               if (LOCAL_NETWORK_PERMISSIONS.has(permission)) {
-                confirmLocalNetwork(webContents, permission, details.requestingUrl, callback);
+                confirmLocalNetwork(
+                  webContents,
+                  permission,
+                  details.requestingUrl,
+                  details.isMainFrame,
+                  callback,
+                );
                 return;
               }
               callback(ALLOWED_PREVIEW_PERMISSIONS.has(permission));
             },
           );
-          browserSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
-            if (permission === "clipboard-read" || permission === "geolocation") {
-              return (
-                permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
-                true
-              );
-            }
-            if (LOCAL_NETWORK_PERMISSIONS.has(permission)) {
-              const origin = permissionOrigin(requestingOrigin);
-              const key = `${permission}:${origin ?? ""}`;
-              const remembered = networkDecisions.get(key);
-              if (remembered !== undefined) return remembered;
-              if (pendingNetworkRequests.has(key)) return false;
-              if (webContents !== null && !webContents.isDestroyed() && origin !== null) {
-                // Permission queries can stop sign-in before a request; retry only the same page after Allow.
-                const pageUrl = webContents.getURL();
-                confirmLocalNetwork(webContents, permission, requestingOrigin, (granted) => {
-                  if (
-                    granted &&
-                    !webContents.isDestroyed() &&
-                    webContents.getURL() === pageUrl &&
-                    permissionOrigin(pageUrl) === origin
-                  ) {
-                    webContents.reload();
-                  }
-                });
+          browserSession.setPermissionCheckHandler(
+            (webContents, permission, requestingOrigin, details) => {
+              if (permission === "clipboard-read" || permission === "geolocation") {
+                return (
+                  permissionDecisions[permission].get(permissionOrigin(requestingOrigin) ?? "") ===
+                  true
+                );
               }
-              return false;
-            }
-            return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
-          });
+              if (LOCAL_NETWORK_PERMISSIONS.has(permission)) {
+                const origin = permissionOrigin(requestingOrigin);
+                const key = `${permission}:${origin ?? ""}`;
+                if (
+                  origin !== null &&
+                  mayUseLoopbackGrant(webContents, permission, origin, details.isMainFrame) &&
+                  loopbackGrants.has(origin)
+                ) {
+                  return true;
+                }
+                const remembered = networkDecisions.get(key);
+                if (remembered !== undefined) return remembered;
+                if (
+                  pendingNetworkRequests.has(key) ||
+                  pendingNetworkRequests.has(`persistent:${key}`)
+                )
+                  return false;
+                if (webContents !== null && !webContents.isDestroyed() && origin !== null) {
+                  // Permission queries can stop sign-in before a request; retry only the same page after Allow.
+                  const pageUrl = webContents.getURL();
+                  confirmLocalNetwork(
+                    webContents,
+                    permission,
+                    requestingOrigin,
+                    details.isMainFrame,
+                    (granted) => {
+                      if (
+                        granted &&
+                        !webContents.isDestroyed() &&
+                        webContents.getURL() === pageUrl &&
+                        permissionOrigin(pageUrl) === origin
+                      ) {
+                        webContents.reload();
+                      }
+                    },
+                  );
+                }
+                return false;
+              }
+              return ALLOWED_PREVIEW_PERMISSIONS.has(permission);
+            },
+          );
           browserSession.webRequest.onBeforeSendHeaders(
             { urls: TEAMS_URL_PATTERNS },
             ({ requestHeaders }, callback) => {
@@ -782,7 +940,11 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               });
             },
           );
-          return browserSession;
+          return {
+            browserSession,
+            loadGrants:
+              grantFile === null ? Effect.void : loadLoopbackGrants(grantFile, loopbackGrants),
+          };
         },
         catch: (cause) =>
           new BrowserSessionCreationError({
@@ -791,9 +953,9 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             cause,
           }),
       }).pipe(
-        Effect.flatMap((browserSession) =>
-          loadCertificateTrust(browserSession).pipe(
-            Effect.map((trust) => {
+        Effect.flatMap(({ browserSession, loadGrants }) =>
+          Effect.all([loadCertificateTrust(browserSession), loadGrants]).pipe(
+            Effect.map(([trust]) => {
               certificateTrust.set(browserSession, trust);
               const next = new Map(sessions);
               next.set(partition, browserSession);
@@ -813,13 +975,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     getSession,
     clearCookies: Effect.fn("BrowserSession.clearCookies")(function* (partitions?) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
-      for (const [partition] of selectSessions(sessions, partitions)) {
-        resetNetworkPermissions.get(partition)?.();
-      }
       yield* Effect.forEach(
         selectSessions(sessions, partitions),
         ([partition, browserSession]) =>
           Effect.gen(function* () {
+            const network = yield* (resetNetworkPermissions.get(partition)?.() ?? Effect.void).pipe(
+              Effect.result,
+            );
             const cleared = yield* Effect.tryPromise({
               try: () =>
                 browserSession.clearStorageData({
@@ -839,6 +1001,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
             }).pipe(Effect.result);
             // Approvals go even when the storage clear fails, since the user asked to forget them.
             yield* revokeCertificates(partition, browserSession);
+            if (Result.isFailure(network)) return yield* network.failure;
             if (Result.isFailure(cleared)) return yield* cleared.failure;
           }),
         { concurrency: "unbounded", discard: true },
@@ -847,7 +1010,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
     cookiesCleared: Effect.fn("BrowserSession.cookiesCleared")(function* (browserSession) {
       const sessions = yield* SynchronizedRef.get(sessionsRef);
       for (const [partition, candidate] of sessions) {
-        if (candidate === browserSession) yield* revokeCertificates(partition, browserSession);
+        if (candidate !== browserSession) continue;
+        const network = yield* (resetNetworkPermissions.get(partition)?.() ?? Effect.void).pipe(
+          Effect.result,
+        );
+        yield* revokeCertificates(partition, browserSession);
+        if (Result.isFailure(network)) return yield* network.failure;
       }
     }),
     clearCache: Effect.fn("BrowserSession.clearCache")(function* (partitions?) {

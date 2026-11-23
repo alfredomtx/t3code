@@ -15,3 +15,9 @@ HTML files you open from Finder open the same way. [Prompt links](prompt-links.m
 app.t3.codes open in the app as a draft.
 
 A link that launches T3 Code waits until the app has connected to its environment, then opens.
+
+## Sign in with an app on your Mac
+
+A site can ask to connect to an app on your Mac during sign-in. In a saved browser profile,
+**Always Allow** remembers that site's permission after you quit T3 Code. Choose it only for a
+site you trust. Clear that browser profile's cookies to forget the permission.

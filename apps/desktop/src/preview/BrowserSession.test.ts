@@ -492,9 +492,11 @@ describe("BrowserSession", () => {
   );
 
   it.effect(
-    "shares one prompt for concurrent requests and revokes a pending grant when cookies are cleared",
+    "shares one prompt for concurrent requests and revokes a pending Always Allow when cookies are cleared",
     () =>
       Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        storage.root = yield* fileSystem.makeTempDirectoryScoped();
         const shown = yield* Deferred.make<void>();
         const answer = yield* Deferred.make<number>();
         const dialog = Layer.succeed(ElectronDialog.ElectronDialog, {
@@ -515,16 +517,20 @@ describe("BrowserSession", () => {
           assert.isDefined(browserSession);
           const requestHandler = browserSession.setPermissionRequestHandler.mock.calls[0]?.[0];
           const results: boolean[] = [];
+          const requester = {
+            isDestroyed: () => false,
+            getURL: () => "https://sso.test/",
+          };
           const finished = Effect.callback<void>((resume) => {
             const complete = (granted: boolean) => {
               results.push(granted);
               if (results.length === 2) resume(Effect.void);
             };
-            requestHandler(null, "loopback-network", complete, {
+            requestHandler(requester, "loopback-network", complete, {
               requestingUrl: "https://sso.test/first",
               isMainFrame: true,
             });
-            requestHandler(null, "loopback-network", complete, {
+            requestHandler(requester, "loopback-network", complete, {
               requestingUrl: "https://sso.test/second",
               isMainFrame: true,
             });
@@ -532,9 +538,14 @@ describe("BrowserSession", () => {
           const fiber = yield* Effect.forkChild(finished);
           yield* Deferred.await(shown);
           yield* browserSessions.clearCookies([partition]);
-          yield* Deferred.succeed(answer, 0);
+          yield* Deferred.succeed(answer, 2);
           yield* Fiber.join(fiber);
           assert.deepStrictEqual(results, [false, false]);
+          assert.isFalse(
+            yield* fileSystem.exists(
+              `${browserSession.storagePath}/t3code-loopback-approvals.json`,
+            ),
+          );
           const check = browserSession.setPermissionCheckHandler.mock.calls[0]?.[0];
           assert.isFalse(check(null, "loopback-network", "https://sso.test", {}));
         }).pipe(
@@ -546,7 +557,7 @@ describe("BrowserSession", () => {
             ),
           ),
         );
-      }),
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("asks on a preflight permission query and retries the same page after Allow", () =>
@@ -573,6 +584,113 @@ describe("BrowserSession", () => {
       assert.isTrue(check(null, "loopback-network", "https://sso.test", {}));
       assert.strictEqual(showMessageBox.mock.calls.length, 1);
     }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("remembers Always Allow across restarts for the same profile and top-level site", () =>
+    Effect.gen(function* () {
+      storage.root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+      const origin = "https://sso.test";
+      const mainFrame = { isMainFrame: true };
+      const requester = {
+        isDestroyed: () => false,
+        getURL: () => `${origin}/sign-in`,
+        reload: () => {},
+      };
+      const checkFor = Effect.fnUntraced(function* (scope: string, persistent = true) {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const session = yield* browserSessions.getSession(scope, persistent);
+        return vi.mocked(session.setPermissionCheckHandler).mock.calls[0]![0]!;
+      });
+
+      yield* Effect.gen(function* () {
+        const check = yield* checkFor("sso");
+        showMessageBox.mockReset();
+        showMessageBox.mockImplementation((options) => {
+          assert.deepStrictEqual(options.buttons, ["Allow", "Block", "Always Allow"]);
+          assert.strictEqual(options.defaultId, 1);
+          assert.strictEqual(options.cancelId, 1);
+          return 2;
+        });
+        yield* Effect.callback<void>((resume) => {
+          assert.isFalse(
+            check(
+              { ...requester, reload: () => resume(Effect.void) } as Electron.WebContents,
+              "loopback-network",
+              origin,
+              mainFrame,
+            ),
+          );
+        });
+        assert.strictEqual(showMessageBox.mock.calls.length, 1);
+      }).pipe(Effect.provide(layer));
+
+      yield* Effect.gen(function* () {
+        const browserSessions = yield* BrowserSession.BrowserSession;
+        const check = yield* checkFor("sso");
+        const otherProfile = yield* checkFor("other");
+        const incognito = yield* checkFor("sso", false);
+        const contents = requester as Electron.WebContents;
+        showMessageBox.mockReset();
+        showMessageBox.mockReturnValue(1);
+        assert.isTrue(check(contents, "loopback-network", origin, mainFrame));
+        assert.strictEqual(showMessageBox.mock.calls.length, 0);
+
+        // A saved loopback grant cannot authorize frames, wider network access, or other profiles.
+        assert.isFalse(check(contents, "loopback-network", origin, { isMainFrame: false }));
+        assert.isFalse(check(null, "loopback-network", origin, mainFrame));
+        assert.isFalse(check(contents, "loopback-network", "https://other.test", mainFrame));
+        assert.isFalse(check(contents, "local-network", origin, mainFrame));
+        assert.isFalse(otherProfile(contents, "loopback-network", origin, mainFrame));
+        assert.isFalse(incognito(contents, "loopback-network", origin, mainFrame));
+
+        yield* browserSessions.clearCookies([yield* browserSessions.getPartition("sso")]);
+        assert.isFalse(check(contents, "loopback-network", origin, mainFrame));
+      }).pipe(Effect.provide(layer));
+
+      yield* Effect.gen(function* () {
+        const check = yield* checkFor("sso");
+        assert.isFalse(
+          check(requester as Electron.WebContents, "loopback-network", origin, mainFrame),
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("only offers Always Allow for top-level loopback access in a persistent profile", () =>
+    Effect.gen(function* () {
+      storage.root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped();
+      const browserSessions = yield* BrowserSession.BrowserSession;
+      const requester = {
+        isDestroyed: () => false,
+        getURL: () => "https://sso.test/",
+      } as Electron.WebContents;
+      showMessageBox.mockReset();
+      showMessageBox.mockReturnValue(1);
+      for (const [scope, persistent, permission, isMainFrame] of [
+        ["incognito", false, "loopback-network", true],
+        ["wider-network", true, "local-network", true],
+        ["subframe", true, "loopback-network", false],
+      ] as const) {
+        const partition = yield* browserSessions.getPartition(scope, persistent);
+        yield* browserSessions.getSession(scope, persistent);
+        const request = sessions.get(partition)?.setPermissionRequestHandler.mock.calls[0]?.[0];
+        const granted = yield* Effect.callback<boolean>((resume) =>
+          request(requester, permission, (answer: boolean) => resume(Effect.succeed(answer)), {
+            isMainFrame,
+            requestingUrl: "https://sso.test/",
+          }),
+        );
+        assert.isFalse(granted);
+      }
+      assert.deepStrictEqual(
+        showMessageBox.mock.calls.map(([options]) => options.buttons),
+        [
+          ["Allow", "Block"],
+          ["Allow", "Block"],
+          ["Allow", "Block"],
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(layer, NodeServices.layer))),
   );
 
   it.effect("clears a partition whose session has not been opened yet", () =>
