@@ -50,8 +50,26 @@ const UNRESOLVED_REMOTE_OPEN: RemoteOpenResolution = {
   isResolved: false,
 };
 
+function firstSshTarget(routes: ReadonlyArray<ConnectionRoute>, environmentId: EnvironmentId) {
+  for (const { target, profile: savedProfile } of routes) {
+    const profile = Option.getOrNull(savedProfile);
+    if (
+      target._tag === "SshConnectionTarget" &&
+      target.environmentId === environmentId &&
+      profile?._tag === "SshConnectionProfile" &&
+      profile.environmentId === environmentId &&
+      profile.connectionId === target.connectionId &&
+      profile.target.alias.length > 0
+    ) {
+      return profile.target;
+    }
+  }
+  return null;
+}
+
 export function resolveRemoteOpenState(input: {
   readonly route: ConnectionRoute | null;
+  readonly routes?: ReadonlyArray<ConnectionRoute>;
   readonly remoteOpenTargets: ReadonlyArray<RemoteOpenTarget> | undefined;
   readonly isDesktopRenderer: boolean;
   readonly hostEnvironmentId: string | null;
@@ -85,11 +103,15 @@ export function resolveRemoteOpenState(input: {
     return LOCAL_EXEC;
   }
 
-  const sshTarget =
+  const activeSshTarget =
     target._tag === "SshConnectionTarget" && matchingProfile?._tag === "SshConnectionProfile"
       ? matchingProfile.target
       : null;
-  if (sshTarget !== null && sshTarget.alias.length > 0) {
+  const sshTarget =
+    activeSshTarget && activeSshTarget.alias.length > 0
+      ? activeSshTarget
+      : firstSshTarget(input.routes ?? [], target.environmentId);
+  if (sshTarget !== null) {
     const { alias } = sshTarget;
     const userSeparator = alias.lastIndexOf("@");
     const host = userSeparator === -1 ? alias : alias.slice(userSeparator + 1);
@@ -149,9 +171,12 @@ const remoteOpenResolutionAtom = Atom.family((environmentId: EnvironmentId) =>
     const prepared = Option.getOrNull(
       get(environmentSession.preparedConnectionValueAtom(environmentId)),
     );
+    const route = resolveRemoteOpenRoute(entry, prepared?.target ?? null);
     const next: RemoteOpenResolution = {
       state: resolveRemoteOpenState({
-        route: resolveRemoteOpenRoute(entry, prepared?.target ?? null),
+        route,
+        routes:
+          route.target.environmentId === entry.target.environmentId ? connectionRoutes(entry) : [],
         remoteOpenTargets: presentation?.serverConfig?.remoteOpenTargets,
         isDesktopRenderer: window.desktopBridge !== undefined,
         hostEnvironmentId: get(hostEnvironmentIdAtom),

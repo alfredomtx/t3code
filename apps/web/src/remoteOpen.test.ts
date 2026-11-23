@@ -314,6 +314,50 @@ describe("resolveRemoteOpenState", () => {
       ).toEqual({ mode: "remote-unavailable" });
     }
   });
+  it("prefers the active SSH route over other saved aliases", () => {
+    expect(
+      resolveRemoteOpenState({
+        route: sshRoute({ alias: "active", username: null }),
+        routes: [sshRoute({ alias: "saved", username: null })],
+        remoteOpenTargets: TAILSCALE_TARGETS,
+        isDesktopRenderer: false,
+        hostEnvironmentId: null,
+      }),
+    ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "active" } });
+  });
+
+  it("falls back to a saved alias when the active SSH profile has no usable alias", () => {
+    const route = sshRoute({ alias: "", username: null });
+    const saved = sshRoute({ alias: "saved", username: null });
+    for (const active of [route, { ...route, profile: Option.none() }]) {
+      expect(
+        resolveRemoteOpenState({
+          route: active,
+          routes: [saved],
+          remoteOpenTargets: TAILSCALE_TARGETS,
+          isDesktopRenderer: false,
+          hostEnvironmentId: null,
+        }),
+      ).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "saved" } });
+    }
+  });
+
+  it("uses a saved SSH route's alias when a Tailscale route is preferred", () => {
+    const state = resolveRemoteOpenState({
+      route: bearerRoute("https://sol.tail1234.ts.net", { network: "tailscale" }),
+      routes: [sshRoute({ alias: "sol-alias", username: null })],
+      isDesktopRenderer: false,
+      remoteOpenTargets: [
+        { kind: "tailscale", host: "sol.tail1234.ts.net", username: "server-user" },
+      ],
+      hostEnvironmentId: null,
+    });
+    expect(state).toEqual({ mode: "remote-links", host: { kind: "ssh-alias", host: "sol-alias" } });
+    if (state.mode !== "remote-links") throw new Error("Expected a remote link");
+    expect(
+      buildRemoteOpenUrl({ editor: "zed", ...state.host, absolutePath: "/work/project" }),
+    ).toBe("zed://ssh/sol-alias/work/project");
+  });
 
   it("does not infer relay locality from a loopback bearer profile", () => {
     const route = bearerRoute("http://127.0.0.1:3773");

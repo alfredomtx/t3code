@@ -26,6 +26,18 @@ const seedPreview = Effect.gen(function* () {
   `;
 });
 
+it.effect("appends upstream migrations after published Personal migration 108", () =>
+  Effect.gen(function* () {
+    yield* runMigrations({ toMigrationInclusive: 108 });
+    assert.deepStrictEqual(yield* runMigrations(), [
+      [109, "AgentFeedback"],
+      [110, "IssueTrackerAccounts"],
+      [111, "Workflows"],
+    ]);
+    assert.deepStrictEqual(yield* runMigrations(), []);
+  }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+);
+
 describe("V2 preview upgrade", () => {
   it.effect("upgrades a published preview without replaying V2 or losing import progress", () =>
     Effect.gen(function* () {
@@ -88,6 +100,9 @@ describe("V2 preview upgrade", () => {
         [106, "TaskFolders"],
         [107, "WorktreePathKeyIndex"],
         [108, "DeferredSlashCommandIndex"],
+        [109, "AgentFeedback"],
+        [110, "IssueTrackerAccounts"],
+        [111, "Workflows"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -219,6 +234,9 @@ describe("V2 preview upgrade", () => {
         [106, "TaskFolders"],
         [107, "WorktreePathKeyIndex"],
         [108, "DeferredSlashCommandIndex"],
+        [109, "AgentFeedback"],
+        [110, "IssueTrackerAccounts"],
+        [111, "Workflows"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
