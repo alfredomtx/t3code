@@ -64,6 +64,8 @@ import { armFreshSession, disarmFreshSession, useFreshSessionArmed } from "./cha
 import { cancelHeldComposerSend, useComposerSendHeld } from "./chat/preparingComposerImages";
 import { useUsageLimitsPanel } from "./chat/useUsageLimitsPanel";
 import { useWorktreeSetup } from "./chat/useWorktreeSetup";
+import { deriveUnsettledRunId } from "./chat/MessagesTimeline.logic";
+import { TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR } from "./chat/composerFocusRedirect";
 import { useChatShortcuts } from "./chat/useChatShortcuts";
 import { ChatBannerLane } from "./chat/ChatBannerLane";
 import * as Schema from "effect/Schema";
@@ -2904,6 +2906,38 @@ export default function ChatView(props: ChatViewProps) {
     }
   });
 
+  const {
+    onConfirmRevertStable,
+    onEditLastSentMessage,
+    onForkFromRunStable,
+    onRevertTimelineTurnStable,
+  } = useTimelineRewind({
+    environmentId,
+    routeThreadRef,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    serverProjection,
+    activeThread,
+    timelineMessages,
+    rewindTargets: {
+      timelineEntries,
+      checkpoints: turnDiffSummaries,
+      threadStartCheckpointAvailable,
+      availableRevertTurnCounts,
+      unsettledRunId: deriveUnsettledRunId(activeActivityRun, activeRunningTurnId),
+    },
+    phase,
+    isSendBusy,
+    isRevertingCheckpoint,
+    supportsConversationRollback,
+    activeEnvironmentUnavailable,
+    activeEnvironmentUnavailableLabel,
+    promptRef,
+    composerRef,
+    composerDraftTarget,
+    setThreadError,
+  });
+
   useChatShortcuts({
     getTimelineScrollableNode: () =>
       displayedTimelineKey !== activeThreadKey
@@ -2950,6 +2984,26 @@ export default function ChatView(props: ChatViewProps) {
         routeKind !== "draft" &&
         composerRef.current?.isCaretAtStart() === true &&
         queuedRunsControlRef.current?.editLatest(event.repeat) === true,
+      "thread.editLastSentMessage": ({ event }) => {
+        const context = getShortcutContext(event.target);
+        if (
+          !isServerThread ||
+          embedded ||
+          activeThreadKey !== routeThreadKey ||
+          !context.composerFocus ||
+          context.terminalFocus ||
+          context.previewFocus ||
+          context.modelPickerOpen ||
+          context.turnRunning ||
+          queuedRunEdit.isEditing ||
+          pendingUserInputs.length > 0 ||
+          isDetailBehindShell(activeLatestRun, activeThreadShell?.latestRun ?? null) ||
+          document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)
+        )
+          return false;
+        if (event.repeat) return;
+        return onEditLastSentMessage();
+      },
       "thread.stop": ({ event }) => {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
@@ -3035,26 +3089,6 @@ export default function ChatView(props: ChatViewProps) {
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const openSurfaceInMainView = useOpenSurfaceInMainView(activeThreadRef);
   const sendSideChatStable = useStableCallback(sideChat.open);
-  const { onConfirmRevertStable, onForkFromRunStable, onRevertTimelineTurnStable } =
-    useTimelineRewind({
-      environmentId,
-      routeThreadRef,
-      routeThreadKey,
-      currentRouteThreadKeyRef,
-      serverProjection,
-      activeThread,
-      timelineMessages,
-      phase,
-      isSendBusy,
-      isRevertingCheckpoint,
-      supportsConversationRollback,
-      activeEnvironmentUnavailable,
-      activeEnvironmentUnavailableLabel,
-      promptRef,
-      composerRef,
-      composerDraftTarget,
-      setThreadError,
-    });
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", gt("Failed to compact context."));

@@ -76,6 +76,7 @@ const browserTests = [
   "apps/web/src/components/guest/GuestPage.browser.test.tsx",
   "apps/web/src/components/RelativeTime.browser.test.tsx",
   "apps/web/src/components/chat/useChatShortcuts.browser.test.tsx",
+  "apps/web/src/components/ChatView.browser.test.tsx",
   "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
   "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
   "apps/web/src/components/pullRequest/PullRequestCodeTab.browser.test.tsx",

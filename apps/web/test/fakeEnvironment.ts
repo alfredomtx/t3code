@@ -246,6 +246,7 @@ export interface FakeThread {
   readonly issues?: OrchestrationV2ThreadShell["issues"];
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly items: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly checkpoints?: OrchestrationV2ThreadProjection["checkpoints"];
   readonly runtimeRequests?: OrchestrationV2ThreadProjection["runtimeRequests"];
 }
 
@@ -410,7 +411,7 @@ function projectionOf(thread: FakeThread): OrchestrationV2ThreadProjection {
     plans: [],
     turnItems: [...thread.items],
     checkpointScopes: [],
-    checkpoints: [],
+    checkpoints: [...(thread.checkpoints ?? [])],
     contextHandoffs: [],
     contextTransfers: [],
     visibleTurnItems,

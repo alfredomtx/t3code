@@ -1,19 +1,29 @@
 import { createMemoryHistory } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
   EnvironmentId,
+  NodeId,
+  ProviderDriverKind,
+  ProviderSessionId,
+  ProviderThreadId,
   IssueTrackerKind,
   ORCHESTRATION_V2_WS_METHODS,
   RunId,
   ThreadId,
   WS_METHODS,
   type IssueDetail,
+  type OrchestrationV2Checkpoint,
+  type OrchestrationV2ProviderThread,
   type IssueRef,
   type ThreadIssueLink,
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import {
   compileResolvedKeybindingsConfig,
+  DEFAULT_RESOLVED_KEYBINDINGS,
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
@@ -868,6 +878,144 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
   const kept = shown.slice(0, -2).flatMap((structure, round) => (structure.deref() ? [round] : []));
   expect(kept).toEqual([]);
 });
+
+it.each([
+  { turns: 1, available: true },
+  { turns: 2, available: false },
+])(
+  "rewinds the last sent prompt only when its own rewind target exists ($turns turns)",
+  async ({ turns, available }) => {
+    const history = threadWithHistory(`rewind-shortcut-${turns}`, turns);
+    const firstRun = history.runs[0]!;
+    const providerThread = {
+      id: ProviderThreadId.make("rewind-provider-thread"),
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: firstRun.providerInstanceId,
+      providerSessionId: ProviderSessionId.make("rewind-provider-session"),
+      appThreadId: history.id,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "idle",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: turns,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: firstRun.requestedAt,
+      updatedAt: firstRun.requestedAt,
+    } satisfies OrchestrationV2ProviderThread;
+    const baseline = {
+      id: CheckpointId.make("rewind-baseline"),
+      threadId: history.id,
+      scopeId: CheckpointScopeId.make("rewind-root"),
+      nodeId: NodeId.make("rewind-node"),
+      runId: null,
+      parentCheckpointId: null,
+      ordinalWithinScope: 0,
+      appRunOrdinal: null,
+      ref: CheckpointRef.make("refs/t3/rewind-baseline"),
+      status: "missing",
+      files: [],
+      capturedAt: firstRun.requestedAt,
+    } satisfies OrchestrationV2Checkpoint;
+    const thread = {
+      ...history,
+      providerThreads: [providerThread],
+      checkpoints: [baseline],
+      items: history.items.map((item) =>
+        available && item.type === "user_message"
+          ? {
+              ...item,
+              attachments: [
+                {
+                  type: "file" as const,
+                  id: "rewind-file",
+                  name: "notes.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 5,
+                },
+              ],
+            }
+          : item,
+      ),
+    };
+    using _environment = installFakeEnvironment([thread], {
+      acceptCommands: true,
+      keybindings: DEFAULT_RESOLVED_KEYBINDINGS.filter(
+        (binding) => binding.command !== "thread.editLastSentMessage",
+      ),
+    });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${thread.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    const fallbackFetch = globalThis.fetch;
+    using _file = vi.spyOn(globalThis, "fetch").mockImplementation((input, init) => {
+      const url = new URL(
+        input instanceof Request ? input.url : String(input),
+        window.location.href,
+      );
+      return url.pathname === "/api/assets/rewind-file"
+        ? Promise.resolve(new Response("notes", { headers: { "content-type": "text/plain" } }))
+        : fallbackFetch(input, init);
+    });
+    using _asset = answerRpc(WS_METHODS.assetsCreateUrl, () =>
+      Effect.succeed({ relativeUrl: "/api/assets/rewind-file", expiresAt: 4_102_444_800_000 }),
+    );
+    const editor = page.getByTestId("composer-editor");
+    await expect.element(page.getByText(`Answer ${turns - 1} for ${thread.id}.`)).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Edit from here" })).toBeInTheDocument();
+    await editor.click();
+    await insertText("Keep this draft");
+    const chord = "{ControlOrMeta>}{Alt>}{ArrowUp}{/Alt}{/ControlOrMeta}";
+    await userEvent.keyboard(chord);
+
+    const draft = () =>
+      useComposerDraftStore.getState().getComposerDraft(scopeThreadRef(ENVIRONMENT_ID, thread.id));
+    const rewinds = () =>
+      dispatchedCommands().filter((command) => command.type === "checkpoint.rollback");
+    if (!available) {
+      expect(rewinds()).toEqual([]);
+      expect(draft()?.prompt).toBe("Keep this draft");
+      return;
+    }
+
+    await vi.waitFor(() =>
+      expect(rewinds()).toEqual([
+        expect.objectContaining({ checkpointId: baseline.id, restoreFiles: false }),
+      ]),
+    );
+    await expect
+      .element(page.getByRole("alertdialog", { name: "Edit from here?" }))
+      .not.toBeInTheDocument();
+    await userEvent.keyboard(chord);
+    await act(async () => {
+      await emitThreadEvent(thread.id, {
+        type: "provider-thread.updated",
+        payload: { ...providerThread, lastRunOrdinal: null },
+      });
+      await emitThreadEvent(thread.id, {
+        type: "run.updated",
+        payload: { ...firstRun, status: "rolled_back" },
+      });
+    });
+    await vi.waitFor(() => {
+      expect(draft()?.prompt).toBe(`Keep this draft\n\n${thread.id}: question 0`);
+      expect(draft()?.files).toEqual([expect.objectContaining({ name: "notes.txt" })]);
+    });
+    await expect.element(editor).toHaveFocus();
+    expect(rewinds()).toHaveLength(1);
+    expect(dispatchedCommands().some((command) => command.type === "message.dispatch")).toBe(false);
+  },
+);
 
 it("a shortcut conditioned on rightPanelOpen sees the thread's open right panel", async () => {
   await page.viewport(1280, 800);

@@ -18,10 +18,7 @@ import {
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
-import {
-  mergeRightPanelTabKeybindings,
-  rightPanelTabKeybindingsAtom,
-} from "../rightPanelTabKeybindings";
+import { mergeLocalKeybindings, localKeybindingsAtom } from "../localKeybindings";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
@@ -147,7 +144,7 @@ export function createShortcutKeybindingsAtom(
   const state = createShortcutKeybindingsStateAtom(input);
   const custom = Atom.make((get) => get(state).keybindings);
   return Atom.make((get): ServerConfig["keybindings"] =>
-    mergeRightPanelTabKeybindings(get(custom) ?? [], get(rightPanelTabKeybindingsAtom)),
+    mergeLocalKeybindings(get(custom) ?? [], get(localKeybindingsAtom)),
   );
 }
 
@@ -185,10 +182,7 @@ export const primaryServerKeybindingsSourceAtom = Atom.make(
 );
 const primaryCustomKeybindingsAtom = Atom.make((get) => get(primaryShortcutStateAtom).keybindings);
 export const primaryServerKeybindingsAtom = Atom.make((get) =>
-  mergeRightPanelTabKeybindings(
-    get(primaryCustomKeybindingsAtom) ?? [],
-    get(rightPanelTabKeybindingsAtom),
-  ),
+  mergeLocalKeybindings(get(primaryCustomKeybindingsAtom) ?? [], get(localKeybindingsAtom)),
 ).pipe(Atom.withLabel("web-primary-server-keybindings"));
 
 const EMPTY_AVAILABLE_EDITORS: ReadonlyArray<EditorId> = [];

@@ -188,6 +188,12 @@ threads follow it after they restart. Suggestions show on web and desktop.
 
 ## Edit an earlier prompt
 
+With the composer focused and the turn finished, press **Cmd+Option+Up** on macOS
+or **Ctrl+Alt+Up** on Windows and Linux to edit the last sent prompt in one step.
+The shortcut rewinds chat history and restores the prompt and its attachments
+below any unsent draft. It keeps workspace files as they are. You can remap
+**Edit Last Sent Message (Keep Files)** in Keyboard Shortcuts. The remap is saved on this client.
+
 On web and desktop, choose **Edit from here** beneath a sent message to rewind
 the conversation to before that message. Choose **Revert and keep changes** to
 leave workspace files as they are, or **Revert files too** to put the workspace back

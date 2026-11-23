@@ -21,7 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { readLocalApi } from "../../localApi";
-import { findRevertCheckpoint } from "../../session-logic";
+import { deriveRevertTurnCountByUserMessageId, findRevertCheckpoint } from "../../session-logic";
 import { type ChatMessage } from "../../types";
 import { newThreadId } from "~/lib/utils";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -44,6 +44,7 @@ interface TimelineRewindInput {
   readonly serverProjection: ThreadStructure | null;
   readonly activeThread: EnvironmentThreadShell | undefined;
   readonly timelineMessages: ReadonlyArray<ChatMessage>;
+  readonly rewindTargets: Parameters<typeof deriveRevertTurnCountByUserMessageId>[0];
   readonly phase: SessionPhase;
   readonly isSendBusy: boolean;
   readonly isRevertingCheckpoint: boolean;
@@ -69,6 +70,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     serverProjection,
     activeThread,
     timelineMessages,
+    rewindTargets,
     phase,
     isSendBusy,
     isRevertingCheckpoint,
@@ -103,6 +105,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
       !localApi ||
       !activeThread ||
       isRevertingCheckpoint ||
+      useComposerDraftStore.getState().rewindingThreadKeys.has(routeThreadKey) ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
     )
       return;
@@ -180,6 +183,21 @@ export function useTimelineRewind(input: TimelineRewindInput) {
     }
   };
   const onRevertToTurnCountStable = useStableCallback(onRevertToTurnCount);
+  const onEditLastSentMessage = () => {
+    const entry = rewindTargets.timelineEntries.findLast(
+      (candidate) =>
+        candidate.kind === "message" &&
+        candidate.projectedItem?.visibility === "local" &&
+        candidate.message.role === "user" &&
+        (candidate.message.inputIntent === "turn_start" ||
+          candidate.message.inputIntent === "queued_turn"),
+    );
+    if (entry?.kind !== "message" || !supportsConversationRollback) return false;
+    const turnCount = deriveRevertTurnCountByUserMessageId(rewindTargets).get(entry.message.id);
+    if (turnCount === undefined) return false;
+    void onRevertToTurnCountStable(turnCount, entry.message.id, false);
+    return true;
+  };
   const onConfirmRevert = (turnCount: number, messageId: MessageId, restoreFiles: boolean) => {
     void onRevertToTurnCount(turnCount, messageId, restoreFiles);
   };
@@ -235,6 +253,7 @@ export function useTimelineRewind(input: TimelineRewindInput) {
   const onRevertTimelineTurnStable = useStableCallback(onRevertTimelineTurn);
   return {
     onConfirmRevertStable,
+    onEditLastSentMessage,
     onForkFromRunStable,
     onRevertTimelineTurnStable,
   };

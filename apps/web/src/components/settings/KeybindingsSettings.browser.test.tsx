@@ -40,10 +40,7 @@ vi.mock("../../state/use-atom-command", async (original) => ({
 }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import {
-  rightPanelTabKeybindingsAtom,
-  mergeRightPanelTabKeybindings,
-} from "~/rightPanelTabKeybindings";
+import { localKeybindingsAtom, mergeLocalKeybindings } from "~/localKeybindings";
 import { resolveShortcutCommand } from "~/keybindings";
 
 import { KeybindingsSettingsPanel } from "./KeybindingsSettings";
@@ -98,60 +95,76 @@ describe("coach shortcut editor", () => {
   });
 });
 
-it("saves a custom tab chord locally without asking an older backend to recognize it", async () => {
-  setup();
-  const key = "t3code:right-panel-tab-keybindings:v1";
-  const previous = localStorage.getItem(key);
-  localStorage.removeItem(key);
-  try {
-    await using screen = await render(
-      <KeybindingsSettingsPanel
-        coachCommand="rightPanel.nextTab"
-        coachSource={EnvironmentId.make("source")}
-      />,
-    );
-    const recorder = screen.getByRole("textbox", { name: "Keybinding for Right Panel: Next Tab" });
-    await recorder.click();
-    await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
-    await screen.getByRole("button", { name: "Save", exact: true }).click();
-    expect(state.save).not.toHaveBeenCalled();
-    expect(localStorage.getItem(key)).toContain("rightPanel.nextTab");
-    const saved = appAtomRegistry.get(rightPanelTabKeybindingsAtom);
-    const resolved = mergeRightPanelTabKeybindings([], saved);
-    expect(
-      resolveShortcutCommand(
-        { key: "K", code: "KeyK", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true },
-        resolved,
-        { context: { rightPanelOpen: true, editableFocus: false } },
-      ),
-    ).toBe("rightPanel.nextTab");
-    await screen.unmount();
-    await using reloaded = await render(
-      <KeybindingsSettingsPanel
-        coachCommand="rightPanel.nextTab"
-        coachSource={EnvironmentId.make("source")}
-      />,
-    );
-    await expect
-      .element(reloaded.getByRole("textbox", { name: "Keybinding for Right Panel: Next Tab" }))
-      .toBeVisible();
-    expect(appAtomRegistry.get(rightPanelTabKeybindingsAtom)).toEqual(saved);
-    await reloaded.getByRole("button", { name: "Actions for Right Panel: Next Tab" }).click();
-    await page.getByRole("menuitem", { name: "Reset to default", exact: true }).click();
-    expect(appAtomRegistry.get(rightPanelTabKeybindingsAtom)[0]?.key).toBe("alt+f");
-    await reloaded.getByRole("textbox", { name: "Keybinding for Right Panel: Next Tab" }).click();
-    await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
-    await reloaded.getByRole("button", { name: "Save", exact: true }).click();
-    await reloaded.getByRole("button", { name: "Actions for Right Panel: Next Tab" }).click();
-    await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
-    expect(appAtomRegistry.get(rightPanelTabKeybindingsAtom)).toEqual([]);
-    expect(state.save).not.toHaveBeenCalled();
-  } finally {
-    if (previous === null) localStorage.removeItem(key);
-    else localStorage.setItem(key, previous);
-    await act(() => window.dispatchEvent(new StorageEvent("storage", { key })));
-  }
-});
+it.each([
+  {
+    command: "rightPanel.nextTab",
+    label: "Right Panel: Next Tab",
+    defaultKey: "alt+f",
+    context: { rightPanelOpen: true, editableFocus: false },
+  },
+  {
+    command: "thread.editLastSentMessage",
+    label: "Chat: Edit Last Sent Message (Keep Files)",
+    defaultKey: "mod+alt+arrowup",
+    context: { composerFocus: true },
+  },
+] as const)(
+  "saves $command locally when an older backend does not know it",
+  async ({ command, label, defaultKey, context }) => {
+    setup();
+    const key = "t3code:right-panel-tab-keybindings:v1";
+    const previous = localStorage.getItem(key);
+    localStorage.removeItem(key);
+    try {
+      await using screen = await render(
+        <KeybindingsSettingsPanel
+          coachCommand={command}
+          coachSource={EnvironmentId.make("source")}
+        />,
+      );
+      const recorder = screen.getByRole("textbox", { name: `Keybinding for ${label}` });
+      await recorder.click();
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await screen.getByRole("button", { name: "Save", exact: true }).click();
+      expect(state.save).not.toHaveBeenCalled();
+      expect(localStorage.getItem(key)).toContain(command);
+      const saved = appAtomRegistry.get(localKeybindingsAtom);
+      const resolved = mergeLocalKeybindings([], saved);
+      expect(
+        resolveShortcutCommand(
+          { key: "K", code: "KeyK", ctrlKey: true, metaKey: false, altKey: false, shiftKey: true },
+          resolved,
+          { context },
+        ),
+      ).toBe(command);
+      await screen.unmount();
+      await using reloaded = await render(
+        <KeybindingsSettingsPanel
+          coachCommand={command}
+          coachSource={EnvironmentId.make("source")}
+        />,
+      );
+      await expect
+        .element(reloaded.getByRole("textbox", { name: `Keybinding for ${label}` }))
+        .toBeVisible();
+      expect(appAtomRegistry.get(localKeybindingsAtom)).toEqual(saved);
+      await reloaded.getByRole("button", { name: `Actions for ${label}` }).click();
+      await page.getByRole("menuitem", { name: "Reset to default", exact: true }).click();
+      expect(appAtomRegistry.get(localKeybindingsAtom)[0]?.key).toBe(defaultKey);
+      await reloaded.getByRole("textbox", { name: `Keybinding for ${label}` }).click();
+      await userEvent.keyboard("{Control>}{Shift>}k{/Shift}{/Control}");
+      await reloaded.getByRole("button", { name: "Save", exact: true }).click();
+      await reloaded.getByRole("button", { name: `Actions for ${label}` }).click();
+      await page.getByRole("menuitem", { name: "Remove", exact: true }).click();
+      expect(appAtomRegistry.get(localKeybindingsAtom)).toEqual([]);
+      expect(state.save).not.toHaveBeenCalled();
+    } finally {
+      if (previous === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, previous);
+      await act(() => window.dispatchEvent(new StorageEvent("storage", { key })));
+    }
+  },
+);
 
 it("removes server-origin custom tab shortcuts through their server owner", async () => {
   setup();

@@ -36,10 +36,10 @@ import {
   type ServerUpsertKeybindingInput,
 } from "@t3tools/contracts";
 import {
-  isLocalTabCommand,
-  mergeRightPanelTabKeybindings,
-  useRightPanelTabKeybindings,
-} from "~/rightPanelTabKeybindings";
+  isLocalKeybindingCommand,
+  mergeLocalKeybindings,
+  useLocalKeybindings,
+} from "~/localKeybindings";
 import { parseKeybindingWhenExpression } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
@@ -1513,8 +1513,8 @@ function useKeybindingCatalog() {
   const sendShortcut = useClientSettings((settings) => settings.sendShortcut);
   const m = useMessages();
   const serverKeybindings = useSettingsScope().environment?.serverConfig?.keybindings;
-  const [local] = useRightPanelTabKeybindings();
-  const merged = mergeRightPanelTabKeybindings(serverKeybindings ?? [], local);
+  const [local] = useLocalKeybindings();
+  const merged = mergeLocalKeybindings(serverKeybindings ?? [], local);
   return {
     commandOptions: buildKeybindingCommandOptions(merged, m),
     allRows: buildKeybindingRows(merged, navigator.platform, sendShortcut, m),
@@ -1559,7 +1559,7 @@ export function KeybindingsSettingsPanel({
   );
   const [query, setQuery] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [localTabKeybindings, setLocalTabKeybindings] = useRightPanelTabKeybindings();
+  const [localKeybindings, setLocalKeybindings] = useLocalKeybindings();
   const [savingCommand, setSavingCommand] = useState<KeybindingCommand | null>(null);
   const { commandOptions, allRows } = useKeybindingCatalog();
   const [isAddingBinding, setIsAddingBinding] = useState(
@@ -1610,13 +1610,13 @@ export function KeybindingsSettingsPanel({
       )
     )
       return;
-    if (isLocalTabCommand(input.command)) {
+    if (isLocalKeybindingCommand(input.command)) {
       const rule = {
         command: input.command,
         key: input.key.trim(),
         ...(input.when?.trim() ? { when: input.when.trim() } : {}),
       };
-      setLocalTabKeybindings((current) => [
+      setLocalKeybindings((current) => [
         ...current.filter(
           (entry) =>
             !(
@@ -1674,10 +1674,10 @@ export function KeybindingsSettingsPanel({
     )
       return;
     if (
-      isLocalTabCommand(row.command) &&
-      localTabKeybindings.some((entry) => entry.command === row.command)
+      isLocalKeybindingCommand(row.command) &&
+      localKeybindings.some((entry) => entry.command === row.command)
     ) {
-      setLocalTabKeybindings((current) =>
+      setLocalKeybindings((current) =>
         current.filter(
           (entry) =>
             !(
@@ -1757,7 +1757,7 @@ export function KeybindingsSettingsPanel({
       {coachCommand ? (
         <p className="px-4 text-xs text-muted-foreground">
           <T>Save to:</T>{" "}
-          {isLocalTabCommand(coachCommand)
+          {isLocalKeybindingCommand(coachCommand)
             ? gt("This client")
             : coachScopeMatches
               ? primaryEnvironment?.label

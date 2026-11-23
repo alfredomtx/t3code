@@ -906,7 +906,7 @@ function deriveSupersededAttemptFolds(
 }
 
 // After send, the previous turn stays active until the server creates its replacement.
-function deriveUnsettledRunId(
+export function deriveUnsettledRunId(
   latestRun: TimelineLatestRun | null,
   runningRunId: RunId | null = null,
 ): RunId | null {
