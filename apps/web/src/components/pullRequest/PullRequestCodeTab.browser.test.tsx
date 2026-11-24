@@ -792,6 +792,70 @@ it("keeps a linked test file expanded when a refresh changes the rest of the dif
   await expect.element(testLine).toBeVisible();
 });
 
+// regression: #42199 an agent's push re-keyed every file and dropped the comment being typed
+it.each([
+  { action: "keeps", changesDraftFile: false },
+  { action: "drops", changesDraftFile: true },
+])("$action an unfinished inline comment after a head change", async ({ changesDraftFile }) => {
+  const paths = ["early-0.ts", "early-1.test.ts", "early-2.generated.ts"];
+  using fixture = setup(null, {
+    patch: { ...firstPage, patch: paths.map((path) => filePatch(path)).join("") },
+    changedFiles: paths.length,
+  });
+  const reviewable = {
+    ...detail,
+    capabilities: {
+      ...detail.capabilities,
+      review: { ...detail.capabilities.review, inlineComment: true },
+    },
+    viewerPermissions: { ...detail.viewerPermissions, comment: true },
+  };
+  const reviewTab = (backgroundRefreshToken: number) =>
+    fixture.tab(0, {
+      reference: reviewable,
+      detail: {
+        ...reviewable,
+        headSha: backgroundRefreshToken === 0 ? "original-head" : "updated-head",
+        changedFiles: paths.length + backgroundRefreshToken,
+      },
+      backgroundRefreshToken,
+    });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(reviewTab(0), { container });
+  const header = screen.getByText("early-0.ts", { exact: true }).first();
+  await expect.element(header).toBeVisible();
+  const root = header.element().getRootNode() as ShadowRoot;
+  await userEvent.click(root.querySelector<HTMLElement>('[data-column-number="1"]')!);
+  const input = () => screen.getByRole("textbox", { name: "Comment on lines early-0.ts:1" });
+  await input().fill("Unsent review note");
+
+  const retained = fixture.registry.get(diffAtom);
+  if (!AsyncResult.isSuccess(retained)) throw new Error("Expected cached diff");
+  await act(() => fixture.registry.set(heldDiffRead, retained));
+  await screen.rerender(reviewTab(1));
+  await expect.element(input()).not.toBeInTheDocument();
+
+  await act(() => {
+    fixture.registry.set(firstDiffData, {
+      ...firstPage,
+      patch: [...paths, "early-3.ts"]
+        .map((path) =>
+          filePatch(path, path === "early-0.ts" && changesDraftFile ? "changed()" : undefined),
+        )
+        .join(""),
+    });
+    fixture.registry.set(heldDiffRead, null);
+  });
+
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  if (changesDraftFile) {
+    await expect.element(input()).not.toBeInTheDocument();
+  } else {
+    await expect.element(input()).toHaveValue("Unsent review note");
+  }
+});
+
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
 async function renderShortPages(stack: AsyncDisposableStack) {
   const fixture = stack.use(

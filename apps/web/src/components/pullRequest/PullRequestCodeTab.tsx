@@ -64,6 +64,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type ComponentProps,
   type ReactNode,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
@@ -90,6 +91,7 @@ import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
 import { orderDiffFilesForReview } from "@t3tools/client-runtime/diff-file-order";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/mediaPreview";
 import {
+  buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   fnv1a32,
@@ -391,12 +393,38 @@ interface MutableAnnotationGroup {
 }
 
 interface DraftAnchor {
-  readonly fileKey: string;
+  readonly reviewScope: string;
+  readonly diffScope: string;
+  // A refresh re-keys every file's render key, so the draft finds its file by identity and content.
+  readonly identityKey: string;
+  readonly fileVersion: number;
   readonly path: string;
   readonly oldPath: string | null;
   readonly position: PullRequestReviewPosition;
   readonly startPosition?: PullRequestReviewPosition;
   readonly range: SelectedLineRange;
+}
+
+// The viewer remounts a file's annotations when a refresh re-keys it, so draft text lives outside.
+const draftCommentTexts = new WeakMap<DraftAnchor, string>();
+
+function PullRequestDraftCommentAnnotation({
+  draft,
+  ...props
+}: Omit<ComponentProps<typeof DiffCommentAnnotation>, "text" | "onTextChange"> & {
+  readonly draft: DraftAnchor;
+}) {
+  const [text, setText] = useState(() => draftCommentTexts.get(draft) ?? "");
+  return (
+    <DiffCommentAnnotation
+      {...props}
+      text={text}
+      onTextChange={(next) => {
+        setText(next);
+        draftCommentTexts.set(draft, next);
+      }}
+    />
+  );
 }
 
 export interface PullRequestAgentSelectionInput {
@@ -527,12 +555,9 @@ function PullRequestCodeTab({
     selectedCommitOid !== null && detail.commits.some((entry) => entry.oid === selectedCommitOid)
       ? selectedCommitOid
       : null;
-  const scopeKey = JSON.stringify([
-    environmentId,
-    referenceKey,
-    commit,
-    detail.headSha ?? detail.updatedAt,
-  ]);
+  const reviewScope = [environmentId, referenceKey, commit];
+  const draftScopeKey = JSON.stringify(reviewScope);
+  const scopeKey = JSON.stringify([...reviewScope, detail.headSha ?? detail.updatedAt]);
   const scrollKey = JSON.stringify([scrollScopeKey, scopeKey]);
   const [scrollState, setScrollState] = useState(() => ({
     key: scrollKey,
@@ -550,7 +575,7 @@ function PullRequestCodeTab({
     setActionGeneration((generation) => generation + 1);
     setLastViewedFileKey(null);
     setPendingViewedGroup(null);
-    setDraft(null);
+    if (draft !== null && draft.reviewScope !== draftScopeKey) setDraft(null);
     setSelectedLines(null);
     setFolds(EMPTY_PULL_REQUEST_DIFF_FOLDS);
     setVisibleCommitCount(COMMIT_PAGE_SIZE);
@@ -853,6 +878,26 @@ function PullRequestCodeTab({
       })
     : loadedFiles;
   const hiddenTestFileCount = loadedFiles.length - files.length;
+  const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
+  // After a head change, a retained query answer still describes the old diff.
+  const canMatchDraft =
+    draft !== null &&
+    draft.reviewScope === draftScopeKey &&
+    (draft.diffScope === scopeKey || loadedSlices.every((slice) => slice.inventoryFresh));
+  const draftFile = canMatchDraft
+    ? loadedFiles.find((file) => buildFileDiffIdentityKey(file) === draft.identityKey)
+    : undefined;
+  const draftFileKey =
+    draftFile !== undefined && buildFileDiffContentVersion(draftFile) === draft?.fileVersion
+      ? buildFileDiffRenderKey(draftFile)
+      : null;
+  if (canMatchDraft && draftFileKey === null) {
+    // Never attach the draft to lines of a changed file; one missing mid-refresh may come back.
+    if (draftFile !== undefined || (loadedSlices.length > 0 && nextCursor === null)) {
+      setDraft(null);
+      setSelectedLines(null);
+    }
+  }
   const filePaths = loadedFiles.map((file) => resolveFileDiffPath(file));
   const omittedFileStats = new Map(
     loadedSlices.flatMap((slice) =>
@@ -932,7 +977,7 @@ function PullRequestCodeTab({
         groupAt(anchor.side, anchor.line).pending.push(comment);
       }
     }
-    if (draft?.fileKey === fileKey) {
+    if (draft !== null && draftFileKey === fileKey) {
       const anchor = getReviewPositionAnchor(draft.position);
       groupAt(anchor.side, anchor.line).draft = true;
     }
@@ -997,7 +1042,6 @@ function PullRequestCodeTab({
     };
   });
 
-  const nextCursor = loadedSlices.at(-1)?.nextCursor ?? null;
   const withheldFilesReadable = loadedSlices[0]?.source.withheldFilesReadable === true;
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
@@ -1342,7 +1386,10 @@ function PullRequestCodeTab({
       resolveDiffReviewAnchor(file, range, rangeComments);
     if (anchor === null) return;
     setDraft({
-      fileKey: item.id,
+      reviewScope: draftScopeKey,
+      diffScope: scopeKey,
+      identityKey: buildFileDiffIdentityKey(file),
+      fileVersion: buildFileDiffContentVersion(file),
       path,
       oldPath: previousPath === path ? null : previousPath,
       ...anchor,
@@ -1355,17 +1402,16 @@ function PullRequestCodeTab({
     text: string,
     onFinish: (comment: ReviewCommentContext) => void,
   ) => {
-    const file = files.find((candidate) => buildFileDiffRenderKey(candidate) === anchor.fileKey);
     const comment =
-      file === undefined
+      draftFile === undefined || draftFileKey === null
         ? null
         : buildDiffReviewComment({
-            id: `pull-request-selection:${diffReviewSelectionId(anchor.fileKey, anchor.range)}`,
+            id: `pull-request-selection:${diffReviewSelectionId(draftFileKey, anchor.range)}`,
             sectionId: `pull-request:${detail.number}`,
             // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
             sectionTitle: `PR #${detail.number} review`,
             filePath: anchor.path,
-            fileDiff: file,
+            fileDiff: draftFile,
             range: anchor.range,
             text,
           });
@@ -1608,13 +1654,13 @@ function PullRequestCodeTab({
         />
       ))}
       {annotation.metadata.draft && draft && canSelectLines ? (
-        <DiffCommentAnnotation
+        <PullRequestDraftCommentAnnotation
+          draft={draft}
           environmentId={environmentId}
           projectId={reference.projectId}
           ownerKey={JSON.stringify([environmentId, reviewKey, draft])}
           kind="draft"
           rangeLabel={`${draft.path}:${getReviewPositionAnchor(draft.position).line}`}
-          text=""
           completionScope={canCommentOnLines ? completionScope : null}
           submitLabel={canCommentOnLines ? gt("Add to review") : gt("Add to agent")}
           {...(canCommentOnLines && onAddToAgentSelection
