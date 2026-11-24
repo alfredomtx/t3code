@@ -17,6 +17,7 @@ import {
   mergeClaudeProcessEnvironment,
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
+import { readClaudeUserSettings } from "./ClaudeSkills.ts";
 
 it.layer(NodeServices.layer)("ClaudeHome", (it) => {
   describe("Claude home resolution", () => {
@@ -73,21 +74,28 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       const blockedRead = yield* Deferred.make<string>();
       const completed = yield* Deferred.make<NodeJS.ProcessEnv>();
       let userReads = 0;
+      const settingsRead = yield* Deferred.make<Record<string, unknown> | undefined>();
+      const testFileSystem = {
+        ...fileSystem,
+        readFileString: (file: string) =>
+          file === path.join(homePath, "settings.json")
+            ? Effect.gen(function* () {
+                userReads++;
+                yield* Deferred.succeed(readStarted, undefined);
+                return yield* Deferred.await(blockedRead);
+              })
+            : Effect.succeed('{"env":{"CLAUDE_CODE_ENTRYPOINT":"managed"}}'),
+      };
       const merge = mergeClaudeProcessEnvironment({ homePath }, undefined, {
         ProgramFiles: programFiles,
       }).pipe(
         Effect.provideService(HostProcess.Platform, "win32"),
-        Effect.provideService(FileSystem.FileSystem, {
-          ...fileSystem,
-          readFileString: (file) =>
-            file === path.join(homePath, "settings.json")
-              ? Effect.gen(function* () {
-                  userReads++;
-                  yield* Deferred.succeed(readStarted, undefined);
-                  return yield* Deferred.await(blockedRead);
-                })
-              : Effect.succeed('{"env":{"CLAUDE_CODE_ENTRYPOINT":"managed"}}'),
-        }),
+        Effect.provideService(FileSystem.FileSystem, testFileSystem),
+      );
+      yield* readClaudeUserSettings({ homePath }, undefined, {}).pipe(
+        Effect.provideService(FileSystem.FileSystem, testFileSystem),
+        Effect.tap((settings) => Deferred.succeed(settingsRead, settings)),
+        Effect.forkScoped,
       );
       yield* Effect.addFinalizer(() => Deferred.succeed(blockedRead, "{}"));
       yield* merge.pipe(
@@ -97,6 +105,8 @@ it.layer(NodeServices.layer)("ClaudeHome", (it) => {
       yield* Deferred.await(readStarted);
       yield* TestClock.adjust("5 seconds");
       expect(Option.isSome(yield* Deferred.poll(completed))).toBe(true);
+      expect(Option.isSome(yield* Deferred.poll(settingsRead))).toBe(true);
+      expect(yield* Deferred.await(settingsRead)).toBeUndefined();
       expect((yield* Deferred.await(completed)).CLAUDE_CODE_ENTRYPOINT).toBe("managed");
       expect((yield* merge).CLAUDE_CODE_ENTRYPOINT).toBe("managed");
       expect(userReads).toBe(1);

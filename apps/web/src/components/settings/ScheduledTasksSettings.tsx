@@ -56,6 +56,7 @@ import { m, type MessageResolver } from "../../i18n/messages";
 import { formatRelativeTime } from "../../timestampFormat";
 import { useClientSettings, useEnvironmentSettings } from "../../hooks/useSettings";
 import {
+  createModelSelection,
   getProviderOptionDescriptors,
   mergeProviderOptionSelections,
   normalizeModelSlug,
@@ -155,7 +156,12 @@ import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useSearchableSetting } from "./settingsSearch";
-import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+  SETTINGS_PICKER_TRIGGER_CLASSNAME,
+} from "./settingsLayout";
 
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_SHORT = [
@@ -1705,7 +1711,6 @@ function ScheduledTaskEditorForm({
       );
       return;
     }
-    const modelSelection = selection;
     const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
       draft.workspaceMode === "root"
         ? { type: "root" }
@@ -1727,7 +1732,7 @@ function ScheduledTaskEditorForm({
       ...(draft.threadId === "" && draft.savedThreadId !== "" ? { unbindThread: true } : {}),
       ...(offersThreadModes ? { threadMode: draft.threadMode } : {}),
       workspaceStrategy,
-      modelSelection,
+      modelSelection: selection,
       ...(supportsTaskPolicy ? { boundModelSelectionMode: draft.boundModelSelectionMode } : {}),
       // Tasks have no mode picker; a mode above the administrator's ceiling would fail every run.
       runtimeMode:
@@ -2037,16 +2042,18 @@ function ScheduledTaskEditorForm({
                   instanceEntries={instanceEntries}
                   modelOptionsByInstance={modelOptionsByInstance}
                   isComposerOwned={false}
-                  onInstanceModelChange={(instanceId, model) =>
+                  triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  onInstanceModelChange={(instanceId, model) => {
+                    if (
+                      activeSelection?.instanceId === instanceId &&
+                      activeSelection.model === model
+                    )
+                      return;
                     setDraft((current) => ({
                       ...current,
-                      modelSelection:
-                        activeSelection?.instanceId === instanceId &&
-                        activeSelection.model === model
-                          ? activeSelection
-                          : { instanceId, model },
-                    }))
-                  }
+                      modelSelection: createModelSelection(instanceId, model),
+                    }));
+                  }}
                 />
                 {activeEntry && modelAvailable ? (
                   <TraitsPicker
@@ -2054,7 +2061,9 @@ function ScheduledTaskEditorForm({
                     instanceId={activeInstanceId}
                     models={activeEntry.models}
                     model={activeModel}
-                    modelOptions={displayedSelection.options}
+                    modelOptions={displayedSelection.options ?? []}
+                    includePlanAgent={planModeEnabled}
+                    triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
                     allowPromptInjectedEffort={false}
                     disabled={
                       saving ||
