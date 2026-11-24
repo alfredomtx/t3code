@@ -12122,7 +12122,7 @@
   "aa5c379423baace1": "New thread in current project: Shift+click",
   "9d9d32b401d2931a": "{count, plural, one {{count} terminal process running} other {{count} terminal processes running}}",
   "ade06f6723949b39": "Error occurred",
-  "021fe65858278fe9": "Snooze thread",
+  "55271eb28ba12428": "Snooze until tomorrow",
   "e7c18f33bc1326f7": "Setting up",
   "26375cafb52d0503": "Goal",
   "ad78fae7d373cf21": "Working",
@@ -12148,7 +12148,6 @@
       "v": "v"
     }
   ],
-  "4b53176b7af3d87a": "Snooze thread",
   "9f20632581a1de90": "Pin",
   "fcd14f3717170dae": "Unpin",
   "8e800a9dfe7f9487": "Settle",

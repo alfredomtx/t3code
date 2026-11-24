@@ -12112,7 +12112,7 @@
   "aa5c379423baace1": "Nouveau fil dans le projet actuel : Shift+clic",
   "9d9d32b401d2931a": "{count, plural, one {{count} processus de terminal en cours} other {{count} processus de terminal en cours}}",
   "ade06f6723949b39": "Une erreur s’est produite",
-  "021fe65858278fe9": "Reporter le fil",
+  "55271eb28ba12428": "Reporter à demain",
   "e7c18f33bc1326f7": "Configuration",
   "26375cafb52d0503": "Objectif",
   "ad78fae7d373cf21": "En cours",
@@ -12138,7 +12138,6 @@
       "v": "v"
     }
   ],
-  "4b53176b7af3d87a": "Reporter le fil",
   "9f20632581a1de90": "Épingler",
   "fcd14f3717170dae": "Désépingler",
   "8e800a9dfe7f9487": "Clore",

@@ -12114,7 +12114,7 @@
   "aa5c379423baace1": "Neuer Thread im aktuellen Projekt: Shift+Klick",
   "9d9d32b401d2931a": "{count, plural, one {{count} Terminal-Prozess läuft} other {{count} Terminal-Prozesse laufen}}",
   "ade06f6723949b39": "Fehler aufgetreten",
-  "021fe65858278fe9": "Thread zurückstellen",
+  "55271eb28ba12428": "Bis morgen zurückstellen",
   "e7c18f33bc1326f7": "Wird eingerichtet",
   "26375cafb52d0503": "Ziel",
   "ad78fae7d373cf21": "Arbeitet",
@@ -12140,7 +12140,6 @@
       "v": "v"
     }
   ],
-  "4b53176b7af3d87a": "Thread zurückstellen",
   "9f20632581a1de90": "Anheften",
   "fcd14f3717170dae": "Loslösen",
   "8e800a9dfe7f9487": "Erledigen",

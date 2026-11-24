@@ -12120,7 +12120,7 @@
   "aa5c379423baace1": "Ny tråd i aktuellt projekt: Shift+klick",
   "9d9d32b401d2931a": "{count, plural, one {{count} terminalprocess körs} other {{count} terminalprocesser körs}}",
   "ade06f6723949b39": "Ett fel uppstod",
-  "021fe65858278fe9": "Snooza tråd",
+  "55271eb28ba12428": "Pausa till i morgon",
   "e7c18f33bc1326f7": "Konfigurerar",
   "26375cafb52d0503": "Mål",
   "ad78fae7d373cf21": "Arbetar",
@@ -12146,7 +12146,6 @@
       "v": "v"
     }
   ],
-  "4b53176b7af3d87a": "Snooza tråd",
   "9f20632581a1de90": "Fäst",
   "fcd14f3717170dae": "Lossa",
   "8e800a9dfe7f9487": "Markera som klar",

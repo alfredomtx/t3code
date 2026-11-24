@@ -375,6 +375,9 @@ answer its questions.
 
 ## Snooze until later
 
+In T3 Code Personal, click the clock on a sidebar thread to snooze it until 9:00 a.m.
+tomorrow in your local time. Use the thread menu to pick another time.
+
 To change the choices in the snooze menu, open **Settings → Threads → Snooze options**.
 Each option is a duration, such as 3 hours, or a time on a day, such as 9:00 PM
 tomorrow. A weekday means the next one after today. Menus list the options soonest
