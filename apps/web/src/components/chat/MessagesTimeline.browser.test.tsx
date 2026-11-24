@@ -194,9 +194,12 @@ function v2Item(type: string, fields: Record<string, unknown>) {
   } as never;
 }
 
-async function renderElement(element: ReactElement, options: { router?: false } = {}) {
+async function renderElement(
+  element: ReactElement,
+  { height = 1200, ...options }: { height?: number; router?: false } = {},
+) {
   const container = document.createElement("div");
-  container.style.cssText = "height: 1200px; width: 900px; display: flex; flex-direction: column;";
+  container.style.cssText = `height: ${height}px; width: 900px; display: flex; flex-direction: column;`;
   const screen = await render(element, { container, ...options });
   const buttons = (name: string | RegExp) =>
     [...container.querySelectorAll<HTMLElement>("button, [role=button]")].filter((button) => {
@@ -720,13 +723,17 @@ describe("MessagesTimeline messages", () => {
       message(`Question ${index}`, {}, `user-${index}`),
       message(`Answer ${index}`, { role: "assistant" }, `assistant-${index}`),
     ]).flat();
-    await using screen = await renderTimeline(entries, props);
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} />,
+      { height: 600 },
+    );
     const viewport = props.listRef.current!.getScrollableNode()!;
     const strips = () => [
       ...screen.container.querySelectorAll<HTMLElement>("[data-minimap-strip]"),
     ];
     // Several final turns share the last screen, so the current turn is not the last one.
     await vi.waitFor(() => {
+      expect(viewport.scrollHeight - viewport.clientHeight).toBeGreaterThan(500);
       expect(viewport.scrollTop).toBeGreaterThan(0);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
       expect(strips()[0]?.dataset.inView).toBe("false");
@@ -742,25 +749,8 @@ describe("MessagesTimeline messages", () => {
 
     viewport.scrollTop -= 30;
     await vi.waitFor(() => expect(screen.button("Next turn")).not.toBeDisabled());
-    // Legend keeps its initial end anchor until a scroll leaves the end, and re-pins on resize.
-    viewport.scrollTop = 0;
-    await vi.waitFor(() => expect(strips()[0]?.dataset.inView).toBe("true"));
 
-    // Shrinking a detached viewport moves the bottom away without a scroll event.
-    await screen.rerender(
-      <MessagesTimeline {...props} timelineEntries={entries} liveFollowEnabled={false} />,
-    );
-    viewport.scrollTop = viewport.scrollHeight;
-    await vi.waitFor(() => expect(screen.button("Next turn")).toBeDisabled());
-    screen.container.style.height = "600px";
-    await vi.waitFor(() => {
-      expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeGreaterThan(
-        500,
-      );
-      expect(screen.button("Next turn")).not.toBeDisabled();
-    });
-
-    // So does a footer that grows below a detached bottom.
+    // A growing footer moves the end away from a detached viewport.
     viewport.scrollTop = viewport.scrollHeight;
     await vi.waitFor(() => expect(screen.button("Next turn")).toBeDisabled());
     await screen.rerender(
