@@ -8958,7 +8958,7 @@
   "f0e853acd2006d53": "Linked environments",
   "ef10c2dff987f3ea": "Run multi-step workflows from files in the workflows folder of this server's T3 home. Open them from the command palette. While off, nothing in that folder runs; runs wait until it is on again.",
   "2dadb2359422121c": "Workflows",
-  "13e86eb5d8287a71": "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+  "f34ef3de34e056e4": "Show a suggested next message in the empty composer after a Claude, Codex, or Antigravity turn. Tab inserts it. Suggestions may use your plan quota. Requires Codex 0.165 or later. Claude threads update on restart.",
   "d4b2a2ec812aafb0": "Suggest next prompt",
   "298c7150a7621c80": "Simlock device hosts",
   "67937aa49179285e": "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",

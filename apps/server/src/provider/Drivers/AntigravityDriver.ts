@@ -736,7 +736,10 @@ export const AntigravityDriver: ProviderDriver<
                   }),
               ),
             ),
-      orchestrationAdapter,
+      orchestrationAdapter: {
+        ...orchestrationAdapter,
+        suggestNextPrompt: textGeneration.suggestNextPrompt,
+      },
       textGeneration,
       auth: authFlow.controller,
       refreshModels,

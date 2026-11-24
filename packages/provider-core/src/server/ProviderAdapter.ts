@@ -34,6 +34,7 @@ import {
   RuntimeRequestId,
   RunAttemptId,
   RunId,
+  type TextGenerationError,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -47,6 +48,13 @@ import type {
   ProviderSelectionTransitionInput,
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
+
+export interface PromptSuggestionInput {
+  readonly cwd: string;
+  readonly message: string;
+  readonly reply: string;
+  readonly modelSelection: ModelSelection;
+}
 
 /** The folders of a multi-folder thread besides `cwd`. Single-folder threads omit it. */
 export const ProviderAdapterV2RuntimeWorkspace = Schema.Struct({
@@ -896,6 +904,9 @@ export class ProviderAdapterV2 extends Context.Service<
     readonly planSelectionTransition: (
       input: ProviderSelectionTransitionInput,
     ) => Effect.Effect<ProviderSelectionTransitionPlan, ProviderAdapterV2Error>;
+    readonly suggestNextPrompt?: (
+      input: PromptSuggestionInput,
+    ) => Effect.Effect<string | null, TextGenerationError>;
     readonly openSession: (
       input: ProviderAdapterV2OpenSessionInput,
     ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;

@@ -327,6 +327,30 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
+  it.effect("returns a plain next prompt or skips an empty or multiline suggestion", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: [
+          '{"suggestion":"  Add the callback test.  "}',
+          '{"suggestion":null}',
+          '{"suggestion":"Run tests.\\nCommit changes."}',
+        ],
+      });
+      const request = {
+        cwd: fixture.projectDirectory,
+        modelSelection,
+        message: "How should we cover the callback?",
+        reply: "We can add one test for the callback.",
+      };
+      expect(yield* fixture.textGeneration.suggestNextPrompt(request)).toBe(
+        "Add the callback test.",
+      );
+      expect(yield* fixture.textGeneration.suggestNextPrompt(request)).toBeNull();
+      expect(yield* fixture.textGeneration.suggestNextPrompt(request)).toBeNull();
+      yield* fixture.assertCleaned;
+    }),
+  );
+
   it.effect.each([false, true])(
     "generates all helper types and cleans up with startupSkills=%s",
     (startupSkills) =>

@@ -31,6 +31,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FiberMap from "effect/FiberMap";
 import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -314,6 +315,12 @@ export interface ProviderSessionManagerV2Shape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   }) => Effect.Effect<void>;
   /** The thread's latest predicted next prompt, then each replacement. */
+  readonly samplePromptSuggestion: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly modelSelection: ModelSelection;
+    readonly cwd: string;
+  }) => Effect.Effect<void>;
   readonly subscribePromptSuggestion: (
     threadId: ThreadId,
   ) => Stream.Stream<OrchestrationV2PromptSuggestion>;
@@ -496,6 +503,73 @@ export const layerWithOptions = (
             Effect.map((settings) => settings.promptSuggestionsEnabled),
             Effect.orElseSucceed(() => false),
           );
+      const savePromptSuggestion = (
+        threadId: ThreadId,
+        suggestion: NonNullable<OrchestrationV2PromptSuggestion>,
+      ) =>
+        SubscriptionRef.update(promptSuggestionStore, (current) => {
+          const next = new Map(current);
+          next.delete(threadId);
+          next.set(threadId, suggestion);
+          for (const id of next.keys()) {
+            if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
+            next.delete(id);
+          }
+          return next;
+        });
+      const promptSamples = yield* FiberMap.make<ThreadId>();
+      const promptSamplePermit = yield* Semaphore.make(1);
+      const samplePromptSuggestion: ProviderSessionManagerV2Shape["samplePromptSuggestion"] =
+        Effect.fn("ProviderSessionManager.samplePromptSuggestion")(function* (input) {
+          if (!(yield* promptSuggestionsEnabled)) return;
+          const isLatest = (run: OrchestrationV2Run | undefined) =>
+            run?.id === input.runId && run.status === "completed";
+          yield* Effect.gen(function* () {
+            if (!(yield* promptSuggestionsEnabled)) return;
+            const adapter = yield* registry.get(input.modelSelection.instanceId);
+            if (adapter.suggestNextPrompt === undefined) return;
+            const { runs, messages } = yield* projectionStore.getThreadRecords(
+              input.threadId,
+              ["runs", "messages"],
+              {
+                latestRunLimit: 1,
+                messageRunIds: [input.runId],
+                messageRoles: ["assistant"],
+              },
+            );
+            if (!isLatest(runs[0])) return;
+            const message = (yield* projectionStore.getRunMessage(
+              input.threadId,
+              input.runId,
+            ))?.text.trim();
+            const reply = messages
+              .findLast((item) => !item.streaming && item.text.trim().length > 0)
+              ?.text.trim();
+            if (!message || !reply) return;
+            const text = yield* adapter.suggestNextPrompt({
+              cwd: input.cwd,
+              modelSelection: input.modelSelection,
+              message,
+              reply,
+            });
+            if (!text || !(yield* promptSuggestionsEnabled)) return;
+            const { runs: latest } = yield* projectionStore.getThreadRecords(
+              input.threadId,
+              ["runs"],
+              { latestRunLimit: 1 },
+            );
+            if (isLatest(latest[0])) {
+              yield* savePromptSuggestion(input.threadId, { runId: input.runId, text });
+            }
+          }).pipe(
+            promptSamplePermit.withPermit,
+            Effect.timeoutOption("25 seconds"),
+            Effect.catchCause(() =>
+              Effect.logDebug("Antigravity prompt suggestion unavailable", { runId: input.runId }),
+            ),
+            FiberMap.run(promptSamples, input.threadId),
+          );
+        });
       // Read per turn, so the feedback instruction follows the setting without a restart.
       const agentFeedbackMode = Option.isNone(serverSettings)
         ? Effect.succeed("off" as const)
@@ -3083,18 +3157,9 @@ export const layerWithOptions = (
               );
             }
             if (nativeEvent.type === "prompt_suggestion.updated") {
-              return SubscriptionRef.update(promptSuggestionStore, (current) => {
-                const next = new Map(current);
-                next.delete(nativeEvent.threadId);
-                next.set(nativeEvent.threadId, {
-                  runId: nativeEvent.runId,
-                  text: nativeEvent.text,
-                });
-                for (const threadId of next.keys()) {
-                  if (next.size <= MAX_PROMPT_SUGGESTIONS) break;
-                  next.delete(threadId);
-                }
-                return next;
+              return savePromptSuggestion(nativeEvent.threadId, {
+                runId: nativeEvent.runId,
+                text: nativeEvent.text,
               });
             }
             const tracked = retryStalls.track(nativeEvent);
@@ -3763,6 +3828,7 @@ export const layerWithOptions = (
             loadedProviderThreadKeyByThread.delete(input.threadId);
             return new Map(current).set(key, { ...entry, loadedProviderThreadKeyByThread });
           }),
+        samplePromptSuggestion,
         // Stored suggestions can outlive a deleted thread, so check the thread before serving one.
         subscribePromptSuggestion: (threadId) =>
           SubscriptionRef.changes(promptSuggestionStore).pipe(

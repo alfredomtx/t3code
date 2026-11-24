@@ -23,8 +23,8 @@ export const TranscriptionPostProcessingOutput = Schema.Struct({ transcription: 
 
 export type Operation = keyof ProviderTextGeneration;
 
-export interface Request<S extends Schema.Top> {
-  readonly operation: Operation;
+export interface Request<S extends Schema.Top, O extends string = Operation> {
+  readonly operation: O;
   readonly cwd: string;
   readonly prompt: string;
   readonly outputSchema: S;
@@ -60,7 +60,7 @@ export const withoutInvestigation =
       : run(request);
 
 export const decodeJsonReply = <S extends Schema.Top>(
-  request: Pick<Request<S>, "operation" | "outputSchema">,
+  request: { readonly operation: string; readonly outputSchema: S },
   provider: string,
   text: string,
 ) => {

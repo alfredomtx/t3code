@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isDeliveredProviderTurn,
+  isDelegatedAppThread,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -2359,6 +2360,25 @@ export const layer: Layer.Layer<
             sameNativeThread &&
             !acceptedAttempts.some((source) => source.nativeThreadId !== undefined)),
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
+        ...(session.driver === "antigravity" &&
+        !manualResume &&
+        !isDelegatedAppThread(projection.thread) &&
+        message.createdBy === "user" &&
+        message.senderThreadId === undefined &&
+        message.scheduledTaskId === undefined &&
+        message.notification === undefined &&
+        message.workflowScript !== true &&
+        message.delegatedCompletion === undefined
+          ? {
+              onCompleted: () =>
+                providerSessions.samplePromptSuggestion({
+                  threadId: projection.thread.id,
+                  runId: run.id,
+                  modelSelection: run.modelSelection,
+                  cwd: checkpointScope.cwd,
+                }),
+            }
+          : {}),
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,

@@ -659,6 +659,7 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  readonly onCompleted?: () => Effect.Effect<void>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
@@ -1323,7 +1324,7 @@ export const layer: Layer.Layer<
                 input.loadDroppedInlineHandoffs !== undefined
                   ? yield* input.loadDroppedInlineHandoffs()
                   : undefined;
-              return yield* writeFinalRunEvents({
+              const committed = yield* writeFinalRunEvents({
                 run: input.run,
                 rootNode: input.rootNode,
                 checkpointScope: input.checkpointScope,
@@ -1357,6 +1358,16 @@ export const layer: Layer.Layer<
                 failureItemPersisted: settledTerminal.status === "failed",
                 refreshAfterTurn,
               });
+              if (
+                committed &&
+                settledTerminal === terminal &&
+                terminal.status === "completed" &&
+                terminal.reason === undefined &&
+                terminal.promptDropped !== true
+              ) {
+                yield* input.onCompleted?.() ?? Effect.void;
+              }
+              return committed;
             },
             (effect) =>
               effect.pipe(
