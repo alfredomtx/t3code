@@ -32,6 +32,7 @@ import {
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
   serviceUnitLogPathOf,
+  serviceUnitProgramOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
   SERVICE_SERVING_LOCK_FILE,
@@ -84,6 +85,31 @@ const runtimePaths = (baseDir: string, version: string) => {
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
   };
 };
+
+export const macServiceLauncherPath = (baseDir: string): string =>
+  NodePath.join(baseDir, "runtime", "service-launcher", "t3");
+
+/** Keep launchd's TCC subject path stable. The server still loads from its complete runtime. */
+export async function stageMacServiceLauncher(baseDir: string, entryPath: string): Promise<void> {
+  const launcher = macServiceLauncherPath(baseDir);
+  const directory = NodePath.dirname(launcher);
+  await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
+  const staged = NodePath.join(directory, `.t3.${NodeCrypto.randomUUID()}`);
+  try {
+    // The runtime is immutable. A hard link preserves the signature and avoids copying its bytes.
+    try {
+      await NodeFSP.link(entryPath, staged);
+    } catch (cause) {
+      if (!(cause instanceof Error && "code" in cause && cause.code === "EXDEV")) throw cause;
+      await NodeFSP.copyFile(entryPath, staged, NodeFS.constants.COPYFILE_EXCL);
+      await syncFile(staged);
+    }
+    await NodeFSP.rename(staged, launcher);
+    await syncDirectory(directory);
+  } finally {
+    await NodeFSP.rm(staged, { force: true }).catch(() => undefined);
+  }
+}
 
 const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   command: paths.entryPath,
@@ -1424,6 +1450,16 @@ export class Launcher {
           installedBaseDir === undefined ||
           (await real(installedBaseDir)) !== (await real(this.#baseDir))
         ) {
+          return;
+        }
+        if (
+          unit.path.endsWith(".plist") &&
+          serviceUnitProgramOf(contents) === macServiceLauncherPath(installedBaseDir)
+        ) {
+          await stageMacServiceLauncher(
+            installedBaseDir,
+            runtimePaths(this.#baseDir, version).entryPath,
+          );
           return;
         }
         const repointed = repointServiceUnit(contents, version);

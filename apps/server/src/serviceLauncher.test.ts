@@ -182,9 +182,13 @@ const fakeServiceUnit = (
   root: string,
   version: string,
   render = renderBootServiceUnit,
+  launchAgent = false,
 ) =>
   Effect.gen(function* () {
-    const plan = unitPlan(root, version);
+    const defaultPlan = unitPlan(root, version);
+    const plan = launchAgent
+      ? { ...defaultPlan, unitPath: path.join(root, "unit", "t3code.plist") }
+      : defaultPlan;
     yield* fs.makeDirectory(path.dirname(plan.unitPath), { recursive: true });
     const contents = render(plan);
     yield* fs.writeFileString(plan.unitPath, contents);
@@ -1202,6 +1206,7 @@ process.exit(0);
     render = renderBootServiceUnit,
     missingUnit = false,
     legacyInstall = false,
+    launchAgent = false,
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1212,7 +1217,7 @@ process.exit(0);
       const activatedPath = path.join(root, "activated");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, "before trial");
-      const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0", render);
+      const unit = yield* fakeServiceUnit(fs, path, root, "1.0.0", render, launchAgent);
       if (missingUnit) yield* fs.remove(unit.path);
       const childSource = `
 import assert from "node:assert/strict";
@@ -1251,7 +1256,7 @@ if (context.update?.status === "pending") {
           fs,
           path,
           path.join(root, "runtime", "versions", version),
-          childSource,
+          `${childSource}\n// Runtime ${version}`,
         );
       }
       // The old CLI installs the new runtime but writes state with its own protocol.
@@ -1330,6 +1335,24 @@ if (context.update?.status === "pending") {
         assert.equal(unit.loadedContents, expected);
         assert.equal(unit.reloads, 1);
       }),
+  );
+
+  it.effect("updates the launch agent executable without moving its path", () =>
+    Effect.gen(function* () {
+      const render = (plan: Parameters<typeof renderBootServicePlist>[0]) =>
+        renderBootServicePlist(
+          {
+            ...plan,
+            program: [`${plan.baseDir}/runtime/service-launcher/t3`, "__service-launcher"],
+          },
+          { homeDir: "/Users/test", environmentPath: "/usr/bin" },
+        );
+      const { fs, root, unit } = yield* commitUpdate(render, false, false, true);
+      assert.equal(yield* fs.readFileString(unit.path), unit.loadedContents);
+      assert.equal(unit.reloads, 0);
+      const launcher = yield* fs.readFileString(`${root}/runtime/service-launcher/t3`);
+      assert.include(launcher, "// Runtime 1.1.0");
+    }),
   );
 
   it.effect(

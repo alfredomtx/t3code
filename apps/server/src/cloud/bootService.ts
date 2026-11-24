@@ -21,6 +21,8 @@ import * as ProcessRunner from "../processRunner.ts";
 import { acquireServiceSelectionLock } from "./serviceSelectionLock.ts";
 import { RESTORE_OOMD_WATCH_SCRIPT } from "./userManagerOom.ts";
 import {
+  macServiceLauncherPath,
+  stageMacServiceLauncher,
   serviceLauncherIsRunning,
   serviceLauncherLockPath,
   serviceTaskName,
@@ -1018,7 +1020,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     });
     const unitPath = manager?.unitPath ?? "";
     const plan: BootServicePlan = {
-      program: [runtimePaths.entryPath, "__service-launcher"],
+      program: [
+        manager?.kind === "launchd"
+          ? macServiceLauncherPath(input.baseDir)
+          : runtimePaths.entryPath,
+        "__service-launcher",
+      ],
       baseDir: input.baseDir,
       logPath,
       unitPath,
@@ -1429,6 +1436,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           yield* fs
             .makeDirectory(path.dirname(unitPath), { recursive: true })
             .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+          if (manager.kind === "launchd") {
+            yield* Effect.tryPromise({
+              try: () => stageMacServiceLauncher(input.baseDir, runtimePaths.entryPath),
+              catch: (cause) => new BootServiceInstallError({ cause }),
+            });
+          }
           // Files can match the new version even when activation fails; keep that install retryable.
           yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
           const plan = planForUnit(currentlyInstalled ? yield* readUnit() : "");
@@ -1598,12 +1611,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
-      readUnit(),
-      fs.exists(runtimePaths.entryPath),
-      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-      fs.readFileString(statePath).pipe(Effect.option),
-    ]);
+    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
+      yield* Effect.all([
+        readUnit(),
+        manager.kind === "launchd"
+          ? fs.exists(macServiceLauncherPath(input.baseDir))
+          : Effect.succeed(true),
+        fs.exists(runtimePaths.entryPath),
+        fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+        fs.readFileString(statePath).pipe(Effect.option),
+      ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
@@ -1637,6 +1654,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         problems.length === 0 &&
         !(manager.kind === "systemd" && systemdUnsafeValue(planForUnit(unit))) &&
         normalizeUnit(thisHomeUnit) === normalizeUnit(manager.render(planForUnit(unit))) &&
+        launcherExists &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
