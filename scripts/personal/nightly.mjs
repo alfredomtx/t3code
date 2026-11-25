@@ -80,6 +80,7 @@ const browserTests = [
   "apps/web/src/components/chat/OpenInPicker.browser.test.tsx",
   "apps/web/src/components/ChatMarkdown.permissions.browser.test.tsx",
   "apps/web/src/components/pullRequest/PullRequestCodeTab.browser.test.tsx",
+  "apps/web/src/components/pullRequest/PullRequestSummaryTab.browser.test.tsx",
   "apps/web/src/components/diffs/DiffCommentAnnotation.browser.test.tsx",
   "apps/web/src/components/pullRequest/usePullRequestFilesViewed.browser.test.tsx",
   "apps/web/src/components/ServerUpdateAction.browser.test.tsx",

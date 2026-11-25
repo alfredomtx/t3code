@@ -4,12 +4,15 @@ import {
   type ClientSettings,
 } from "@t3tools/contracts";
 import { EnvironmentId, ProjectId, type PullRequestDetailView } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
+import { type Atom as AtomTypes, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 const state = vi.hoisted(() => ({
   update: vi.fn(),
   canUpdate: true,
+  setReviewRequested: (_registry: AtomRegistry.AtomRegistry, _requested: boolean) => {},
   timestampFormat: "locale" as "locale" | "12-hour" | "24-hour",
 }));
 
@@ -31,13 +34,38 @@ vi.mock(import("~/hooks/useSettings"), async (original) => ({
 }));
 vi.mock(import("~/state/pullRequests"), async (original) => {
   const actual = await original();
-  const { Atom } = await import("effect/reactivity");
+  const { AsyncResult, Atom } = await import("effect/reactivity");
   const allowed = Atom.make(true);
   const denied = Atom.make(false);
+  type CandidatesResult = AtomTypes.Type<
+    ReturnType<typeof actual.pullRequestEnvironment.reviewerCandidates>
+  >;
+  const candidateResult = (isRequested: boolean): CandidatesResult =>
+    AsyncResult.success({
+      candidates: [
+        {
+          id: "reviewer",
+          kind: "user",
+          login: "reviewer",
+          name: null,
+          avatarUrl: null,
+          isRequested,
+        },
+      ],
+      truncated: false,
+    });
+  const candidates = Atom.make<CandidatesResult>(candidateResult(false));
+  state.setReviewRequested = (registry, requested) =>
+    registry.set(candidates, candidateResult(requested));
   return {
     ...actual,
     pullRequestEnvironment: {
       ...actual.pullRequestEnvironment,
+      reviewerCandidates: () => candidates,
+      requestReviewers: {
+        ...actual.pullRequestEnvironment.requestReviewers,
+        permissionAtom: () => allowed,
+      },
       update: {
         ...actual.pullRequestEnvironment.update,
         permissionAtom: () => (state.canUpdate ? allowed : denied),
@@ -348,4 +376,61 @@ it("scrolls from the keyboard after a click inside it", async () => {
   await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
   await userEvent.keyboard("{PageDown}");
   await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+});
+
+it("re-requests a completed review and replaces its action with the pending status", async () => {
+  setup();
+  const reviewer = { login: "reviewer", name: null, avatarUrl: null };
+  const value: PullRequestDetailView = {
+    ...detail,
+    reviewers: [reviewer],
+    comments: [
+      {
+        id: "review-1",
+        kind: "review",
+        author: reviewer,
+        body: "",
+        createdAt: detail.createdAt,
+        url: null,
+        path: null,
+        reviewState: "CHANGES_REQUESTED",
+      },
+    ],
+    commentCount: 1,
+    capabilities: { ...detail.capabilities, reviewers: { request: true, listCandidates: true } },
+    viewerPermissions: { ...detail.viewerPermissions, requestReviewers: true },
+  };
+  const registry = AtomRegistry.make();
+  using _registry = { [Symbol.dispose]: () => registry.dispose() };
+  const withRegistry = (value: PullRequestDetailView) => (
+    <RegistryContext.Provider value={registry}>{tab(value)}</RegistryContext.Provider>
+  );
+  await using screen = await renderUi(withRegistry(value));
+  const action = screen.getByRole("button", { name: "Re-request review from @reviewer" });
+  await expect.element(action).toBeVisible();
+  await userEvent.click(action);
+  expect(state.update).toHaveBeenCalledTimes(1);
+  expect(state.update).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({
+        reviewers: [{ kind: "user", id: "reviewer" }],
+        requested: true,
+      }),
+    }),
+  );
+
+  await act(async () => state.setReviewRequested(registry, true));
+  await expect.element(action).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("img", { name: "Review requested from @reviewer" }))
+    .toBeVisible();
+
+  await act(async () => state.setReviewRequested(registry, false));
+  await screen.rerender(
+    withRegistry({
+      ...value,
+      viewerPermissions: { ...value.viewerPermissions, requestReviewers: false },
+    }),
+  );
+  await expect.element(action).not.toBeInTheDocument();
 });

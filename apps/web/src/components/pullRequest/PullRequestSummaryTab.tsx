@@ -70,6 +70,7 @@ import {
   pullRequestReviewOutcomeStaleLabel,
 } from "./pullRequestPresentation";
 import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
+import { PullRequestRerequestReview } from "./PullRequestRerequestReview";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
@@ -625,6 +626,28 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
       })),
   ];
 
+  const canRerequestReviews =
+    detail.provider === "github" &&
+    detail.state === "open" &&
+    !detail.isDraft &&
+    detail.capabilities.reviewers.request &&
+    detail.capabilities.reviewers.listCandidates &&
+    detail.viewerPermissions.requestReviewers;
+  const reviewedLogins = new Set(
+    canRerequestReviews
+      ? detail.comments.flatMap((comment) => {
+          const verdict = pullRequestReviewOutcome(comment.reviewState);
+          return comment.kind === "review" &&
+            comment.author &&
+            (verdict === "approved" ||
+              verdict === "changes-requested" ||
+              comment.reviewState?.trim().toLowerCase() === "commented")
+            ? [reviewerKey(comment.author.login)]
+            : [];
+        })
+      : [],
+  );
+
   const openLink = useOpenLink(threadRef);
   const openCheck = (url: string) => {
     void openLink(url).catch((error: unknown) => {
@@ -937,56 +960,81 @@ export const PullRequestSummaryTab = memo(function PullRequestSummaryTab({
                   <T context="no reviewers">None</T>
                 </span>
               ) : (
-                <span className="flex items-center -space-x-1">
+                <span
+                  className={cn(
+                    "flex items-center",
+                    reviewedLogins.size > 0 ? "flex-wrap gap-1" : "-space-x-1",
+                  )}
+                >
                   {reviewerEntries.map((entry) => {
                     const login = entry.actor?.login ?? "ghost";
                     const named =
                       entry.actor?.name && entry.actor.name !== login
                         ? `${entry.actor.name} (@${login})`
                         : login;
+                    const actor = entry.actor;
+                    const canRerequest =
+                      actor !== null &&
+                      !actor.isBot &&
+                      !actor.login.endsWith("[bot]") &&
+                      reviewerKey(actor.login) !== detail.author?.login.toLowerCase() &&
+                      reviewerKey(actor.login) !== detail.viewer?.toLowerCase() &&
+                      reviewedLogins.has(reviewerKey(actor.login));
                     return (
-                      <SharedTooltipTrigger
-                        key={entry.key}
-                        render={
-                          <span
-                            className={cn(
-                              "relative rounded-full hover:z-10",
-                              entry.outcome
-                                ? pullRequestReviewOutcomeRingClassName(entry.outcome, entry.stale)
-                                : undefined,
-                            )}
-                          />
-                        }
-                        label={
-                          entry.outcome
-                            ? `${named}: ${
-                                entry.stale
-                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
-                                  : pullRequestReviewOutcomeLabel(entry.outcome, resolve)
-                              }`
-                            : named
-                        }
-                        side="bottom"
-                      >
-                        <PullRequestActorLabel
-                          actor={entry.actor}
-                          tooltip={false}
-                          variant="avatar"
-                        />
-                        {entry.outcome ? (
-                          <>
-                            <PullRequestReviewOutcomeAvatarBadge
-                              outcome={entry.outcome}
-                              stale={entry.stale}
+                      <span key={entry.key} className="inline-flex items-center gap-0.5">
+                        <SharedTooltipTrigger
+                          render={
+                            <span
+                              className={cn(
+                                "relative rounded-full hover:z-10",
+                                entry.outcome
+                                  ? pullRequestReviewOutcomeRingClassName(
+                                      entry.outcome,
+                                      entry.stale,
+                                    )
+                                  : undefined,
+                              )}
                             />
-                            <span className="sr-only">
-                              {entry.stale
-                                ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
-                                : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
-                            </span>
-                          </>
+                          }
+                          label={
+                            entry.outcome
+                              ? `${named}: ${
+                                  entry.stale
+                                    ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
+                                    : pullRequestReviewOutcomeLabel(entry.outcome, resolve)
+                                }`
+                              : named
+                          }
+                          side="bottom"
+                        >
+                          <PullRequestActorLabel
+                            actor={entry.actor}
+                            tooltip={false}
+                            variant="avatar"
+                          />
+                          {entry.outcome ? (
+                            <>
+                              <PullRequestReviewOutcomeAvatarBadge
+                                outcome={entry.outcome}
+                                stale={entry.stale}
+                              />
+                              <span className="sr-only">
+                                {entry.stale
+                                  ? pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)
+                                  : pullRequestReviewOutcomeLabel(entry.outcome, resolve)}
+                              </span>
+                            </>
+                          ) : null}
+                        </SharedTooltipTrigger>
+                        {canRerequest ? (
+                          <PullRequestRerequestReview
+                            key={detail.url}
+                            actor={actor}
+                            environmentId={environmentId}
+                            reference={reference}
+                          />
                         ) : null}
-                      </SharedTooltipTrigger>
+                      </span>
                     );
                   })}
                 </span>
