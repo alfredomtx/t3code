@@ -223,7 +223,8 @@ describe("McpAppFrame", () => {
 // and asks on load, right after it is told it left full screen, and whenever
 // it loses focus while inline. It reports each answer to the page with a
 // message the host ignores.
-const FULLSCREEN_APP_HTML = `<!doctype html><button>Open full screen</button><input aria-label="Draft"><script>
+const FULLSCREEN_APP_HTML =
+  injectMcpAppDocumentBootstrap(`<!doctype html><button>Open full screen</button><input aria-label="Draft"><script>
 let nextId = 0;
 const pending = new Map();
 const request = (method, params) =>
@@ -265,7 +266,7 @@ void request("ui/initialize", { protocolVersion: "2026-01-26", appCapabilities: 
   parent.postMessage({ jsonrpc: "2.0", method: "ui/notifications/initialized", params: {} }, "*");
   refocusAndAsk("load");
 });
-</script>`;
+</script>`);
 
 function setupFullscreen() {
   setup(FULLSCREEN_APP_HTML);

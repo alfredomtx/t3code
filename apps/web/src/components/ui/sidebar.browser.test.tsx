@@ -75,9 +75,7 @@ describe("Sidebar", () => {
   it("commits drag hiding and edge restoration only on release, with reversal before release", async () => {
     await page.viewport(1280, 800);
     const onResize = vi.fn();
-    await using screen = await render(<Harness onResize={onResize} />, {
-      router: false /* no routes involved */,
-    });
+    await using screen = await render(<Harness onResize={onResize} />);
     const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
     const wrapper = sidebar.closest<HTMLElement>('[data-slot="sidebar-wrapper"]')!;
     wrapper.dataset.panelAnimations = "true";
@@ -181,9 +179,7 @@ describe("Sidebar", () => {
     async (eventType) => {
       await page.viewport(1280, 800);
       const onResize = vi.fn();
-      await using screen = await render(<Harness onResize={onResize} />, {
-        router: false /* no routes involved */,
-      });
+      await using screen = await render(<Harness onResize={onResize} />);
       const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
       const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
       const pointer = {
