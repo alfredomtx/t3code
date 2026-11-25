@@ -53,7 +53,8 @@ vi.mock("@t3tools/client-runtime/change-request-links", async (original) => ({
     number: 1,
   }),
 }));
-vi.mock("./usePullRequestDetail", () => ({
+vi.mock("./usePullRequestDetail", async (original) => ({
+  ...(await original<typeof import("./usePullRequestDetail")>()),
   pullRequestRefKey: () => "owner/repo/1",
   usePullRequestDetail: () => ({
     canWriteSourceControl: false,

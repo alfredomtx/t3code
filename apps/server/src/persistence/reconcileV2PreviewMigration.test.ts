@@ -34,6 +34,13 @@ it.effect("appends upstream migrations after published Personal migration 108", 
       [110, "IssueTrackerAccounts"],
       [111, "Workflows"],
       [112, "SupersededRunAttemptIndex"],
+      [113, "LayoutCommandApprovals"],
+      [114, "WorkflowSkippedRuns"],
+      [115, "WorkflowRunIndexes"],
+      [116, "WorkflowRunTags"],
+      [117, "ForkHistoryMembership"],
+      [118, "WorkflowMailSender"],
+      [119, "WorkflowPools"],
     ]);
     assert.deepStrictEqual(yield* runMigrations(), []);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -105,6 +112,13 @@ describe("V2 preview upgrade", () => {
         [110, "IssueTrackerAccounts"],
         [111, "Workflows"],
         [112, "SupersededRunAttemptIndex"],
+        [113, "LayoutCommandApprovals"],
+        [114, "WorkflowSkippedRuns"],
+        [115, "WorkflowRunIndexes"],
+        [116, "WorkflowRunTags"],
+        [117, "ForkHistoryMembership"],
+        [118, "WorkflowMailSender"],
+        [119, "WorkflowPools"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -240,6 +254,13 @@ describe("V2 preview upgrade", () => {
         [110, "IssueTrackerAccounts"],
         [111, "Workflows"],
         [112, "SupersededRunAttemptIndex"],
+        [113, "LayoutCommandApprovals"],
+        [114, "WorkflowSkippedRuns"],
+        [115, "WorkflowRunIndexes"],
+        [116, "WorkflowRunTags"],
+        [117, "ForkHistoryMembership"],
+        [118, "WorkflowMailSender"],
+        [119, "WorkflowPools"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

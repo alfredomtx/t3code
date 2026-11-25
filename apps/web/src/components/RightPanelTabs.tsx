@@ -1153,73 +1153,6 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     canScrollRight: false,
   });
 
-  if (props.open === false && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
-
-  const addSurfaceMenuBlocked = () =>
-    !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
-  const activateAdjacentTab = (direction: -1 | 1) => {
-    if (props.surfaces.length < 2) return;
-    const index = props.surfaces.findIndex((surface) => surface.id === props.activeSurfaceId);
-    const next =
-      index < 0
-        ? props.surfaces.at(direction === 1 ? 0 : -1)
-        : props.surfaces[(index + direction + props.surfaces.length) % props.surfaces.length];
-    if (next) props.onActivate(next);
-  };
-  const onForwardedPanelAction = useEffectEvent((action: string) => {
-    if (action === "rightPanel.new") {
-      // Focusing the trigger from the browser guest lets ChatView refocus the composer.
-      if (!addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
-      return;
-    }
-    if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
-    if (action === "rightPanel.previousTab") activateAdjacentTab(-1);
-    else if (action === "rightPanel.nextTab") activateAdjacentTab(1);
-    else if (action === "rightPanel.close") {
-      const active = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
-      if (active) props.onCloseSurface(active);
-    }
-  });
-  const onPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
-    if (
-      event.defaultPrevented ||
-      event.isComposing ||
-      event.keyCode === 229 ||
-      event.getModifierState("AltGraph")
-    )
-      return;
-    if (event.target instanceof Element && event.target.closest("[data-keybinding-capture]"))
-      return;
-    const command = resolveShortcutCommand(event, props.keybindings, {
-      context: { ...props.getShortcutContext(), rightPanelOpen: true },
-    });
-    if (command === "rightPanel.previousTab" || command === "rightPanel.nextTab") {
-      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (!event.repeat) activateAdjacentTab(command === "rightPanel.previousTab" ? -1 : 1);
-      return;
-    }
-    if (command !== "rightPanel.new") return;
-    if (addSurfaceMenuBlocked()) return;
-    event.preventDefault();
-    event.stopPropagation();
-    if (!event.repeat) {
-      addSurfaceTriggerRef.current?.focus();
-      setAddSurfaceMenuOpen(true);
-    }
-  });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
-  useEffect(() => {
-    if (props.open === false) return;
-    document.addEventListener("keydown", onPanelKeyDown, true);
-    const unsubscribe = window.desktopBridge?.onMenuAction(onForwardedPanelAction);
-    return () => {
-      document.removeEventListener("keydown", onPanelKeyDown, true);
-      unsubscribe?.();
-    };
-  }, [props.open]);
-
   const updateTabScrollState = (viewport: HTMLDivElement) => {
     const hasOverflow = viewport.scrollWidth - viewport.clientWidth > TAB_SCROLL_EDGE_TOLERANCE;
     const canScrollLeft = hasOverflow && viewport.scrollLeft > TAB_SCROLL_EDGE_TOLERANCE;
@@ -1319,6 +1252,74 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
         ]
       : []),
   ] as const;
+  const canAddSurface = addSurfaceActions.some((action) => action.available);
+
+  if ((props.open === false || !canAddSurface) && addSurfaceMenuOpen) setAddSurfaceMenuOpen(false);
+
+  const addSurfaceMenuBlocked = () =>
+    !addSurfaceMenuOpen && document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS) !== null;
+  const activateAdjacentTab = (direction: -1 | 1) => {
+    if (props.surfaces.length < 2) return;
+    const index = props.surfaces.findIndex((surface) => surface.id === props.activeSurfaceId);
+    const next =
+      index < 0
+        ? props.surfaces.at(direction === 1 ? 0 : -1)
+        : props.surfaces[(index + direction + props.surfaces.length) % props.surfaces.length];
+    if (next) props.onActivate(next);
+  };
+  const onForwardedPanelAction = useEffectEvent((action: string) => {
+    if (action === "rightPanel.new") {
+      // Focusing the trigger from the browser guest lets ChatView refocus the composer.
+      if (canAddSurface && !addSurfaceMenuBlocked()) setAddSurfaceMenuOpen(true);
+      return;
+    }
+    if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+    if (action === "rightPanel.previousTab") activateAdjacentTab(-1);
+    else if (action === "rightPanel.nextTab") activateAdjacentTab(1);
+    else if (action === "rightPanel.close") {
+      const active = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+      if (active) props.onCloseSurface(active);
+    }
+  });
+  const onPanelKeyDown = useEffectEvent((event: KeyboardEvent) => {
+    if (
+      event.defaultPrevented ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      event.getModifierState("AltGraph")
+    )
+      return;
+    if (event.target instanceof Element && event.target.closest("[data-keybinding-capture]"))
+      return;
+    const command = resolveShortcutCommand(event, props.keybindings, {
+      context: { ...props.getShortcutContext(), rightPanelOpen: true },
+    });
+    if (command === "rightPanel.previousTab" || command === "rightPanel.nextTab") {
+      if (document.querySelector(LAUNCHER_SHORTCUT_BLOCKING_LAYERS)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat) activateAdjacentTab(command === "rightPanel.previousTab" ? -1 : 1);
+      return;
+    }
+    if (command !== "rightPanel.new" || !canAddSurface) return;
+    if (addSurfaceMenuBlocked()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!event.repeat) {
+      addSurfaceTriggerRef.current?.focus();
+      setAddSurfaceMenuOpen(true);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for the new surface shortcut while the panel is open
+  useEffect(() => {
+    if (props.open === false) return;
+    document.addEventListener("keydown", onPanelKeyDown, true);
+    const unsubscribe = window.desktopBridge?.onMenuAction(onForwardedPanelAction);
+    return () => {
+      document.removeEventListener("keydown", onPanelKeyDown, true);
+      unsubscribe?.();
+    };
+  }, [props.open]);
 
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
@@ -1595,7 +1596,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 );
               })}
             </SortableTabList>
-            {props.open !== false ? (
+            {props.open !== false && canAddSurface ? (
               <Menu open={addSurfaceMenuOpen} onOpenChange={setAddSurfaceMenuOpen}>
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}

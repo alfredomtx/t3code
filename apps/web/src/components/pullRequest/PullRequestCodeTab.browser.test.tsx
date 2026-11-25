@@ -588,6 +588,18 @@ it.each(["headSha", "updatedAt"] as const)(
     expect(command.mock.calls[0]?.[0].input.files).toEqual([{ path: "new.md", viewed: true }]);
   },
 );
+it("can show test files again from the narrow Code tab empty state", async () => {
+  using fixture = setup(null, { patch: { ...firstPage, patch: filePatch("a.test.ts") } });
+  const container = document.createElement("div");
+  container.className = "h-[700px] w-[429px]";
+  await using screen = await render(fixture.tab(0), { container });
+  await screen.getByRole("button", { name: "Hide test files", exact: true }).click();
+
+  await expect.element(screen.getByText("1 test file hidden", { exact: true })).toBeVisible();
+  await screen.getByRole("button", { name: "Show test files", exact: true }).click();
+  await expect.element(screen.getByText("a.test.ts", { exact: true }).first()).toBeVisible();
+});
+
 it("restores saved Viewed folds, follows cleared marks, and allows explicit expansion", async () => {
   using fixture = setup({ files: [{ path: "a.ts", state: "viewed" }], truncated: false });
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
@@ -878,7 +890,7 @@ async function renderShortPages(stack: AsyncDisposableStack) {
     ),
   );
   const container = document.createElement("div");
-  container.className = "flex h-[1000px] w-[900px]";
+  container.className = "h-[1000px] w-[900px]";
   const screen = stack.use(await render(fixture.tab(0), { container }));
   const loadNextPage = async () => {
     await screen.getByRole("button", { name: "Show file tree", exact: true }).click();
