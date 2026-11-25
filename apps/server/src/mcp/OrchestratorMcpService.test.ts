@@ -3115,7 +3115,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                             commitSha:
                               input.cwd === "/destination"
                                 ? "destination-head"
-                                : "parent-worktree-head",
+                                : input.revision === "refs/heads/parent-branch"
+                                  ? "parent-branch-head"
+                                  : "parent-worktree-head",
                           }),
                     ),
                   ),
@@ -3264,6 +3266,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                 : [
                     { cwd: "/parent-worktree", revision: "HEAD" },
                     { cwd: "/parent-root", revision: "parent-worktree-head" },
+                    { cwd: "/parent-root", revision: "refs/heads/parent-branch" },
                   ],
           );
           assert.equal(

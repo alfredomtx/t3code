@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NetService from "@t3tools/shared/Net";
+import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 import { assert, describe, it } from "@effect/vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
@@ -98,7 +99,8 @@ describe("t3 theme", () => {
   it.effect("sets the theme of a dev server running in the default home", () =>
     Effect.gen(function* () {
       const home = makeBaseDir();
-      const devStateDir = NodePath.join(home, ".t3", "dev");
+      const baseDir = NodePath.join(home, PERSONAL_DESKTOP.homeName);
+      const devStateDir = NodePath.join(baseDir, "dev");
       NodeFS.mkdirSync(devStateDir, { recursive: true });
       NodeFS.writeFileSync(
         NodePath.join(devStateDir, "server-runtime.json"),
@@ -112,20 +114,14 @@ describe("t3 theme", () => {
         })}\n`,
       );
 
-      const result = yield* runCli(["theme", "set", "ocean"]).pipe(
+      yield* runCli(["theme", "set", "ocean"]).pipe(
         Effect.provideService(HostProcess.HomeDirectory, home),
         Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-        Effect.result,
       );
 
-      assert.equal(
-        NodeFS.existsSync(NodePath.join(home, ".t3", "userdata", "settings.json")),
-        false,
-      );
-      if (result._tag === "Success") {
-        const devSettings = NodePath.join(devStateDir, "settings.json");
-        assert.equal(JSON.parse(NodeFS.readFileSync(devSettings, "utf8")).defaultTheme, "ocean");
-      }
+      assert.isFalse(NodeFS.existsSync(settingsPathFor(baseDir)));
+      const devSettings = NodePath.join(devStateDir, "settings.json");
+      assert.equal(JSON.parse(NodeFS.readFileSync(devSettings, "utf8")).defaultTheme, "ocean");
     }),
   );
 

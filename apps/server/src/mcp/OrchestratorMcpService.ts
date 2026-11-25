@@ -3029,7 +3029,7 @@ const make = Effect.gen(function* () {
         }
         // Other repositories in the project can only match a branch name, so name the
         // parent's branch when it still points at the parent's commit.
-        const branch = parent.thread.branch;
+        const branch = crossProject ? null : parent.thread.branch;
         const branchAtBase =
           branch !== null &&
           (yield* gitDriver
