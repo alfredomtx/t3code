@@ -4,31 +4,23 @@ import * as NodePath from "node:path";
 import * as NodeChildProcess from "node:child_process";
 import { PERSONAL_DESKTOP } from "@t3tools/shared/personalDesktop";
 
-export default async function signPersonalMac(context: {
-  appOutDir: string;
-  electronPlatformName: string;
-  packager: {
-    config: { electronFuses?: unknown };
-    appInfo: { productFilename: string };
-  };
+export default async function signPersonalMac({
+  app,
+  platform,
+}: {
+  app: string;
+  platform: string;
 }) {
-  if (context.electronPlatformName !== "darwin")
-    throw new Error("Personal signing requires macOS.");
-  if (context.packager.config.electronFuses != null) {
-    throw new Error(
-      "Electron fuses run after afterPack. Move fuse changes before personal signing.",
-    );
-  }
+  if (platform !== "darwin") throw new Error("Personal signing requires macOS.");
   const identity = process.env.T3CODE_PERSONAL_SIGN_IDENTITY;
   if (!identity || !/^[A-F0-9]{40}$/u.test(identity)) {
     throw new Error(
       "Set T3CODE_PERSONAL_SIGN_IDENTITY to the local certificate SHA-1 fingerprint.",
     );
   }
-  if (context.packager.appInfo.productFilename !== PERSONAL_DESKTOP.productName) {
+  if (NodePath.basename(app) !== `${PERSONAL_DESKTOP.productName}.app`) {
     throw new Error("The signed product name does not match the personal identity.");
   }
-  const app = NodePath.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   await signApplication({
     app,
     identity,

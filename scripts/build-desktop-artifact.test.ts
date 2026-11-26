@@ -823,7 +823,36 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         enableNodeCliInspectArguments: false,
         resetAdHocDarwinSignature: false,
       });
-    }),
+    }).pipe(Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} })))),
+  );
+
+  it.effect("keeps builder fuses and uses the custom signer for Personal macOS packaging", () =>
+    Effect.gen(function* () {
+      const config = yield* createBuildConfig(
+        "mac",
+        "zip",
+        "0.0.33",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      assert.match(String(config.afterPack), /prepare-server-compile-cache\.cjs$/u);
+      assert.nestedPropertyVal(config, "mac.identity", "-");
+      assert.match(String((config.mac as { sign: string }).sign), /sign-personal-macos\.ts$/u);
+      assert.deepEqual(config.electronFuses, {
+        enableNodeCliInspectArguments: false,
+        resetAdHocDarwinSignature: false,
+      });
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({
+            env: { T3CODE_PERSONAL_SIGN_IDENTITY: "A".repeat(40) },
+          }),
+        ),
+      ),
+    ),
   );
 
   it.effect("names updatable AppImages without a version and apart per channel", () =>
@@ -1936,6 +1965,20 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       Effect.gen(function* () {
         const fixture = yield* makePackagedAppFixture({});
         yield* validateMacPackagedPayload({ stageDistDir: fixture.stageDistDir });
+      }),
+    ),
+  );
+
+  it.effect("refuses to copy an unsigned Personal macOS bundle", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) !== "darwin") return;
+        const fixture = yield* makePackagedAppFixture({});
+        const error = yield* validateMacPackagedPayload({
+          stageDistDir: fixture.stageDistDir,
+          personalSigningIdentity: "A".repeat(40),
+        }).pipe(Effect.flip);
+        assert.propertyVal(error, "command", "Verify Personal macOS signature");
       }),
     ),
   );

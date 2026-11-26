@@ -1,26 +1,26 @@
-import { describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import signPersonalMac from "./sign-personal-macos.ts";
 
-describe("personal afterPack signing", () => {
-  it("rejects fuses that Electron Builder would mutate after signing", async () => {
+describe("personal macOS signing", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("refuses a missing certificate fingerprint", async () => {
+    vi.stubEnv("T3CODE_PERSONAL_SIGN_IDENTITY", undefined);
     await expect(
-      signPersonalMac({
-        appOutDir: "/unused",
-        electronPlatformName: "darwin",
-        packager: {
-          config: { electronFuses: {} },
-          appInfo: { productFilename: "T3 Code Personal" },
-        },
-      }),
-    ).rejects.toThrow("Electron fuses run after afterPack");
+      signPersonalMac({ app: "/unused/T3 Code Personal.app", platform: "darwin" }),
+    ).rejects.toThrow("certificate SHA-1 fingerprint");
   });
+
+  it("refuses other products before signing", async () => {
+    vi.stubEnv("T3CODE_PERSONAL_SIGN_IDENTITY", "A".repeat(40));
+    await expect(
+      signPersonalMac({ app: "/unused/T3 Code.app", platform: "darwin" }),
+    ).rejects.toThrow("product name does not match");
+  });
+
   it("rejects non-macOS packaging before signing", async () => {
     await expect(
-      signPersonalMac({
-        appOutDir: "/unused",
-        electronPlatformName: "linux",
-        packager: { config: {}, appInfo: { productFilename: "T3 Code Personal" } },
-      }),
+      signPersonalMac({ app: "/unused/T3 Code Personal.app", platform: "linux" }),
     ).rejects.toThrow("requires macOS");
   });
 });

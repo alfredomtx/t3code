@@ -2818,6 +2818,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   wslRuntimeBundled = false,
   arch?: typeof BuildArch.Type,
 ) {
+  const electronFuses = {
+    enableNodeCliInspectArguments: false,
+    // An unsigned macOS build needs its ad hoc signature restored after the flip.
+    resetAdHocDarwinSignature: platform === "mac" && !signed,
+  };
   const buildConfig: Record<string, unknown> = {
     afterPack: (yield* Path.Path).join(yield* RepoRoot, "scripts/prepare-server-compile-cache.cjs"),
     appId: DESKTOP_APP_ID,
@@ -2826,11 +2831,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     // runAsNode stays on: the app starts its server, helpers and the `t3` shim by running this
     // binary as Node, and that mode still accepts inspector flags.
-    electronFuses: {
-      enableNodeCliInspectArguments: false,
-      // Nothing signs an unsigned macOS build after the flip, which voids its ad hoc signature.
-      resetAdHocDarwinSignature: platform === "mac" && !signed,
-    },
+    electronFuses,
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
       ...(platform === "mac"
@@ -2878,10 +2879,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const personalSigningIdentity = yield* Config.String("T3CODE_PERSONAL_SIGN_IDENTITY").pipe(
       Config.option,
     );
-    if (Option.isSome(personalSigningIdentity)) {
+    const personalSigning = Option.isSome(personalSigningIdentity);
+    if (personalSigning) {
       if (signed)
         throw new Error("Use unsigned packaging with the separate personal signing hook.");
-      buildConfig.afterPack = path.join(repoRoot, "scripts/sign-personal-macos.ts");
+      electronFuses.resetAdHocDarwinSignature = false;
     }
     buildConfig.mac = {
       target: target === "dmg" ? [target, "zip"] : [target],
@@ -2909,12 +2911,18 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         NSSpeechRecognitionUsageDescription:
           "T3 Code transcribes your dictation on this Mac when you choose Apple Speech.",
       },
-      identity: null,
+      // "-" lets builder call mac.sign without a distribution certificate. The hook signs
+      // with the exact Personal fingerprint after builder applies the Electron fuses.
+      identity: personalSigning ? "-" : null,
       notarize: false,
       protocols: [
         { name: PERSONAL_DESKTOP.productName, schemes: [PERSONAL_DESKTOP.scheme, "t3code"] },
       ],
-      ...(signed ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") } : {}),
+      ...(personalSigning
+        ? { sign: path.join(repoRoot, "scripts/sign-personal-macos.ts") }
+        : signed
+          ? { sign: path.join(repoRoot, "scripts/sign-macos.ts") }
+          : {}),
       ...(macPasskeySigning
         ? {
             entitlements: macPasskeySigning.entitlementsPath,
@@ -3599,28 +3607,52 @@ export class MacPackagedAppMissingError extends Schema.TaggedError<MacPackagedAp
 }
 
 export const validateMacPackagedPayload = Effect.fn("desktopArtifact.validateMacPackagedPayload")(
-  function* (input: { readonly stageDistDir: string; readonly verbose?: boolean }) {
+  function* (input: {
+    readonly stageDistDir: string;
+    readonly verbose?: boolean;
+    readonly personalSigningIdentity?: string;
+    readonly skipRuntimeProbe?: boolean;
+  }) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const asarPaths: string[] = [];
+    const appPaths: string[] = [];
     for (const entry of yield* fs.readDirectory(input.stageDistDir)) {
       if (!entry.startsWith("mac")) continue;
       const outputDir = path.join(input.stageDistDir, entry);
       const apps = yield* fs.readDirectory(outputDir).pipe(Effect.orElseSucceed(() => []));
       for (const app of apps) {
         if (app.endsWith(".app")) {
-          asarPaths.push(path.join(outputDir, app, "Contents/Resources/app.asar"));
+          appPaths.push(path.join(outputDir, app));
         }
       }
     }
-    if (asarPaths.length === 0) {
+    if (appPaths.length === 0) {
       return yield* new MacPackagedAppMissingError({ stageDistDir: input.stageDistDir });
     }
-    for (const asarPath of asarPaths) {
-      yield* verifyPackagedBundleIsSelfContained({ asarPath, verbose: input.verbose ?? false });
+    for (const appPath of appPaths) {
+      if (input.personalSigningIdentity !== undefined) {
+        // Builder can skip signing in PR builds, so check before copying any artifacts.
+        yield* runCommand(
+          ChildProcess.make("/usr/bin/codesign", [
+            "--verify",
+            "--deep",
+            "--strict",
+            "-R",
+            `=certificate leaf = H"${input.personalSigningIdentity}"`,
+            appPath,
+          ]),
+          { label: "Verify Personal macOS signature", verbose: input.verbose ?? false },
+        );
+      }
+      if (!input.skipRuntimeProbe) {
+        yield* verifyPackagedBundleIsSelfContained({
+          asarPath: path.join(appPath, "Contents/Resources/app.asar"),
+          verbose: input.verbose ?? false,
+        });
+      }
     }
     yield* Effect.log(
-      `[desktop-artifact] Validated macOS payload (${String(asarPaths.length)} app bundle(s)).`,
+      `[desktop-artifact] Validated macOS payload (${String(appPaths.length)} app bundle(s)).`,
     );
   },
 );
@@ -4165,8 +4197,18 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
     yield* validateLinuxPackagedPayload({ stageDistDir, verbose: options.verbose });
   }
   // x64 builds on arm64 runners; the arm64 check covers the shared JS bundle.
-  if (options.platform === "mac" && options.arch === "arm64" && hostPlatform === "darwin") {
-    yield* validateMacPackagedPayload({ stageDistDir, verbose: options.verbose });
+  const personalSigningIdentity = buildEnv.T3CODE_PERSONAL_SIGN_IDENTITY;
+  if (
+    options.platform === "mac" &&
+    hostPlatform === "darwin" &&
+    (options.arch === "arm64" || personalSigningIdentity !== undefined)
+  ) {
+    yield* validateMacPackagedPayload({
+      stageDistDir,
+      verbose: options.verbose,
+      ...(personalSigningIdentity === undefined ? {} : { personalSigningIdentity }),
+      skipRuntimeProbe: options.arch !== "arm64",
+    });
   }
 
   const copiedArtifacts = yield* copyDesktopBuildArtifacts(
