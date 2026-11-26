@@ -6,7 +6,7 @@ import {
   type ThreadLinkedJiraTicket,
 } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { TicketIcon } from "lucide-react";
+import { LinkIcon, TicketIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import {
   squashAtomCommandFailure,
@@ -146,24 +146,33 @@ export function ThreadJiraTicketLinkAction({
     }
   };
 
+  const label = gt("Link to thread");
   return (
-    <Button
-      variant="outline"
-      size="xs"
-      className="ml-1.5 select-none align-baseline"
-      disabled={pending}
-      onPointerDown={(event) => event.stopPropagation()}
-      onClick={(event) => {
-        event.stopPropagation();
-        if (pending) return;
-        setPending(true);
-        void link()
-          .catch(reportFailure)
-          .finally(() => setPending(false));
-      }}
-    >
-      {gt("Link to thread")}
-    </Button>
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="ghost-muted"
+            size="icon-xs"
+            className="ml-0.5 select-none align-middle"
+            aria-label={label}
+            disabled={pending}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (pending) return;
+              setPending(true);
+              void link()
+                .catch(reportFailure)
+                .finally(() => setPending(false));
+            }}
+          />
+        }
+      >
+        <LinkIcon aria-hidden />
+      </TooltipTrigger>
+      <TooltipPopup>{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 

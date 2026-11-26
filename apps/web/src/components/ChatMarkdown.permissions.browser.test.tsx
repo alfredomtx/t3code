@@ -358,7 +358,7 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
   expect(state.openExternal).toHaveBeenCalledTimes(2);
 });
 
-it("shows a separate Jira action beside the pasted link in a user message", async () => {
+it("shows a separate Jira link icon beside the pasted link in a user message", async () => {
   using _setup = setup();
   state.jiraSupported = true;
   const href = "https://trader.atlassian.net/browse/ATXPAC-1006";
@@ -372,7 +372,11 @@ it("shows a separate Jira action beside the pasted link in a user message", asyn
     />,
   );
   await expect.element(page.getByRole("link", { name: href })).toHaveAttribute("href", href);
-  await expect.element(page.getByRole("button", { name: "Link to thread" })).toBeVisible();
+  const action = page.getByRole("button", { name: "Link to thread" });
+  await expect.element(action).toBeVisible();
+  expect(action.element().textContent).toBe("");
+  await userEvent.hover(action);
+  await expect.element(page.getByText("Link to thread", { exact: true })).toBeVisible();
   expect(page.getByRole("link", { name: href }).getByRole("button").query()).toBeNull();
 });
 
