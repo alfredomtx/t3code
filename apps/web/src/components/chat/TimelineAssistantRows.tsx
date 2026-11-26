@@ -63,6 +63,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                   : []
               }
               threadRef={ctx.threadRef ?? undefined}
+              showJiraThreadLinkAction
               isStreaming={Boolean(row.message.streaming)}
               lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
               skills={ctx.skills}
@@ -115,6 +116,7 @@ export function SentMessageTimelineRow({
           text={row.text}
           cwd={ctx.markdownCwd}
           threadRef={ctx.threadRef ?? undefined}
+          showJiraThreadLinkAction
           lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
           skills={ctx.skills}
           headingLevelOffset={MESSAGE_HEADING_LEVEL}

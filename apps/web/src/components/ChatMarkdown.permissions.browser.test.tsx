@@ -107,6 +107,7 @@ vi.mock(import("@t3tools/client-runtime/change-request-links"), async (original)
 
 import ChatMarkdown from "./ChatMarkdown";
 import { MarkdownFileLink } from "./chat/MarkdownFileLink";
+import { PullRequestMarkdown } from "./pullRequest/PullRequestMarkdown";
 
 const threadRef = {
   environmentId: EnvironmentId.make("selected"),
@@ -366,10 +367,31 @@ it("shows a separate Jira action beside the pasted link in a user message", asyn
       cwd="/work"
       text={href + "\n\nHow does this work?"}
       threadRef={threadRef}
+      showJiraThreadLinkAction
       extensions={{ userMessage: true }}
     />,
   );
   await expect.element(page.getByRole("link", { name: href })).toHaveAttribute("href", href);
   await expect.element(page.getByRole("button", { name: "Link to thread" })).toBeVisible();
   expect(page.getByRole("link", { name: href }).getByRole("button").query()).toBeNull();
+});
+
+it("keeps Jira links in a thread's PR panel without showing the Jira attach action", async () => {
+  using _setup = setup();
+  state.jiraSupported = true;
+  const href = "https://trader.atlassian.net/browse/ATXPAC-990";
+  await using _screen = await render(
+    <PullRequestMarkdown
+      cwd="/work"
+      text={`[ATXPAC-990](${href})`}
+      environmentId={threadRef.environmentId}
+      threadRef={threadRef}
+    />,
+  );
+  await expect
+    .element(page.getByRole("link", { name: "ATXPAC-990" }))
+    .toHaveAttribute("href", href);
+  await expect
+    .element(page.getByRole("button", { name: "Link to thread" }))
+    .not.toBeInTheDocument();
 });

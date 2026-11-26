@@ -246,6 +246,7 @@ interface ChatMarkdownProps {
   agentDirectories?: (() => ReadonlyArray<string>) | undefined;
   threadRef?: ScopedThreadRef | undefined;
   pullRequestPanelRef?: ScopedThreadRef | undefined;
+  showJiraThreadLinkAction?: boolean;
   environmentId?: EnvironmentId | undefined;
   onTaskListChange?: ((input: { markerOffset: number; checked: boolean }) => void) | undefined;
   isStreaming?: boolean;
@@ -579,6 +580,7 @@ function useChatMarkdownState(
     agentDirectories,
     threadRef,
     pullRequestPanelRef,
+    showJiraThreadLinkAction = false,
     environmentId: explicitEnvironmentId,
     onTaskListChange,
     isStreaming = false,
@@ -1115,6 +1117,7 @@ function useChatMarkdownState(
     issuesEnabled,
     skills,
     threadRef,
+    showJiraThreadLinkAction,
     updateThreadPullRequestLink,
   };
   return {
@@ -1271,6 +1274,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       imageBaseDir,
       markdownFileLinkMetaByHref,
       threadRef,
+      showJiraThreadLinkAction,
       openMarkdownMedia,
       openChangeRequestLink,
       openIssueLink,
@@ -1586,7 +1590,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
         ) : (
           <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />
         );
-      const jiraTicket = threadRef && hasText ? parseJiraTicketUrl(href) : null;
+      const jiraTicket =
+        showJiraThreadLinkAction && threadRef && hasText ? parseJiraTicketUrl(href) : null;
       return threadRef && jiraTicket ? (
         <>
           {issueLink}

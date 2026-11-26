@@ -1286,6 +1286,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       text={props.text}
       cwd={props.markdownCwd}
       threadRef={ctx.threadRef ?? undefined}
+      showJiraThreadLinkAction
       skills={props.skills}
       className="text-message-foreground user-message-markdown"
       lineBreaks
