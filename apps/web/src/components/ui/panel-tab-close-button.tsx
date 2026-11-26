@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import type { ReactNode, MouseEventHandler, PointerEventHandler } from "react";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { SharedTooltipTrigger } from "~/components/ui/shared-tooltip";
 
 interface PanelTabCloseButtonProps {
   children: ReactNode;
@@ -34,10 +34,5 @@ export function PanelTabCloseButton({
 
   if (!tooltip) return button;
 
-  return (
-    <Tooltip>
-      <TooltipTrigger render={button} />
-      <TooltipPopup>{tooltip}</TooltipPopup>
-    </Tooltip>
-  );
+  return <SharedTooltipTrigger render={button} label={tooltip} />;
 }

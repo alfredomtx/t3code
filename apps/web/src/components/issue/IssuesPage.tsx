@@ -878,6 +878,22 @@ export function IssuesPage() {
               ) : (
                 <PullRequestDetailPanel
                   key={renderedSurface.id}
+                  commentRequest={(renderedSurface as PullRequestSurface).commentRequest}
+                  onCommentRequestHandled={(requestId) =>
+                    useRightPanelStore
+                      .getState()
+                      .consumePullRequestCommentRequest(
+                        rightPanelRef,
+                        renderedSurface.id,
+                        requestId,
+                      )
+                  }
+                  commitRequest={(renderedSurface as PullRequestSurface).commitRequest}
+                  onCommitRequestHandled={(requestId) =>
+                    useRightPanelStore
+                      .getState()
+                      .consumePullRequestCommitRequest(rightPanelRef, renderedSurface.id, requestId)
+                  }
                   getShortcutContext={getShortcutContext}
                   shortcutsEnabled={panelSurface?.id === renderedSurface.id}
                   environmentId={panelEnvironmentId}

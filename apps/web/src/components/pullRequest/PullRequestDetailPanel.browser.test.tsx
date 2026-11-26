@@ -133,7 +133,7 @@ const detail: PullRequestDetailView = {
 const ref = scopeThreadRef(EnvironmentId.make("environment"), ThreadId.make("thread"));
 const commitOid = "c9c9bfe2e6fec8ee853695d92b2a8edabc5a367a";
 
-function Panel() {
+function Panel({ controlled = true }: { controlled?: boolean }) {
   const surface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, ref),
   );
@@ -170,10 +170,13 @@ function Panel() {
         onCommitRequestHandled={(id) =>
           useRightPanelStore.getState().consumePullRequestCommitRequest(ref, surface.id, id)
         }
-        selectedTab={surface.detailTab ?? "summary"}
-        onTabChange={(tab) =>
-          useRightPanelStore.getState().setPullRequestDetailTab(ref, surface.id, tab)
-        }
+        {...(controlled
+          ? {
+              selectedTab: surface.detailTab ?? "summary",
+              onTabChange: (tab) =>
+                useRightPanelStore.getState().setPullRequestDetailTab(ref, surface.id, tab),
+            }
+          : {})}
       />
     </>
   );
@@ -216,4 +219,17 @@ it("keeps the linked commit selected when revealing a GitHub changes URL", async
   await expect.element(screen.getByText("All commits", { exact: true })).toBeVisible();
   await userEvent.click(screen.getByRole("link", { name: "Open commit link" }));
   await expect.element(screen.getByText(commitOid, { exact: true })).toBeVisible();
+});
+
+it("switches tabs without a controlling panel store", async () => {
+  useRightPanelStore.setState({ byThreadKey: {} });
+  useRightPanelStore.getState().openPullRequest(ref, {
+    projectId: detail.projectId,
+    repository: detail.repository,
+    number: detail.number,
+  });
+  await using screen = await render(<Panel controlled={false} />);
+  const timeline = screen.getByRole("button", { name: "Timeline", exact: true });
+  await userEvent.click(timeline);
+  await expect.element(timeline).toHaveAttribute("aria-pressed", "true");
 });

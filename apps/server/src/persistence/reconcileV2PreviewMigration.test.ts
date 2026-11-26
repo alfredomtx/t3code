@@ -41,6 +41,7 @@ it.effect("appends upstream migrations after published Personal migration 108", 
       [117, "ForkHistoryMembership"],
       [118, "WorkflowMailSender"],
       [119, "WorkflowPools"],
+      [120, "WorkflowRunSubject"],
     ]);
     assert.deepStrictEqual(yield* runMigrations(), []);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -119,6 +120,7 @@ describe("V2 preview upgrade", () => {
         [117, "ForkHistoryMembership"],
         [118, "WorkflowMailSender"],
         [119, "WorkflowPools"],
+        [120, "WorkflowRunSubject"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -261,6 +263,7 @@ describe("V2 preview upgrade", () => {
         [117, "ForkHistoryMembership"],
         [118, "WorkflowMailSender"],
         [119, "WorkflowPools"],
+        [120, "WorkflowRunSubject"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
