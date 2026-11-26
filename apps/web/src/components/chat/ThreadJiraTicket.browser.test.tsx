@@ -13,7 +13,10 @@ const state = vi.hoisted(() => ({
   update: vi.fn(),
   openLink: vi.fn(),
 }));
-vi.mock("~/state/entities", () => ({ useThreadShell: () => ({ linkedJiraTicket: state.ticket }) }));
+vi.mock("~/state/entities", () => ({
+  readThreadShell: () => ({ linkedJiraTicket: state.ticket }),
+  useThreadShell: () => ({ linkedJiraTicket: state.ticket }),
+}));
 vi.mock("~/state/session", () => ({ useEnvironmentScope: () => state.allowed }));
 vi.mock("~/state/use-orchestration-command", () => ({
   useOrchestrationCommand: () => state.update,
@@ -30,7 +33,12 @@ vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => state.openLink }));
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { serverEnvironment } from "~/state/server";
-import { JiraTicketDialogHost, ThreadJiraTicketBadge } from "./ThreadJiraTicket";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
+import {
+  JiraTicketDialogHost,
+  ThreadJiraTicketBadge,
+  ThreadJiraTicketLinkAction,
+} from "./ThreadJiraTicket";
 import { jiraTicketDialogThreadAtom, openJiraTicketDialog } from "./threadJiraTicketState";
 
 const threadRef = {
@@ -132,3 +140,68 @@ it("opens the ticket without activating the parent row", async () => {
   expect(state.openLink).toHaveBeenCalledWith(first.url, expect.anything());
   expect(parent).not.toHaveBeenCalled();
 });
+
+function inlineAction() {
+  return (
+    <RegistryContext.Provider value={appAtomRegistry}>
+      <ThreadJiraTicketLinkAction threadRef={threadRef} ticket={first} />
+      <ConfirmDialogHost />
+    </RegistryContext.Provider>
+  );
+}
+
+it("links directly and reflects the linked ticket without a dialog", async () => {
+  using _fixture = fixture();
+  state.update.mockImplementation(async () => {
+    state.ticket = first;
+    return AsyncResult.success({ sequence: 1 });
+  });
+  await using screen = await render(inlineAction());
+  await page.getByRole("button", { name: "Link to thread" }).click();
+  await expect.element(page.getByRole("alertdialog")).not.toBeInTheDocument();
+  await screen.rerender(inlineAction());
+  await expect.element(page.getByText("Linked", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByRole("button", { name: "Link to thread" }))
+    .not.toBeInTheDocument();
+});
+
+it("keeps the current Jira ticket until replacement is confirmed", async () => {
+  using _fixture = fixture();
+  state.ticket = { key: "CRM-456", url: "https://jira.example.com/browse/CRM-456" };
+  state.update.mockImplementation(async () => {
+    state.ticket = first;
+    return AsyncResult.success({ sequence: 1 });
+  });
+  await using screen = await render(inlineAction());
+  const link = page.getByRole("button", { name: "Link to thread" });
+  const dialog = page.getByRole("alertdialog", {
+    name: "Replace CRM-456 with CRM-123 on this thread?",
+  });
+  await link.click();
+  await expect.element(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect.element(dialog).not.toBeInTheDocument();
+  expect(state.ticket?.key).toBe("CRM-456");
+  await link.click();
+  await dialog.getByRole("button", { name: "Confirm" }).click();
+  await expect.element(dialog).not.toBeInTheDocument();
+  await screen.rerender(inlineAction());
+  await expect.element(page.getByText("Linked", { exact: true })).toBeVisible();
+});
+
+it.each(["read-only", "unsupported"])(
+  "hides the inline link action on %s connections",
+  async (reason) => {
+    using _fixture = fixture();
+    if (reason === "read-only") state.allowed = false;
+    else {
+      state.supported = false;
+      appAtomRegistry.refresh(serverEnvironment.configValueAtom(threadRef.environmentId));
+    }
+    await using _screen = await render(inlineAction());
+    await expect
+      .element(page.getByRole("button", { name: "Link to thread" }))
+      .not.toBeInTheDocument();
+  },
+);

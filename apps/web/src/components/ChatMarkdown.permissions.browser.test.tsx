@@ -9,13 +9,14 @@ import {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import { useRightPanelStore } from "../rightPanelStore";
 
 const state = vi.hoisted(() => ({
   allowed: true,
+  jiraSupported: false,
   listeners: new Set<() => void>(),
   openEditor: vi.fn(),
   link: vi.fn(),
@@ -77,6 +78,7 @@ vi.mock(import("../state/server"), async (original) => {
 vi.mock(import("../state/entities"), async (original) => ({
   ...(await original()),
   readThreadShell: (() => ({ pullRequests: state.pullRequests })) as never,
+  useThreadShell: (() => (state.jiraSupported ? { linkedJiraTicket: null } : null)) as never,
   useProjects: (() => [{ id: projectId, environmentId: threadRef.environmentId }]) as never,
 }));
 vi.mock(import("../remoteOpen"), async (original) => ({
@@ -125,12 +127,20 @@ const serverConfig = {
   availableEditors: ["vscode", "file-manager"] as readonly EditorId[],
   shellRevealInFileManager: true,
   shellRevealInFileManagerKind: "xdg-open",
-  environment: { platform: { os: "linux" }, capabilities: {} },
+  environment: {
+    platform: { os: "linux" },
+    capabilities: {
+      get threadJiraTickets() {
+        return state.jiraSupported;
+      },
+    },
+  },
 };
 
 function setup() {
   using stack = new DisposableStack();
   state.allowed = true;
+  state.jiraSupported = false;
   state.listeners.clear();
   state.pullRequests = [];
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
@@ -345,4 +355,21 @@ it("opens an editor link over the desktop bridge on a click and on a middle-clic
     expect(state.openExternal).toHaveBeenLastCalledWith(href);
   }
   expect(state.openExternal).toHaveBeenCalledTimes(2);
+});
+
+it("shows a separate Jira action beside the pasted link in a user message", async () => {
+  using _setup = setup();
+  state.jiraSupported = true;
+  const href = "https://trader.atlassian.net/browse/ATXPAC-1006";
+  await using _screen = await render(
+    <ChatMarkdown
+      cwd="/work"
+      text={href + "\n\nHow does this work?"}
+      threadRef={threadRef}
+      extensions={{ userMessage: true }}
+    />,
+  );
+  await expect.element(page.getByRole("link", { name: href })).toHaveAttribute("href", href);
+  await expect.element(page.getByRole("button", { name: "Link to thread" })).toBeVisible();
+  expect(page.getByRole("link", { name: href }).getByRole("button").query()).toBeNull();
 });

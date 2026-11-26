@@ -4323,6 +4323,7 @@
   "add695e6e4871706": "Stäng sökningen",
   "fecdaa536628e01d": "Open Jira ticket {key}",
   "6b7e493bf18470f0": "Could not open Jira ticket",
+  "7134542499ec0225": "Ersätta {current} med {next} i den här tråden?",
   "2c1b0411db4f6cd9": "Could not save Jira ticket.",
   "3f66eec4752315d3": "Paste an HTTPS Jira ticket URL such as {example}.",
   "39ad9866f63362a4": "Link Jira ticket",

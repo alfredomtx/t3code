@@ -14,7 +14,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { useThreadShell } from "~/state/entities";
+import { readThreadShell, useThreadShell } from "~/state/entities";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { useEnvironmentScope } from "~/state/session";
 import { serverEnvironment } from "~/state/server";
 import { threadEnvironment } from "~/state/threads";
@@ -87,6 +88,83 @@ export function ThreadJiraTicketHeader({ threadRef }: { threadRef: ScopedThreadR
   return thread?.linkedJiraTicket ? (
     <ThreadJiraTicketBadge threadRef={threadRef} ticket={thread.linkedJiraTicket} />
   ) : null;
+}
+
+export function ThreadJiraTicketLinkAction({
+  threadRef,
+  ticket,
+}: {
+  threadRef: ScopedThreadRef;
+  ticket: ThreadLinkedJiraTicket;
+}) {
+  const gt = useGT();
+  const thread = useThreadShell(threadRef);
+  const config = useAtomValue(serverEnvironment.configValueAtom(threadRef.environmentId));
+  const canOperate = useEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope);
+  const update = useOrchestrationCommand(threadEnvironment.updateMetadata, {
+    reportFailure: false,
+  });
+  const [pending, setPending] = useState(false);
+
+  if (!thread || config?.environment.capabilities.threadJiraTickets !== true) return null;
+  if (thread.linkedJiraTicket?.url === ticket.url) {
+    return (
+      <span className="ml-1.5 select-none align-baseline text-muted-foreground text-xs">
+        <T>Linked</T>
+      </span>
+    );
+  }
+  if (!canOperate) return null;
+
+  const reportFailure = (failure: unknown) => {
+    toastManager.add({
+      type: "error",
+      title: gt("Could not save Jira ticket."),
+      description: failure instanceof Error ? failure.message : undefined,
+    });
+  };
+  const link = async () => {
+    const current = readThreadShell(threadRef);
+    if (!current || current.linkedJiraTicket?.url === ticket.url) return;
+    if (current.linkedJiraTicket) {
+      const confirmed = await requestConfirmDialog(
+        gt("Replace {current} with {next} on this thread?", {
+          current: current.linkedJiraTicket.key,
+          next: ticket.key,
+        }),
+      );
+      if (!confirmed) return;
+    }
+    const latest = readThreadShell(threadRef);
+    if (!latest || latest.linkedJiraTicket?.url !== current.linkedJiraTicket?.url) return;
+    const result = await update({
+      environmentId: threadRef.environmentId,
+      input: { threadId: threadRef.threadId, linkedJiraTicket: ticket },
+    });
+    if (result._tag !== "Success" && !isAtomCommandInterrupted(result)) {
+      reportFailure(squashAtomCommandFailure(result));
+    }
+  };
+
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      className="ml-1.5 select-none align-baseline"
+      disabled={pending}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        if (pending) return;
+        setPending(true);
+        void link()
+          .catch(reportFailure)
+          .finally(() => setPending(false));
+      }}
+    >
+      {gt("Link to thread")}
+    </Button>
+  );
 }
 
 export function JiraTicketDialogHost() {

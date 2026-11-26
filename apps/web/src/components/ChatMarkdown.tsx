@@ -20,6 +20,7 @@ import {
   AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   SOURCE_CONTROL_MEDIA_ASSET,
+  parseJiraTicketUrl,
 } from "@t3tools/contracts";
 import { chatMarkdownImageSource } from "@t3tools/shared/markdownHast";
 import { useAtomValue } from "@effect/atom-react";
@@ -180,6 +181,7 @@ import {
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { textDirection } from "~/textDirection";
+import { ThreadJiraTicketLinkAction } from "./chat/ThreadJiraTicket";
 import { useOpenLink } from "../browser/useOpenLink";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { isPreviewAvailableFor } from "../browser/previewRuntime";
@@ -1578,10 +1580,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
           />
         );
       }
-      if (issuePreviewTarget !== null) {
-        return <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />;
-      }
-      return <SharedTooltipTrigger render={link} label={href} />;
+      const issueLink =
+        issuePreviewTarget === null ? (
+          <SharedTooltipTrigger render={link} label={href} />
+        ) : (
+          <IssueLinkPreview link={link} originalUrl={href} target={issuePreviewTarget} />
+        );
+      const jiraTicket = threadRef && hasText ? parseJiraTicketUrl(href) : null;
+      return threadRef && jiraTicket ? (
+        <>
+          {issueLink}
+          <ThreadJiraTicketLinkAction threadRef={threadRef} ticket={jiraTicket} />
+        </>
+      ) : (
+        issueLink
+      );
     }
 
     const label = nodeToPlainText(children);
