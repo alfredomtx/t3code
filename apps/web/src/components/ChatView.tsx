@@ -365,6 +365,7 @@ import { useRightPanelSurfaceClose } from "../hooks/useRightPanelSurfaceClose";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { modelFallbackBannerItem } from "./chat/ComposerUsageLimits";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { Spinner } from "./ui/spinner";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
 import {
@@ -3820,7 +3821,6 @@ export default function ChatView(props: ChatViewProps) {
                 setComposerOverlayElement(overlay);
                 attachFollowComposerOverlay(overlay);
               }}
-              inert={isRevertingCheckpoint}
               data-chat-composer-overlay="true"
               className={
                 isDraftHeroState
@@ -3829,7 +3829,16 @@ export default function ChatView(props: ChatViewProps) {
               }
             >
               <div ref={draftHeroTransitionGroupRef} className="chat-composer-lane w-full">
+                <div role="status" className="mx-auto w-fit max-w-full">
+                  {isRevertingCheckpoint && (
+                    <div className="bg-popover text-popover-foreground mb-2 flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm shadow-xs">
+                      <Spinner size="sm" aria-hidden />
+                      {gt("Rewinding conversation")}
+                    </div>
+                  )}
+                </div>
                 <div
+                  inert={isRevertingCheckpoint}
                   data-chat-composer-stack="true"
                   className="group/composer-stack pointer-events-auto relative z-10 mx-auto w-full max-w-(--chat-content-max-width)"
                 >

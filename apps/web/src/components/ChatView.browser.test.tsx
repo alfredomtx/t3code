@@ -906,12 +906,14 @@ it("a mounted thread view lets go of the thread structures it has replaced", asy
 });
 
 it.each([
-  { turns: 1, available: true },
-  { turns: 2, available: false },
+  { turns: 1, outcome: "completed" },
+  { turns: 1, outcome: "rejected" },
+  { turns: 2, outcome: "unavailable" },
 ])(
-  "rewinds the last sent prompt only when its own rewind target exists ($turns turns)",
-  async ({ turns, available }) => {
-    const history = threadWithHistory(`rewind-shortcut-${turns}`, turns);
+  "shows progress only while the latest prompt is being rewound ($outcome)",
+  async ({ turns, outcome }) => {
+    const available = outcome !== "unavailable";
+    const history = threadWithHistory(`rewind-shortcut-${outcome}`, turns);
     const firstRun = history.runs[0]!;
     const providerThread = {
       id: ProviderThreadId.make("rewind-provider-thread"),
@@ -967,6 +969,7 @@ it.each([
     };
     using _environment = installFakeEnvironment([thread], {
       acceptCommands: true,
+      holdCommand: (command) => outcome === "rejected" && command.type === "checkpoint.rollback",
       keybindings: DEFAULT_RESOLVED_KEYBINDINGS.filter(
         (binding) => binding.command !== "thread.editLastSentMessage",
       ),
@@ -1002,6 +1005,8 @@ it.each([
     await editor.click();
     await insertText("Keep this draft");
     const chord = "{ControlOrMeta>}{Alt>}{ArrowUp}{/Alt}{/ControlOrMeta}";
+    const progress = page.getByRole("status").filter({ hasText: "Rewinding conversation" });
+    await expect.element(progress).not.toBeInTheDocument();
     await userEvent.keyboard(chord);
 
     const draft = () =>
@@ -1010,10 +1015,12 @@ it.each([
       dispatchedCommands().filter((command) => command.type === "checkpoint.rollback");
     if (!available) {
       expect(rewinds()).toEqual([]);
+      await expect.element(progress).not.toBeInTheDocument();
       expect(draft()?.prompt).toBe("Keep this draft");
       return;
     }
 
+    await expect.element(progress).toBeVisible();
     await vi.waitFor(() =>
       expect(rewinds()).toEqual([
         expect.objectContaining({ checkpointId: baseline.id, restoreFiles: false }),
@@ -1023,6 +1030,17 @@ it.each([
       .element(page.getByRole("alertdialog", { name: "Edit from here?" }))
       .not.toBeInTheDocument();
     await userEvent.keyboard(chord);
+    await expect.element(progress).toBeVisible();
+    if (outcome === "rejected") {
+      await act(() => rejectPendingCommand("Rewind rejected by the server."));
+      await expect.element(page.getByText("Rewind rejected by the server.")).toBeVisible();
+      await expect.element(progress).not.toBeInTheDocument();
+      expect(draft()?.prompt).toBe("Keep this draft");
+      expect(rewinds()).toHaveLength(1);
+      await editor.click();
+      await expect.element(editor).toHaveFocus();
+      return;
+    }
     await act(async () => {
       await emitThreadEvent(thread.id, {
         type: "provider-thread.updated",
@@ -1037,6 +1055,7 @@ it.each([
       expect(draft()?.prompt).toBe(`Keep this draft\n\n${thread.id}: question 0`);
       expect(draft()?.files).toEqual([expect.objectContaining({ name: "notes.txt" })]);
     });
+    await expect.element(progress).not.toBeInTheDocument();
     await expect.element(editor).toHaveFocus();
     expect(rewinds()).toHaveLength(1);
     expect(dispatchedCommands().some((command) => command.type === "message.dispatch")).toBe(false);
