@@ -435,6 +435,7 @@ describe("environment theme", () => {
     () =>
       Effect.gen(function* () {
         const resumeProbes = yield* Deferred.make<void>();
+        const contentEvents = yield* Queue.unbounded<FileSystem.WatchEvent>();
         let linkedEntry: string | undefined;
         let holdProbes = false;
         yield* withEnvironmentThemes(
@@ -476,6 +477,8 @@ describe("environment theme", () => {
               path.join(previous, "shared", "themes", "nightfall.json"),
               encodeThemeFile(NIGHTFALL_THEME),
             );
+            // A native watch need not report writes after an ancestor moves.
+            yield* Queue.offer(contentEvents, { _tag: "Create", path: "nightfall.json" });
             assert.deepEqual(yield* Queue.take(snapshots), []);
             yield* fs.rename(previous, active);
             yield* Deferred.succeed(resumeProbes, undefined);
@@ -485,6 +488,10 @@ describe("environment theme", () => {
             wrapFileSystem: (fs) =>
               FileSystem.FileSystem.of({
                 ...fs,
+                watch: (entry, options) =>
+                  entry === linkedEntry
+                    ? Stream.merge(fs.watch(entry, options), Stream.fromQueue(contentEvents))
+                    : fs.watch(entry, options),
                 stat: (entry) =>
                   Effect.suspend(() =>
                     entry === linkedEntry && holdProbes

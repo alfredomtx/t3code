@@ -297,7 +297,20 @@ export function threadLinkRefs(
 }
 
 // GFM like the chat renderer, so footnotes and other GFM containers hold prose, not code.
-const markdownParser = unified().use(remarkParse).use(remarkGfm);
+const markdownParser = unified()
+  .use(remarkParse)
+  .use(remarkGfm)
+  .use(function () {
+    // Only syntax and code offsets matter here. GFM's autolink transform walks the tree recursively.
+    const extensions = this.data("fromMarkdownExtensions")?.flat() ?? [];
+    this.data(
+      "fromMarkdownExtensions",
+      extensions.map((extension) => ({
+        ...extension,
+        transforms: [],
+      })),
+    );
+  });
 const FENCE_LIKE_LINE = /^[ \t>*+\-\d.)]*(?:`{3}|~{3})/m;
 
 function parsedCodeRanges(markdown: string) {
