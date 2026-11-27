@@ -281,7 +281,11 @@ const tab = (
     scrollerRef={() => {}}
     environmentId={EnvironmentId.make("environment")}
     reference={detail}
-    detail={detail}
+    detail={{
+      ...detail,
+      changedFiles: 1,
+      capabilities: { ...detail.capabilities, viewedFiles: "host" },
+    }}
     selectedCommitOid={null}
     onSelectedCommitChange={() => {}}
     onRefresh={() => {}}
@@ -871,7 +875,10 @@ it.each([
 // Two short pages of a source and a test file each; the next page loads only through the file tree.
 async function renderShortPages(stack: AsyncDisposableStack) {
   const fixture = stack.use(
-    setup(null, { patch: patch(["early-0.ts", "early-1.test.ts"], "page-2"), changedFiles: 4 }),
+    setup(
+      { files: [{ path: "late.ts", state: "viewed" }], truncated: false },
+      { patch: patch(["early-0.ts", "early-1.test.ts"], "page-2"), changedFiles: 4 },
+    ),
   );
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
   stack.defer(() => {
@@ -921,11 +928,15 @@ async function renderShortPages(stack: AsyncDisposableStack) {
 it("keeps a later test file folded by hand through a refresh and bulk toggles while hidden", async () => {
   await using stack = new AsyncDisposableStack();
   const { screen, fixture, loadNextPage, diffToggle, filter } = await renderShortPages(stack);
+  await expect.element(screen.getByText("4 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1 / 4", { exact: true })).toBeVisible();
   await loadNextPage();
+  await expect.element(screen.getByText("1 / 4", { exact: true })).toBeVisible();
   const lateTest = await diffToggle("late.test.ts");
   await lateTest.click();
   await expect.element(lateTest).toHaveAttribute("aria-expanded", "false");
   await filter.click();
+  await expect.element(screen.getByText("1 / 2", { exact: true })).toBeVisible();
 
   // A refresh drops the loaded later page, so the bulk toggles below run without it.
   await act(() => fixture.registry.set(diffPagesAtom, new Map()));
@@ -1051,15 +1062,33 @@ it("restores a scrolled PR after the viewer unmounts for another thread", async 
 });
 
 it("answers a commit's diff link only once that commit's diff is shown", async () => {
-  using fixture = setup({ files: [], truncated: false });
+  using fixture = setup(
+    {
+      files: [
+        { path: "early-0.ts", state: "viewed" },
+        { path: "late.test.ts", state: "viewed" },
+      ],
+      truncated: false,
+    },
+    { patch: patch(["early-0.ts"], "page-2") },
+  );
   const container = document.createElement("div");
   container.className = "flex h-[700px] w-[900px]";
   const oid = "c".repeat(40);
   const withCommit = {
     ...detail,
-    commits: [{ oid, messageHeadline: "Linked commit", committedDate: "2026-09-01T00:00:00Z" }],
+    changedFiles: 70,
+    capabilities: { ...detail.capabilities, viewedFiles: "host" as const },
+    commits: [
+      {
+        oid,
+        messageHeadline: "Linked commit",
+        committedDate: "2026-09-01T00:00:00Z",
+        changedFiles: 41,
+      },
+    ],
   };
-  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("a.ts")))}R2`;
+  const url = `${detail.url}/commits/${oid}#diff-${bytesToHex(sha256(new TextEncoder().encode("early-0.ts")))}R2`;
   const settled = vi.fn();
   const scoped = (selectedCommitOid: string | null, revealUrl?: string) => (
     <PullRequestCodeTab
@@ -1075,12 +1104,15 @@ it("answers a commit's diff link only once that commit's diff is shown", async (
     />
   );
   await using screen = await render(fixture.wrap(scoped(null)), { container });
-  await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("70 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("2 / 70", { exact: true })).toBeVisible();
 
   // The panel selects the link's commit after this tab has already seen the link.
   await screen.rerender(fixture.wrap(scoped(null, url)));
   expect(settled).not.toHaveBeenCalled();
   await screen.rerender(fixture.wrap(scoped(oid, url)));
+  await expect.element(screen.getByText("41 files", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("1+ / 41", { exact: true })).toBeVisible();
   await vi.waitFor(() => expect(settled).toHaveBeenCalledWith(url));
 });
 

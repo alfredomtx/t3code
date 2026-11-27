@@ -15,6 +15,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { toastManager } from "../ui/toast";
 import {
+  countViewedFiles,
   isFileViewed,
   isStaleViewedState,
   toFileViewedBatch,
@@ -449,6 +450,7 @@ export function usePullRequestFilesViewed(options: {
     enabled,
     canWrite,
     ready,
+    viewedCount: countViewedFiles(states, overlay),
     isViewed: (path: string) => isFileViewed(path, states, overlay),
     isStale: (path: string) => !overlay.has(path) && isStaleViewedState(states?.get(path)),
     setViewed,
