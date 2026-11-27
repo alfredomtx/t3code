@@ -457,17 +457,13 @@ describe("bounded binary previews", () => {
         asset={{ environmentId: EnvironmentId.make("test-environment"), attachmentId: "image" }}
       />,
     );
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Unable to load image.",
-      ),
-    );
-    await act(() =>
-      screen.container.querySelector<HTMLButtonElement>('[role="alert"] button')!.click(),
-    );
-    await vi.waitFor(() =>
-      expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(image),
-    );
+    const alert = screen.getByRole("alert");
+    await expect.element(alert.getByText("Unable to load image.", { exact: true })).toBeVisible();
+    await alert.getByRole("button", { name: "Try again" }).click();
+    await expect
+      .element(screen.getByRole("img", { name: "photo.png" }))
+      .toHaveAttribute("src", image);
+    await expect.element(screen.getByText("2 × 2", { exact: true })).toBeVisible();
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
