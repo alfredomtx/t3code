@@ -736,6 +736,34 @@ process.exit(0);
     }),
   );
 
+  it.effect("does not select a staged runtime when stable launcher state is missing", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-no-state-" });
+      const runtime = path.join(root, "runtime");
+      const stable = path.join(runtime, "service-launcher");
+      yield* fs.makeDirectory(stable, { recursive: true });
+      for (const version of ["1.0.0", "1.1.0"]) {
+        const entry = yield* writeFakeRuntime(
+          fs,
+          path,
+          path.join(runtime, "versions", version),
+          "process.exit(0);\n",
+        );
+        if (version === "1.0.0") yield* fs.copyFile(entry, path.join(stable, "t3"));
+      }
+      const childCount = spawnedChildren.length;
+      yield* Effect.promise(() =>
+        expect(runLauncher(root)).rejects.toThrow(
+          "stable launcher cannot identify the selected runtime",
+        ),
+      );
+      assert.lengthOf(spawnedChildren, childCount);
+      assert.isFalse(yield* fs.exists(path.join(runtime, "service-state.json")));
+    }),
+  );
+
   it.effect("refuses non-install legacy documents without rewriting or spawning", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

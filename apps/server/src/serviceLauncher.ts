@@ -795,6 +795,21 @@ async function installedRuntimeVersion(
   ) {
     return unitVersion;
   }
+  // The stable launcher does not record a selection, and staged runtimes look complete.
+  if (
+    unit?.includes("/runtime/service-launcher/t3</string>") ||
+    (await NodeFSP.lstat(macServiceLauncherPath(baseDir)).then(
+      () => true,
+      (cause: NodeJS.ErrnoException) => {
+        if (cause.code === "ENOENT") return false;
+        throw cause;
+      },
+    ))
+  ) {
+    throw new Error(
+      "Service state is missing and the stable launcher cannot identify the selected runtime.",
+    );
+  }
   const entries = await NodeFSP.readdir(NodePath.join(baseDir, "runtime", "versions")).catch(
     () => [],
   );
